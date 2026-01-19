@@ -374,6 +374,12 @@ CREATE TABLE IF NOT EXISTS sessions (
     log_count INTEGER DEFAULT 0
 );
 
+-- Key-value metadata (for embedding model tracking, etc.)
+CREATE TABLE IF NOT EXISTS metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_memories_hash ON memories(content_hash);
 CREATE INDEX IF NOT EXISTS idx_memories_hot ON memories(is_hot);
@@ -598,8 +604,7 @@ class Storage:
             "ON memory_relationships(from_memory_id)"
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_relationships_to "
-            "ON memory_relationships(to_memory_id)"
+            "CREATE INDEX IF NOT EXISTS idx_relationships_to ON memory_relationships(to_memory_id)"
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_relationships_type "
@@ -799,6 +804,184 @@ class Storage:
             "schema_version": self.get_schema_version(),
             "auto_demoted_count": len(demoted_ids),
             "auto_demoted_ids": demoted_ids,
+        }
+
+    def _get_retention_days(self, memory_type: MemoryType) -> int:
+        """Get retention days for a memory type (0 = never expire)."""
+        retention_map = {
+            MemoryType.PROJECT: self.settings.retention_project_days,
+            MemoryType.PATTERN: self.settings.retention_pattern_days,
+            MemoryType.REFERENCE: self.settings.retention_reference_days,
+            MemoryType.CONVERSATION: self.settings.retention_conversation_days,
+        }
+        return retention_map.get(memory_type, 0)
+
+    def cleanup_stale_memories(self) -> dict:
+        """Delete memories that exceed their type-specific retention period.
+
+        Only deletes memories that:
+        - Have a non-zero retention policy
+        - Haven't been accessed within the retention period
+        - Are not in hot cache
+
+        Returns dict with counts per type and total deleted.
+        """
+        deleted_counts: dict[str, int] = {}
+
+        for mem_type in MemoryType:
+            retention_days = self._get_retention_days(mem_type)
+            if retention_days == 0:
+                continue  # Never expire
+
+            cutoff = f"-{retention_days} days"
+
+            with self.transaction() as conn:
+                # Find stale memories of this type
+                rows = conn.execute(
+                    """
+                    SELECT id FROM memories
+                    WHERE memory_type = ?
+                      AND is_hot = 0
+                      AND (last_accessed_at IS NULL
+                           OR last_accessed_at < datetime('now', ?))
+                      AND created_at < datetime('now', ?)
+                    """,
+                    (mem_type.value, cutoff, cutoff),
+                ).fetchall()
+
+                stale_ids = [row["id"] for row in rows]
+
+            # Delete outside transaction to avoid long locks
+            for memory_id in stale_ids:
+                self.delete_memory(memory_id)
+
+            if stale_ids:
+                deleted_counts[mem_type.value] = len(stale_ids)
+                log.info(
+                    "Cleaned up {} stale {} memories (retention: {} days)",
+                    len(stale_ids),
+                    mem_type.value,
+                    retention_days,
+                )
+
+        return {
+            "deleted_by_type": deleted_counts,
+            "total_deleted": sum(deleted_counts.values()),
+        }
+
+    def cleanup_old_logs(self) -> int:
+        """Delete output logs older than log_retention_days.
+
+        Returns count of deleted logs.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM output_log WHERE timestamp < datetime('now', ?)",
+                (f"-{self.settings.log_retention_days} days",),
+            )
+            deleted = cursor.rowcount
+
+        if deleted > 0:
+            log.info(
+                "Cleaned up {} old output logs (retention: {} days)",
+                deleted,
+                self.settings.log_retention_days,
+            )
+        return deleted
+
+    def get_embedding_model_info(self) -> dict:
+        """Get stored embedding model info for validation."""
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT key, value FROM metadata WHERE key IN ('embedding_model', 'embedding_dim')"
+            ).fetchall()
+
+        info = {row["key"]: row["value"] for row in rows}
+        return {
+            "model": info.get("embedding_model"),
+            "dimension": int(info["embedding_dim"]) if "embedding_dim" in info else None,
+        }
+
+    def set_embedding_model_info(self, model: str, dimension: int) -> None:
+        """Store embedding model info for future validation."""
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO metadata (key, value)
+                VALUES ('embedding_model', ?)
+                """,
+                (model,),
+            )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO metadata (key, value)
+                VALUES ('embedding_dim', ?)
+                """,
+                (str(dimension),),
+            )
+
+    def validate_embedding_model(self, current_model: str, current_dim: int) -> dict:
+        """Check if embedding model has changed since last use.
+
+        Returns validation result with mismatch details if any.
+        """
+        stored = self.get_embedding_model_info()
+
+        if stored["model"] is None:
+            # First time - store current model info
+            self.set_embedding_model_info(current_model, current_dim)
+            return {
+                "valid": True,
+                "first_run": True,
+                "model": current_model,
+                "dimension": current_dim,
+            }
+
+        model_match = stored["model"] == current_model
+        dim_match = stored["dimension"] == current_dim
+
+        if model_match and dim_match:
+            return {"valid": True, "model": current_model, "dimension": current_dim}
+
+        return {
+            "valid": False,
+            "stored_model": stored["model"],
+            "stored_dimension": stored["dimension"],
+            "current_model": current_model,
+            "current_dimension": current_dim,
+            "model_changed": not model_match,
+            "dimension_changed": not dim_match,
+        }
+
+    def run_full_cleanup(self) -> dict:
+        """Run comprehensive cleanup: stale memories, old logs, patterns.
+
+        Orchestrates all maintenance tasks in one call.
+
+        Returns combined stats from all cleanup operations.
+        """
+        # 1. Demote stale hot memories
+        demoted_ids = self.demote_stale_hot_memories()
+
+        # 2. Expire stale mining patterns
+        expired_patterns = self.expire_stale_patterns(days=30)
+
+        # 3. Clean up old output logs
+        deleted_logs = self.cleanup_old_logs()
+
+        # 4. Clean up stale memories by retention policy
+        memory_cleanup = self.cleanup_stale_memories()
+
+        # 5. Decay access sequences (for predictive cache)
+        if self.settings.predictive_cache_enabled:
+            self.decay_old_sequences()
+
+        return {
+            "hot_cache_demoted": len(demoted_ids),
+            "patterns_expired": expired_patterns,
+            "logs_deleted": deleted_logs,
+            "memories_deleted": memory_cleanup["total_deleted"],
+            "memories_deleted_by_type": memory_cleanup["deleted_by_type"],
         }
 
     # ========== Memory CRUD ==========
@@ -3444,8 +3627,7 @@ class Storage:
         elif memories_created == 0 and files_processed > 0:
             if memories_skipped > 0:
                 message = (
-                    f"All {memories_skipped} memories already exist "
-                    f"from {files_processed} file(s)."
+                    f"All {memories_skipped} memories already exist from {files_processed} file(s)."
                 )
             else:
                 message = (
@@ -3453,7 +3635,7 @@ class Storage:
                     "Files may be empty or contain only non-extractable content."
                 )
         else:
-            message = f"Bootstrapped {memories_created} memories " f"from {files_processed} file(s)"
+            message = f"Bootstrapped {memories_created} memories from {files_processed} file(s)"
             if hot_cache_promoted > 0:
                 message += f" ({hot_cache_promoted} promoted to hot cache)"
 

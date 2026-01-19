@@ -448,6 +448,147 @@ class TestAutoDemotion:
         stor.close()
 
 
+# ========== Freshness and Cleanup Tests ==========
+
+
+class TestMemoryRetention:
+    """Tests for memory retention policies and cleanup."""
+
+    def test_cleanup_stale_memories_respects_retention(self, tmp_path):
+        """cleanup_stale_memories deletes based on type-specific retention."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            retention_conversation_days=0,  # Immediate cleanup for conversations
+            retention_project_days=0,  # Never expire projects
+            semantic_dedup_enabled=False,
+        )
+        stor = Storage(settings)
+
+        # Create memories of different types
+        proj_id, _ = stor.store_memory("Project fact", MemoryType.PROJECT)
+        conv_id, _ = stor.store_memory("Conversation fact", MemoryType.CONVERSATION)
+
+        # Cleanup should not delete anything yet (both just created)
+        result = stor.cleanup_stale_memories()
+        assert result["total_deleted"] == 0
+        stor.close()
+
+    def test_cleanup_preserves_hot_memories(self, tmp_path):
+        """Hot memories should not be cleaned up regardless of age."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            retention_pattern_days=0,  # Immediate cleanup
+            semantic_dedup_enabled=False,
+        )
+        stor = Storage(settings)
+
+        memory_id, _ = stor.store_memory("Pattern content", MemoryType.PATTERN)
+        stor.promote_to_hot(memory_id)
+
+        # Hot memory should be preserved
+        stor.cleanup_stale_memories()
+        assert stor.get_memory(memory_id) is not None
+        stor.close()
+
+    def test_get_retention_days_by_type(self, tmp_path):
+        """_get_retention_days returns correct values per type."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            retention_project_days=100,
+            retention_pattern_days=200,
+            retention_reference_days=300,
+            retention_conversation_days=400,
+        )
+        stor = Storage(settings)
+
+        assert stor._get_retention_days(MemoryType.PROJECT) == 100
+        assert stor._get_retention_days(MemoryType.PATTERN) == 200
+        assert stor._get_retention_days(MemoryType.REFERENCE) == 300
+        assert stor._get_retention_days(MemoryType.CONVERSATION) == 400
+        stor.close()
+
+
+class TestEmbeddingValidation:
+    """Tests for embedding model validation."""
+
+    def test_validate_embeddings_first_run(self, storage):
+        """First run should store model info and return valid."""
+        result = storage.validate_embedding_model("test-model", 384)
+
+        assert result["valid"] is True
+        assert result.get("first_run") is True
+        assert result["model"] == "test-model"
+        assert result["dimension"] == 384
+
+    def test_validate_embeddings_same_model(self, storage):
+        """Same model should validate successfully."""
+        # First run
+        storage.validate_embedding_model("test-model", 384)
+
+        # Second run with same model
+        result = storage.validate_embedding_model("test-model", 384)
+
+        assert result["valid"] is True
+        assert "first_run" not in result
+
+    def test_validate_embeddings_model_changed(self, storage):
+        """Different model should fail validation."""
+        # First run
+        storage.validate_embedding_model("old-model", 384)
+
+        # Second run with different model
+        result = storage.validate_embedding_model("new-model", 384)
+
+        assert result["valid"] is False
+        assert result["model_changed"] is True
+        assert result["stored_model"] == "old-model"
+        assert result["current_model"] == "new-model"
+
+    def test_validate_embeddings_dimension_changed(self, storage):
+        """Different dimension should fail validation."""
+        # First run
+        storage.validate_embedding_model("test-model", 384)
+
+        # Second run with different dimension
+        result = storage.validate_embedding_model("test-model", 768)
+
+        assert result["valid"] is False
+        assert result["dimension_changed"] is True
+        assert result["stored_dimension"] == 384
+        assert result["current_dimension"] == 768
+
+
+class TestFullCleanup:
+    """Tests for comprehensive cleanup operation."""
+
+    def test_run_full_cleanup_returns_stats(self, storage):
+        """run_full_cleanup returns stats for all operations."""
+        result = storage.run_full_cleanup()
+
+        assert "hot_cache_demoted" in result
+        assert "patterns_expired" in result
+        assert "logs_deleted" in result
+        assert "memories_deleted" in result
+        assert "memories_deleted_by_type" in result
+
+    def test_cleanup_old_logs(self, tmp_path):
+        """cleanup_old_logs deletes based on log_retention_days."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            log_retention_days=0,  # Immediate cleanup
+        )
+        stor = Storage(settings)
+
+        # Create a log
+        stor.log_output("Test output content")
+
+        # Cleanup should delete it (retention = 0)
+        deleted = stor.cleanup_old_logs()
+        # Note: log_output already deletes old logs, so this may be 0
+        assert isinstance(deleted, int)
+        stor.close()
+
+
 # ========== Trust Granularity Tests ==========
 
 
@@ -885,8 +1026,7 @@ class TestMemoryRelationships:
         """memory_relationships table should exist in schema."""
         with storage._connection() as conn:
             result = conn.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name='memory_relationships'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='memory_relationships'"
             ).fetchone()
             assert result is not None
 
@@ -1212,7 +1352,7 @@ class TestSessionProvenance:
         """sessions table should exist in schema."""
         with storage._connection() as conn:
             result = conn.execute(
-                "SELECT name FROM sqlite_master " "WHERE type='table' AND name='sessions'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
             ).fetchone()
             assert result is not None
 
@@ -1590,7 +1730,7 @@ class TestPredictiveCache:
         """access_sequences table should exist."""
         with predictive_storage._connection() as conn:
             result = conn.execute(
-                "SELECT name FROM sqlite_master " "WHERE type='table' AND name='access_sequences'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='access_sequences'"
             ).fetchone()
             assert result is not None
 

@@ -242,7 +242,7 @@ def bootstrap(
             "hot_cache_promoted": 0,
             "errors": [],
             "message": (
-                "No documentation files found. " "Create README.md or CLAUDE.md to bootstrap."
+                "No documentation files found. Create README.md or CLAUDE.md to bootstrap."
             ),
         }
         if use_json:

@@ -1204,7 +1204,7 @@ def validate_memory(
         float | None,
         Field(
             description=(
-                "Custom trust boost (overrides reason default). " "If None, uses reason's default."
+                "Custom trust boost (overrides reason default). If None, uses reason's default."
             )
         ),
     ] = None,
@@ -1271,8 +1271,7 @@ def invalidate_memory(
         float | None,
         Field(
             description=(
-                "Custom trust penalty (overrides reason default). "
-                "If None, uses reason's default."
+                "Custom trust penalty (overrides reason default). If None, uses reason's default."
             )
         ),
     ] = None,
@@ -1420,6 +1419,59 @@ def db_maintenance() -> MaintenanceResponse:
         result["auto_demoted_count"],
     )
     return MaintenanceResponse(**result)
+
+
+@mcp.tool
+def run_cleanup() -> dict:
+    """Run comprehensive cleanup of stale data.
+
+    Performs all cleanup operations in one call:
+    - Demotes stale hot memories (not accessed in demotion_days)
+    - Expires old pending mining patterns (30+ days without activity)
+    - Deletes old output logs (based on log_retention_days)
+    - Deletes stale memories by type-specific retention policies
+
+    Use this periodically to keep the database lean. For just database
+    compaction, use db_maintenance() instead.
+    """
+    log.info("run_cleanup() called")
+    result = storage.run_full_cleanup()
+    log.info(
+        "Cleanup complete: {} hot demoted, {} patterns expired, "
+        "{} logs deleted, {} memories deleted",
+        result["hot_cache_demoted"],
+        result["patterns_expired"],
+        result["logs_deleted"],
+        result["memories_deleted"],
+    )
+    return {"success": True, **result}
+
+
+@mcp.tool
+def validate_embeddings() -> dict:
+    """Check if the embedding model has changed since database was created.
+
+    If the model or dimension has changed, existing embeddings may be
+    incompatible and memories may need re-embedding.
+
+    Returns validation status and details about any mismatches.
+    """
+    from memory_mcp.embeddings import get_embedding_engine
+
+    engine = get_embedding_engine()
+    result = storage.validate_embedding_model(
+        current_model=settings.embedding_model,
+        current_dim=engine.dimension,
+    )
+
+    if not result["valid"]:
+        return {
+            "success": False,
+            "warning": "Embedding model has changed! Existing embeddings may be invalid.",
+            **result,
+        }
+
+    return {"success": True, **result}
 
 
 @mcp.tool
@@ -1892,8 +1944,7 @@ def warm_cache(
     """
     if not settings.predictive_cache_enabled:
         return error_response(
-            "Predictive cache is disabled. "
-            "Set MEMORY_MCP_PREDICTIVE_CACHE_ENABLED=true to enable."
+            "Predictive cache is disabled. Set MEMORY_MCP_PREDICTIVE_CACHE_ENABLED=true to enable."
         )
 
     promoted_ids = storage.warm_predicted_cache(memory_id)

@@ -131,6 +131,21 @@ class Settings(BaseSettings):
     max_recall_limit: int = Field(default=100, description="Maximum results per recall")
     max_tags: int = Field(default=20, description="Maximum tags per memory")
 
+    # Memory retention (days before archival, 0 = never expire)
+    # These control auto-cleanup of old unused memories
+    retention_project_days: int = Field(
+        default=0, description="Days to retain project memories (0 = forever)"
+    )
+    retention_pattern_days: int = Field(
+        default=180, description="Days to retain pattern memories (0 = forever)"
+    )
+    retention_reference_days: int = Field(
+        default=365, description="Days to retain reference memories (0 = forever)"
+    )
+    retention_conversation_days: int = Field(
+        default=90, description="Days to retain conversation memories (0 = forever)"
+    )
+
     # Predictive hot cache warming (opt-in)
     predictive_cache_enabled: bool = Field(
         default=False, description="Enable predictive hot cache pre-warming"
