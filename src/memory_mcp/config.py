@@ -21,6 +21,13 @@ class Settings(BaseSettings):
         description="Sentence transformer model for embeddings",
     )
     embedding_dim: int = Field(default=384, description="Embedding dimension")
+    embedding_backend: str = Field(
+        default="auto",
+        description=(
+            "Embedding backend: 'auto' (MLX on Apple Silicon, else sentence-transformers), "
+            "'mlx' (force MLX), 'sentence-transformers' (force ST)"
+        ),
+    )
 
     # Hot cache
     hot_cache_max_items: int = Field(default=20, description="Maximum items in hot cache")

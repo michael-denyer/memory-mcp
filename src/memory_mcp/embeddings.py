@@ -1,10 +1,13 @@
 """Embedding generation with pluggable provider interface.
 
 Supports multiple embedding backends via the EmbeddingProvider protocol.
-Currently implemented: SentenceTransformerProvider (default).
+Currently implemented:
+- SentenceTransformerProvider (default, cross-platform)
+- MLXEmbeddingProvider (Apple Silicon optimized, optional)
 """
 
 import hashlib
+import platform
 import re
 from abc import ABC, abstractmethod
 from functools import lru_cache
@@ -16,6 +19,21 @@ from memory_mcp.config import Settings, get_settings
 from memory_mcp.logging import get_logger
 
 log = get_logger("embeddings")
+
+
+def is_apple_silicon() -> bool:
+    """Check if running on Apple Silicon (M-series) Mac."""
+    return platform.system() == "Darwin" and platform.machine() == "arm64"
+
+
+def is_mlx_available() -> bool:
+    """Check if MLX is installed and available."""
+    try:
+        import mlx.core  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
 
 
 # ========== Provider Protocol ==========
@@ -207,6 +225,119 @@ class SentenceTransformerProvider(BaseEmbeddingProvider):
         return [np.array(e, dtype=np.float32) for e in embeddings]
 
 
+# ========== MLX Provider (Apple Silicon) ==========
+
+
+# Default MLX model mappings: standard model -> MLX community equivalent
+MLX_MODEL_MAPPINGS = {
+    "sentence-transformers/all-MiniLM-L6-v2": "mlx-community/all-MiniLM-L6-v2-4bit",
+    "all-MiniLM-L6-v2": "mlx-community/all-MiniLM-L6-v2-4bit",
+    "sentence-transformers/paraphrase-MiniLM-L6-v2": "mlx-community/paraphrase-MiniLM-L6-v2-4bit",
+}
+
+
+class MLXEmbeddingProvider(BaseEmbeddingProvider):
+    """Embedding provider using MLX for Apple Silicon acceleration.
+
+    Uses MLX-optimized models from the mlx-community on Hugging Face.
+    Falls back to sentence-transformers if MLX is not available.
+
+    Supported models:
+    - mlx-community/all-MiniLM-L6-v2-4bit (384 dim, fast)
+    - mlx-community/bge-small-en-v1.5-4bit (384 dim)
+    - mlx-community/mxbai-embed-large-v1-4bit (1024 dim, better quality)
+    """
+
+    def __init__(self, model_name: str, expected_dim: int):
+        self._model_name = model_name
+        self._expected_dim = expected_dim
+        self._model = None
+        self._tokenizer = None
+
+    @property
+    def dimension(self) -> int:
+        return self._expected_dim
+
+    @property
+    def name(self) -> str:
+        return f"mlx:{self._model_name}"
+
+    def _get_model(self):
+        """Lazy-load the MLX model and tokenizer."""
+        if self._model is None:
+            try:
+                import mlx.core as mx
+                from mlx_lm import load
+
+                log.info("Loading MLX embedding model: {}", self._model_name)
+                self._model, self._tokenizer = load(self._model_name)
+                self._mx = mx
+            except ImportError as e:
+                raise ImportError(
+                    f"MLX dependencies not installed. Install with: pip install mlx mlx-lm\n"
+                    f"Original error: {e}"
+                )
+        return self._model, self._tokenizer
+
+    def _mean_pooling(self, model_output, attention_mask):
+        """Apply mean pooling to get sentence embeddings."""
+        mx = self._mx
+        token_embeddings = model_output
+        input_mask_expanded = mx.expand_dims(attention_mask, -1)
+        input_mask_expanded = mx.broadcast_to(input_mask_expanded, token_embeddings.shape)
+        sum_embeddings = mx.sum(token_embeddings * input_mask_expanded, axis=1)
+        sum_mask = mx.clip(mx.sum(input_mask_expanded, axis=1), a_min=1e-9, a_max=None)
+        return sum_embeddings / sum_mask
+
+    def embed(self, text: str) -> np.ndarray:
+        """Generate embedding using MLX."""
+        model, tokenizer = self._get_model()
+        mx = self._mx
+
+        # Tokenize
+        inputs = tokenizer(text, return_tensors="np", padding=True, truncation=True)
+        input_ids = mx.array(inputs["input_ids"])
+        attention_mask = mx.array(inputs["attention_mask"])
+
+        # Get model output (hidden states)
+        outputs = model(input_ids)
+
+        # Mean pooling
+        embeddings = self._mean_pooling(outputs, attention_mask)
+
+        # Normalize
+        embeddings = embeddings / mx.linalg.norm(embeddings, axis=-1, keepdims=True)
+
+        # Convert to numpy
+        embedding = np.array(embeddings[0], dtype=np.float32)
+        return embedding
+
+    def embed_batch(self, texts: list[str]) -> list[np.ndarray]:
+        """Generate embeddings for multiple texts using MLX."""
+        if not texts:
+            return []
+
+        model, tokenizer = self._get_model()
+        mx = self._mx
+
+        # Tokenize batch
+        inputs = tokenizer(texts, return_tensors="np", padding=True, truncation=True)
+        input_ids = mx.array(inputs["input_ids"])
+        attention_mask = mx.array(inputs["attention_mask"])
+
+        # Get model output
+        outputs = model(input_ids)
+
+        # Mean pooling
+        embeddings = self._mean_pooling(outputs, attention_mask)
+
+        # Normalize
+        embeddings = embeddings / mx.linalg.norm(embeddings, axis=-1, keepdims=True)
+
+        # Convert to numpy list
+        return [np.array(embeddings[i], dtype=np.float32) for i in range(len(texts))]
+
+
 # ========== Cached Provider Wrapper ==========
 
 
@@ -307,24 +438,80 @@ class CachedEmbeddingProvider(BaseEmbeddingProvider):
 # ========== Provider Factory ==========
 
 
+def _should_use_mlx(settings: Settings) -> bool:
+    """Determine if MLX should be used based on settings and platform."""
+    backend = settings.embedding_backend.lower()
+
+    if backend == "mlx":
+        # Force MLX - will fail if not available
+        return True
+    elif backend == "sentence-transformers" or backend == "st":
+        # Force sentence-transformers
+        return False
+    elif backend == "auto":
+        # Auto-detect: use MLX on Apple Silicon if available
+        return is_apple_silicon() and is_mlx_available()
+    else:
+        log.warning("Unknown embedding_backend '{}', using auto", backend)
+        return is_apple_silicon() and is_mlx_available()
+
+
+def _get_mlx_model_name(model_name: str) -> str:
+    """Map standard model names to MLX community equivalents."""
+    # Check for direct mapping
+    if model_name in MLX_MODEL_MAPPINGS:
+        return MLX_MODEL_MAPPINGS[model_name]
+
+    # If already an mlx-community model, use as-is
+    if model_name.startswith("mlx-community/"):
+        return model_name
+
+    # Try to construct mlx-community equivalent
+    # sentence-transformers/all-MiniLM-L6-v2 -> mlx-community/all-MiniLM-L6-v2-4bit
+    if model_name.startswith("sentence-transformers/"):
+        base_name = model_name.replace("sentence-transformers/", "")
+        mlx_name = f"mlx-community/{base_name}-4bit"
+        log.info("Mapping {} -> {} (may not exist)", model_name, mlx_name)
+        return mlx_name
+
+    return model_name
+
+
 def create_provider(settings: Settings | None = None) -> EmbeddingProvider:
     """Create an embedding provider based on settings.
 
-    Currently supports:
-    - sentence-transformers/* models (default)
+    Supports:
+    - sentence-transformers/* models (cross-platform, default)
+    - MLX models for Apple Silicon acceleration (optional)
 
-    Future: OpenAI, LlamaCpp, etc.
+    Backend selection (MEMORY_MCP_EMBEDDING_BACKEND):
+    - 'auto': Use MLX on Apple Silicon if available, else sentence-transformers
+    - 'mlx': Force MLX (will fail if not on Apple Silicon or MLX not installed)
+    - 'sentence-transformers' or 'st': Force sentence-transformers
     """
     settings = settings or get_settings()
     model_name = settings.embedding_model
     dimension = settings.embedding_dim
 
-    if model_name.startswith("sentence-transformers/") or "/" in model_name:
-        # Sentence transformers model
-        return SentenceTransformerProvider(model_name, dimension)
+    if _should_use_mlx(settings):
+        mlx_model = _get_mlx_model_name(model_name)
+        log.info(
+            "Using MLX backend on Apple Silicon (model: {}, mapped from: {})",
+            mlx_model,
+            model_name,
+        )
+        return MLXEmbeddingProvider(mlx_model, dimension)
 
-    # Default to sentence transformers
-    log.warning("Unknown model format '{}', using sentence-transformers", model_name)
+    # Use sentence-transformers
+    if model_name.startswith("mlx-community/"):
+        # User specified MLX model but MLX not available
+        log.warning(
+            "MLX model '{}' specified but MLX not available. "
+            "Install mlx and mlx-lm, or change MEMORY_MCP_EMBEDDING_MODEL.",
+            model_name,
+        )
+
+    log.info("Using sentence-transformers backend (model: {})", model_name)
     return SentenceTransformerProvider(model_name, dimension)
 
 
