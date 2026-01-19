@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bd create:*)",
+      "Bash(bd init:*)",
+      "Bash(bd update:*)",
+      "Bash(bd close:*)",
+      "Bash(uv run pytest:*)"
+    ]
+  }
+}
