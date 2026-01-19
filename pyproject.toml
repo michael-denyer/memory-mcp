@@ -28,6 +28,7 @@ dependencies = [
 
 [project.scripts]
 memory-mcp = "memory_mcp.server:main"
+memory-mcp-cli = "memory_mcp.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/michael-denyer/memory-mcp"

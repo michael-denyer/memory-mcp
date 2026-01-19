@@ -148,7 +148,98 @@ Default threshold is 0.7 (configurable via `DEFAULT_CONFIDENCE_THRESHOLD`).
 
 ## Hot Cache Resource
 
-The server exposes `memory://hot-cache` as an MCP resource. Configure Claude Code to auto-include this resource for zero-latency access to frequently-used knowledge.
+The server exposes `memory://hot-cache` as an MCP resource for zero-latency access to frequently-used knowledge.
+
+### Enabling Auto-Injection
+
+To have hot cache contents automatically included in Claude's context, configure the resource in your settings:
+
+1. **Find your settings file**:
+   - Global: `~/.claude/settings.json`
+   - Project: `.claude/settings.json`
+
+2. **Add the resource configuration**:
+
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "command": "uv",
+      "args": ["run", "--directory", "<path-to-memory-mcp>", "memory-mcp"]
+    }
+  }
+}
+```
+
+3. **Verify in Claude Code**:
+   - Run `/mcp` to see available resources
+   - The `memory://hot-cache` resource should be listed
+
+### How It Works
+
+- Memories promoted to hot cache appear in this resource
+- Contents update as you promote/demote memories
+- Claude sees hot cache contents without needing tool calls
+- Keeps system prompts lean (~10-20 items max)
+
+## Automatic Output Logging
+
+For the mining pipeline to work automatically, install the Claude Code hook that logs responses:
+
+### Hook Installation
+
+1. **Make the hook script executable** (already done if you cloned):
+   ```bash
+   chmod +x hooks/memory-log-response.sh
+   ```
+
+2. **Add to your Claude Code settings** (`~/.claude/settings.json`):
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<path-to-memory-mcp>/hooks/memory-log-response.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Replace `<path-to-memory-mcp>` with the absolute path to your memory-mcp installation.
+
+3. **Restart Claude Code** for hooks to take effect.
+
+### What Gets Logged
+
+- Claude's text responses (after each conversation turn)
+- Responses shorter than 50 characters are skipped (acknowledgments)
+- Content is stored in the 7-day rolling output log
+- Run `run_mining()` to extract patterns from logs
+
+### CLI Commands
+
+You can also log content manually or run mining from the command line:
+
+```bash
+# Log content from stdin
+echo "Some content to analyze" | uv run memory-mcp-cli log-output
+
+# Log content from a file
+uv run memory-mcp-cli log-output -f output.txt
+
+# Run mining on recent logs
+uv run memory-mcp-cli run-mining --hours 24
+
+# Output as JSON
+uv run memory-mcp-cli --json log-output -c "Content here"
+```
 
 ## Configuration
 
@@ -273,4 +364,3 @@ Claude: [calls promote(1)]
 ## License
 
 MIT
-n
