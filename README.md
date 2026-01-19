@@ -49,10 +49,19 @@ graph TD
     subgraph "Hot Cache (Zero Latency)"
         H[System Prompt Resource] --> A[High-freq project facts]
         H --> B[Mined code patterns]
+        H --> P[Pinned memories]
     end
 
     subgraph "Cold Storage (Tool Call)"
         C[Vector store] --> D[Semantic search]
+        C --> K[Knowledge graph]
+    end
+
+    subgraph "Bootstrap"
+        BOOT[Auto-detect docs] --> README[README.md]
+        BOOT --> CLAUDE[CLAUDE.md]
+        README --> A
+        CLAUDE --> A
     end
 
     subgraph "Mining Pipeline"
@@ -80,10 +89,25 @@ Memories automatically promote to hot cache after 3 accesses (configurable). Sta
 
 - **Persistent memory** - Survives across sessions, compaction events, IDE restarts
 - **Semantic search** - Find memories by meaning, not just keywords
+- **Auto-bootstrap** - Hot cache auto-populates from README.md, CLAUDE.md when empty
+- **Knowledge graph** - Link related memories with typed relationships
 - **Confidence gating** - Results tagged high/medium/low confidence
+- **Trust management** - Strengthen/weaken memory confidence over time
 - **Pattern mining** - Auto-extract patterns from Claude's outputs
 - **Apple Silicon optimized** - MLX backend auto-detected on M-series Macs
 - **Local-first** - All data in SQLite, no cloud dependency
+
+## How This Compares
+
+| Capability | Memory MCP | Other options |
+|------------|------------|---------------|
+| MCP-native resource | Hot cache exposed as `memory://hot-cache`, auto-injected, 0ms lookup | Most are pull-only search; file configs (claude.md, cline/kilo) require manual reads; vector DBs need wrappers |
+| Auto promotion/demotion | Access-count and recency-based tiering between hot cache and vector store | Generally manual or TTL-based; Letta has policies but not a two-tier cache |
+| Pattern mining | Mines Claude outputs into reusable patterns and promotes them | Not present in Byterover, Zep, Mem0, vector DBs, LangChain/LlamaIndex |
+| Local-first setup | Single `uv run memory-mcp`, ~90MB model, SQLite | Vector DBs require external services; Byterover/Zep/Letta are heavier to deploy; file configs are light but lack semantic search |
+| Hardware awareness | MLX auto-detect on Apple Silicon | Most are backend-agnostic without local M-series optimizations |
+| Team and scale | Single-user/local focus | Byterover offers Git-like team memory; vector DBs (Pinecone/Weaviate/Milvus/pgvector) win on distributed scale |
+| Built-in summarization | Embedding-based recall with hot cache | Zep includes summarization pipelines; vector DBs/LangChain/LlamaIndex rely on added chains |
 
 ## Tools Reference
 
@@ -104,6 +128,8 @@ Memories automatically promote to hot cache after 3 accesses (configurable). Sta
 | `hot_cache_status()` | Show contents, metrics, and effectiveness |
 | `promote(memory_id)` | Manually promote to hot cache |
 | `demote(memory_id)` | Remove from hot cache (keeps in cold storage) |
+| `pin_memory(memory_id)` | Pin memory (prevents auto-eviction) |
+| `unpin_memory(memory_id)` | Unpin memory (allows auto-eviction) |
 
 ### Pattern Mining
 
@@ -118,8 +144,33 @@ Memories automatically promote to hot cache after 3 accesses (configurable). Sta
 
 | Tool | Description |
 |------|-------------|
+| `bootstrap_project(root, files, promote)` | Auto-detect and seed from project docs (README.md, CLAUDE.md, etc.) |
 | `seed_from_text(content, type, promote)` | Parse text into memories |
 | `seed_from_file(path, type, promote)` | Import from file (e.g., CLAUDE.md) |
+
+### Knowledge Graph
+
+| Tool | Description |
+|------|-------------|
+| `link_memories(from_id, to_id, relation, metadata)` | Create relationship between memories |
+| `unlink_memories(from_id, to_id, relation)` | Remove relationship(s) |
+| `get_related_memories(memory_id, relation, direction)` | Find connected memories |
+
+Relation types: `related_to`, `depends_on`, `contradicts`, `supersedes`, `derived_from`, `example_of`
+
+### Trust Management
+
+| Tool | Description |
+|------|-------------|
+| `strengthen_trust(memory_id, amount, reason)` | Increase confidence in a memory |
+| `weaken_trust(memory_id, amount, reason)` | Decrease confidence (e.g., found outdated) |
+
+### Session Tracking
+
+| Tool | Description |
+|------|-------------|
+| `get_or_create_session(session_id, topic)` | Track conversation context |
+| `get_session_memories(session_id)` | Retrieve memories from a session |
 
 ## Memory Types
 
@@ -184,6 +235,7 @@ Add the MCP server to your settings (see Quick Start). The hot cache resource is
 2. Claude sees hot cache contents without needing tool calls
 3. Keeps system prompts lean (~10-20 items max)
 4. Contents update as you promote/demote memories
+5. **Auto-bootstrap**: If hot cache is empty, auto-seeds from project docs (README.md, CLAUDE.md, etc.)
 
 ## Automatic Output Logging
 
@@ -225,6 +277,15 @@ Add to `~/.claude/settings.json`:
 ## CLI Commands
 
 ```bash
+# Bootstrap hot cache from project docs (auto-detects README.md, CLAUDE.md, etc.)
+uv run memory-mcp-cli bootstrap
+
+# Bootstrap from specific directory
+uv run memory-mcp-cli bootstrap -r /path/to/project
+
+# Bootstrap specific files only
+uv run memory-mcp-cli bootstrap -f README.md -f ARCHITECTURE.md
+
 # Log content for mining
 echo "Some content" | uv run memory-mcp-cli log-output
 
