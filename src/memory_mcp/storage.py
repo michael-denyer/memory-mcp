@@ -5,7 +5,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Iterator
@@ -41,6 +41,7 @@ class PromotionSource(str, Enum):
     MANUAL = "manual"  # Explicitly promoted by user
     AUTO_THRESHOLD = "auto_threshold"  # Auto-promoted based on access count
     MINED_APPROVED = "mined_approved"  # Approved from mining candidates
+    PREDICTED = "predicted"  # Pre-warmed based on access pattern prediction
 
 
 class RecallMode(str, Enum):
@@ -244,8 +245,28 @@ class PotentialContradiction:
     already_linked: bool  # Whether contradiction relationship exists
 
 
+@dataclass
+class AccessPattern:
+    """A learned access pattern between memories."""
+
+    from_memory_id: int
+    to_memory_id: int
+    count: int
+    probability: float  # Transition probability
+    last_seen: datetime
+
+
+@dataclass
+class PredictionResult:
+    """A predicted memory that may be needed next."""
+
+    memory: Memory
+    probability: float
+    source_memory_id: int  # Which memory triggered this prediction
+
+
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 -- Schema version tracking
@@ -465,6 +486,8 @@ class Storage:
             self._migrate_v4_to_v5(conn)
         if from_version < 6:
             self._migrate_v5_to_v6(conn)
+        if from_version < 7:
+            self._migrate_v6_to_v7(conn)
 
     def _get_table_columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
         """Get set of column names for a table."""
@@ -587,6 +610,25 @@ class Storage:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_output_log_session ON output_log(session_id)")
 
         log.info("Created sessions table and session tracking columns")
+
+    def _migrate_v6_to_v7(self, conn: sqlite3.Connection) -> None:
+        """Add access_sequences table for predictive hot cache warming."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS access_sequences (
+                from_memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                to_memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                count INTEGER DEFAULT 1,
+                last_seen TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (from_memory_id, to_memory_id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sequences_from ON access_sequences(from_memory_id)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sequences_last ON access_sequences(last_seen)")
+        log.info("Created access_sequences table for predictive cache")
 
     def _check_schema_version(self, conn: sqlite3.Connection) -> None:
         """Check schema version compatibility."""
@@ -2552,6 +2594,227 @@ class Storage:
         else:
             log.warning("Unknown resolution type: {}", resolution)
             return False
+
+    # ========== Predictive Hot Cache Warming ==========
+
+    def record_access_sequence(
+        self,
+        from_memory_id: int,
+        to_memory_id: int,
+    ) -> None:
+        """Record that to_memory was accessed after from_memory.
+
+        Builds a Markov chain of access patterns for prediction.
+        """
+        if not self.settings.predictive_cache_enabled:
+            return
+
+        if from_memory_id == to_memory_id:
+            return
+
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO access_sequences (from_memory_id, to_memory_id, count, last_seen)
+                VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+                ON CONFLICT(from_memory_id, to_memory_id) DO UPDATE SET
+                    count = count + 1,
+                    last_seen = CURRENT_TIMESTAMP
+                """,
+                (from_memory_id, to_memory_id),
+            )
+
+    def get_access_patterns(
+        self,
+        memory_id: int,
+        limit: int = 10,
+    ) -> list[AccessPattern]:
+        """Get learned access patterns from a memory.
+
+        Returns patterns sorted by probability (count / total outgoing).
+        """
+        with self._connection() as conn:
+            # Get total outgoing count for this memory
+            total_row = conn.execute(
+                "SELECT SUM(count) FROM access_sequences WHERE from_memory_id = ?",
+                (memory_id,),
+            ).fetchone()
+            total = total_row[0] if total_row[0] else 0
+
+            if total == 0:
+                return []
+
+            rows = conn.execute(
+                """
+                SELECT from_memory_id, to_memory_id, count, last_seen
+                FROM access_sequences
+                WHERE from_memory_id = ?
+                ORDER BY count DESC
+                LIMIT ?
+                """,
+                (memory_id, limit),
+            ).fetchall()
+
+            return [
+                AccessPattern(
+                    from_memory_id=row["from_memory_id"],
+                    to_memory_id=row["to_memory_id"],
+                    count=row["count"],
+                    probability=row["count"] / total,
+                    last_seen=datetime.fromisoformat(row["last_seen"]),
+                )
+                for row in rows
+            ]
+
+    def predict_next_memories(
+        self,
+        memory_id: int,
+        threshold: float | None = None,
+        limit: int | None = None,
+    ) -> list[PredictionResult]:
+        """Predict which memories might be needed after accessing memory_id.
+
+        Args:
+            memory_id: The memory just accessed
+            threshold: Minimum probability for prediction (default from settings)
+            limit: Maximum predictions (default from settings)
+
+        Returns:
+            List of predicted memories with probabilities.
+        """
+        if not self.settings.predictive_cache_enabled:
+            return []
+
+        threshold = threshold if threshold is not None else self.settings.prediction_threshold
+        limit = limit if limit is not None else self.settings.max_predictions
+
+        patterns = self.get_access_patterns(memory_id, limit=limit * 2)
+
+        results: list[PredictionResult] = []
+        for pattern in patterns:
+            if pattern.probability < threshold:
+                continue
+
+            memory = self.get_memory(pattern.to_memory_id)
+            if memory is None:
+                continue
+
+            results.append(
+                PredictionResult(
+                    memory=memory,
+                    probability=pattern.probability,
+                    source_memory_id=memory_id,
+                )
+            )
+
+            if len(results) >= limit:
+                break
+
+        return results
+
+    def warm_predicted_cache(
+        self,
+        memory_id: int,
+    ) -> list[int]:
+        """Pre-warm hot cache with predicted next memories.
+
+        Returns list of memory IDs that were promoted.
+        """
+        if not self.settings.predictive_cache_enabled:
+            return []
+
+        predictions = self.predict_next_memories(memory_id)
+        promoted_ids: list[int] = []
+
+        for pred in predictions:
+            # Skip if already hot
+            if pred.memory.is_hot:
+                continue
+
+            # Promote to hot cache
+            if self.promote_to_hot(pred.memory.id, PromotionSource.PREDICTED):
+                promoted_ids.append(pred.memory.id)
+                log.debug(
+                    "Predictively promoted memory {} (prob={:.2f} from {})",
+                    pred.memory.id,
+                    pred.probability,
+                    memory_id,
+                )
+
+        return promoted_ids
+
+    def get_all_access_patterns(
+        self,
+        min_count: int = 2,
+        limit: int = 50,
+    ) -> list[AccessPattern]:
+        """Get all learned access patterns across all memories.
+
+        Args:
+            min_count: Minimum access count to include
+            limit: Maximum patterns to return
+
+        Returns:
+            Patterns sorted by count descending.
+        """
+        with self._connection() as conn:
+            # First get totals per source memory for probability calculation
+            rows = conn.execute(
+                """
+                SELECT
+                    s.from_memory_id,
+                    s.to_memory_id,
+                    s.count,
+                    s.last_seen,
+                    (SELECT SUM(count) FROM access_sequences
+                     WHERE from_memory_id = s.from_memory_id) as total
+                FROM access_sequences s
+                WHERE s.count >= ?
+                ORDER BY s.count DESC
+                LIMIT ?
+                """,
+                (min_count, limit),
+            ).fetchall()
+
+            return [
+                AccessPattern(
+                    from_memory_id=row["from_memory_id"],
+                    to_memory_id=row["to_memory_id"],
+                    count=row["count"],
+                    probability=row["count"] / row["total"] if row["total"] else 0,
+                    last_seen=datetime.fromisoformat(row["last_seen"]),
+                )
+                for row in rows
+            ]
+
+    def decay_old_sequences(self) -> int:
+        """Decay access sequences older than sequence_decay_days.
+
+        Reduces count by half for old sequences. Removes if count drops to 0.
+        Returns number of sequences affected.
+        """
+        cutoff = datetime.now() - timedelta(days=self.settings.sequence_decay_days)
+
+        with self.transaction() as conn:
+            # Halve counts for old sequences
+            conn.execute(
+                """
+                UPDATE access_sequences
+                SET count = count / 2
+                WHERE last_seen < ?
+                """,
+                (cutoff.isoformat(),),
+            )
+            affected = conn.execute("SELECT changes()").fetchone()[0]
+
+            # Remove sequences with count = 0
+            conn.execute("DELETE FROM access_sequences WHERE count = 0")
+            deleted = conn.execute("SELECT changes()").fetchone()[0]
+
+            if affected > 0 or deleted > 0:
+                log.info("Decayed {} sequences, removed {} with zero count", affected, deleted)
+
+            return affected
 
     # ========== Session (Conversation Provenance) Methods ==========
 

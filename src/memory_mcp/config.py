@@ -125,6 +125,18 @@ class Settings(BaseSettings):
     max_recall_limit: int = Field(default=100, description="Maximum results per recall")
     max_tags: int = Field(default=20, description="Maximum tags per memory")
 
+    # Predictive hot cache warming (opt-in)
+    predictive_cache_enabled: bool = Field(
+        default=False, description="Enable predictive hot cache pre-warming"
+    )
+    prediction_threshold: float = Field(
+        default=0.3, description="Minimum transition probability for prediction"
+    )
+    max_predictions: int = Field(default=3, description="Maximum memories to predict per recall")
+    sequence_decay_days: int = Field(
+        default=30, description="Days before access sequence counts decay"
+    )
+
     # Recall mode presets
     # Precision mode: high threshold, few results, prioritize similarity
     precision_threshold: float = Field(

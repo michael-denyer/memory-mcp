@@ -255,7 +255,7 @@ class TestSchemaVersioning:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(db_path=Path(tmpdir) / "new.db")
             storage = Storage(settings)
-            assert storage.get_schema_version() == 6  # Updated to v6 (sessions)
+            assert storage.get_schema_version() == 7  # v7: predictive cache
             storage.close()
 
     def test_wal_mode_enabled(self):

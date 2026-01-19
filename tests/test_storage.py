@@ -883,10 +883,10 @@ class TestMemoryRelationships:
             ).fetchone()
             assert result is not None
 
-    def test_schema_version_is_6(self, storage):
-        """Schema version should be 6 after migration."""
+    def test_schema_version_is_7(self, storage):
+        """Schema version should be 7 after migration."""
         version = storage.get_schema_version()
-        assert version == 6
+        assert version == 7
 
 
 # ========== Contradiction Detection Tests ==========
@@ -1422,3 +1422,165 @@ class TestBootstrap:
         utf8_file = project_dir / "utf8.txt"
         utf8_file.write_text("Unicode: \u00e9\u00e8\u00ea")
         assert storage._is_binary_file(utf8_file) is False
+
+
+# ========== Predictive Hot Cache Warming Tests ==========
+
+
+class TestPredictiveCache:
+    """Tests for predictive hot cache warming."""
+
+    @pytest.fixture
+    def predictive_storage(self, tmp_path):
+        """Create storage with predictive caching enabled."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            predictive_cache_enabled=True,
+            prediction_threshold=0.3,
+            max_predictions=3,
+        )
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    @pytest.fixture
+    def non_predictive_storage(self, tmp_path):
+        """Create storage with predictive caching disabled."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            predictive_cache_enabled=False,
+        )
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    def test_record_access_sequence_creates_pattern(self, predictive_storage):
+        """record_access_sequence creates access pattern entries."""
+        mid1, _ = predictive_storage.store_memory("Memory A", MemoryType.PROJECT)
+        mid2, _ = predictive_storage.store_memory("Memory B", MemoryType.PROJECT)
+
+        predictive_storage.record_access_sequence(mid1, mid2)
+
+        patterns = predictive_storage.get_access_patterns(mid1)
+        assert len(patterns) == 1
+        assert patterns[0].to_memory_id == mid2
+        assert patterns[0].count == 1
+
+    def test_record_access_sequence_increments_count(self, predictive_storage):
+        """Repeated sequences increment count."""
+        mid1, _ = predictive_storage.store_memory("Memory A", MemoryType.PROJECT)
+        mid2, _ = predictive_storage.store_memory("Memory B", MemoryType.PROJECT)
+
+        predictive_storage.record_access_sequence(mid1, mid2)
+        predictive_storage.record_access_sequence(mid1, mid2)
+        predictive_storage.record_access_sequence(mid1, mid2)
+
+        patterns = predictive_storage.get_access_patterns(mid1)
+        assert patterns[0].count == 3
+
+    def test_record_access_sequence_disabled_noop(self, non_predictive_storage):
+        """record_access_sequence does nothing when disabled."""
+        mid1, _ = non_predictive_storage.store_memory("Memory A", MemoryType.PROJECT)
+        mid2, _ = non_predictive_storage.store_memory("Memory B", MemoryType.PROJECT)
+
+        non_predictive_storage.record_access_sequence(mid1, mid2)
+
+        patterns = non_predictive_storage.get_access_patterns(mid1)
+        assert len(patterns) == 0
+
+    def test_get_access_patterns_calculates_probability(self, predictive_storage):
+        """get_access_patterns returns correct probabilities."""
+        mid1, _ = predictive_storage.store_memory("Source", MemoryType.PROJECT)
+        mid2, _ = predictive_storage.store_memory("Target A", MemoryType.PROJECT)
+        mid3, _ = predictive_storage.store_memory("Target B", MemoryType.PROJECT)
+
+        # Create pattern: mid1 -> mid2 (3 times), mid1 -> mid3 (1 time)
+        for _ in range(3):
+            predictive_storage.record_access_sequence(mid1, mid2)
+        predictive_storage.record_access_sequence(mid1, mid3)
+
+        patterns = predictive_storage.get_access_patterns(mid1)
+
+        assert len(patterns) == 2
+        # mid2 should have probability 0.75 (3/4)
+        mid2_pattern = next(p for p in patterns if p.to_memory_id == mid2)
+        assert mid2_pattern.probability == 0.75
+        # mid3 should have probability 0.25 (1/4)
+        mid3_pattern = next(p for p in patterns if p.to_memory_id == mid3)
+        assert mid3_pattern.probability == 0.25
+
+    def test_predict_next_memories_returns_predictions(self, predictive_storage):
+        """predict_next_memories returns predicted memories."""
+        mid1, _ = predictive_storage.store_memory("Source memory", MemoryType.PROJECT)
+        mid2, _ = predictive_storage.store_memory("Target memory", MemoryType.PROJECT)
+
+        # Create high-frequency pattern
+        for _ in range(5):
+            predictive_storage.record_access_sequence(mid1, mid2)
+
+        predictions = predictive_storage.predict_next_memories(mid1)
+
+        assert len(predictions) == 1
+        assert predictions[0].memory.id == mid2
+        assert predictions[0].probability == 1.0
+
+    def test_predict_next_memories_respects_threshold(self, predictive_storage):
+        """Predictions below threshold are not returned."""
+        mid1, _ = predictive_storage.store_memory("Source", MemoryType.PROJECT)
+        mid2, _ = predictive_storage.store_memory("Target A", MemoryType.PROJECT)
+        mid3, _ = predictive_storage.store_memory("Target B", MemoryType.PROJECT)
+
+        # mid2 has 80% probability, mid3 has 20%
+        for _ in range(4):
+            predictive_storage.record_access_sequence(mid1, mid2)
+        predictive_storage.record_access_sequence(mid1, mid3)
+
+        # With 0.3 threshold, only mid2 should be returned
+        predictions = predictive_storage.predict_next_memories(mid1, threshold=0.3)
+
+        assert len(predictions) == 1
+        assert predictions[0].memory.id == mid2
+
+    def test_warm_predicted_cache_promotes_memories(self, predictive_storage):
+        """warm_predicted_cache promotes predicted memories."""
+        mid1, _ = predictive_storage.store_memory("Source", MemoryType.PROJECT)
+        mid2, _ = predictive_storage.store_memory("Target", MemoryType.PROJECT)
+
+        for _ in range(5):
+            predictive_storage.record_access_sequence(mid1, mid2)
+
+        promoted = predictive_storage.warm_predicted_cache(mid1)
+
+        assert mid2 in promoted
+        # Verify it's now hot
+        memory = predictive_storage.get_memory(mid2)
+        assert memory.is_hot is True
+        assert memory.promotion_source == PromotionSource.PREDICTED
+
+    def test_warm_predicted_cache_skips_already_hot(self, predictive_storage):
+        """warm_predicted_cache doesn't re-promote hot memories."""
+        mid1, _ = predictive_storage.store_memory("Source", MemoryType.PROJECT)
+        mid2, _ = predictive_storage.store_memory("Target", MemoryType.PROJECT)
+
+        # Make mid2 hot first
+        predictive_storage.promote_to_hot(mid2)
+
+        for _ in range(5):
+            predictive_storage.record_access_sequence(mid1, mid2)
+
+        promoted = predictive_storage.warm_predicted_cache(mid1)
+
+        assert mid2 not in promoted  # Already hot
+
+    def test_schema_version_is_7(self, predictive_storage):
+        """Schema version should be 7 after migration."""
+        version = predictive_storage.get_schema_version()
+        assert version == 7
+
+    def test_access_sequences_table_exists(self, predictive_storage):
+        """access_sequences table should exist."""
+        with predictive_storage._connection() as conn:
+            result = conn.execute(
+                "SELECT name FROM sqlite_master " "WHERE type='table' AND name='access_sequences'"
+            ).fetchone()
+            assert result is not None
