@@ -187,7 +187,21 @@ Add the MCP server to your settings (see Quick Start). The hot cache resource is
 
 ## Automatic Output Logging
 
-For pattern mining to work automatically, install the Claude Code hook:
+For pattern mining to work automatically, install the Claude Code hook.
+
+### Prerequisites
+
+The hook script requires `jq` for JSON parsing:
+
+```bash
+# macOS
+brew install jq
+
+# Ubuntu/Debian
+sudo apt install jq
+```
+
+### Installation
 
 ```bash
 chmod +x hooks/memory-log-response.sh

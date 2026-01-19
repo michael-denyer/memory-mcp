@@ -27,6 +27,13 @@
 
 set -e
 
+# Check for required dependencies
+if ! command -v jq &> /dev/null; then
+    echo "Error: jq is required but not installed." >&2
+    echo "Install with: brew install jq (macOS) or apt install jq (Linux)" >&2
+    exit 1
+fi
+
 # Extract transcript path from hook input (stdin)
 TRANSCRIPT_PATH=$(jq -r '.transcript_path // empty')
 
