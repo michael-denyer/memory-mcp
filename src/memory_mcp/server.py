@@ -1,5 +1,6 @@
 """FastMCP server with memory tools and hot cache resource."""
 
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastmcp import FastMCP
@@ -87,6 +88,17 @@ class RelatedMemoryResponse(BaseModel):
     relationship: RelationshipResponse
 
 
+class FormattedMemory(BaseModel):
+    """LLM-friendly formatted memory with annotations."""
+
+    summary: str  # Concise one-line summary
+    memory_type: str  # project, pattern, reference, conversation
+    tags: list[str]
+    age: str  # Human-readable age: "2 hours", "3 days", "2 weeks"
+    confidence: str  # high, medium, low based on similarity
+    source_hint: str  # "hot cache" or "cold storage"
+
+
 class RecallResponse(BaseModel):
     """Response for recall operation."""
 
@@ -97,6 +109,9 @@ class RecallResponse(BaseModel):
     guidance: str
     # Scoring explanation
     ranking_factors: str
+    # LLM-friendly context (use this for quick understanding)
+    formatted_context: list[FormattedMemory] | None = None
+    context_summary: str | None = None  # One-line summary of what was found
     # Promotion feedback
     promotion_suggestions: list[dict] | None = None
     # Related memories (when include_related=True)
@@ -294,6 +309,109 @@ def get_promotion_suggestions(memories: list[Memory], max_suggestions: int = 2) 
     return suggestions
 
 
+def format_age(created_at: datetime) -> str:
+    """Format memory age as human-readable string."""
+    now = datetime.now(timezone.utc)
+    # Handle naive datetime (assume UTC) vs aware datetime
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    delta = now - created_at
+
+    if delta.days >= 365:
+        years = delta.days // 365
+        return f"{years} year{'s' if years > 1 else ''}"
+    elif delta.days >= 30:
+        months = delta.days // 30
+        return f"{months} month{'s' if months > 1 else ''}"
+    elif delta.days >= 7:
+        weeks = delta.days // 7
+        return f"{weeks} week{'s' if weeks > 1 else ''}"
+    elif delta.days >= 1:
+        return f"{delta.days} day{'s' if delta.days > 1 else ''}"
+    elif delta.seconds >= 3600:
+        hours = delta.seconds // 3600
+        return f"{hours} hour{'s' if hours > 1 else ''}"
+    else:
+        return "just now"
+
+
+def get_similarity_confidence(similarity: float | None) -> str:
+    """Map similarity score to confidence label."""
+    if similarity is None:
+        return "unknown"
+    if similarity >= settings.high_confidence_threshold:
+        return "high"
+    if similarity >= settings.default_confidence_threshold:
+        return "medium"
+    return "low"
+
+
+def summarize_content(content: str, max_length: int = 150) -> str:
+    """Create concise summary of memory content.
+
+    - Strips code blocks to first line
+    - Truncates long content with ellipsis
+    - Preserves key information
+    """
+    lines = content.strip().split("\n")
+
+    # If it's a code block, take the first meaningful line
+    if content.startswith("```") or content.startswith("["):
+        # Find first non-empty, non-fence line
+        for line in lines:
+            if line and not line.startswith("```") and not line.startswith("["):
+                summary = line.strip()
+                break
+        else:
+            summary = lines[0] if lines else content
+    else:
+        # Take first line for prose
+        summary = lines[0].strip() if lines else content
+
+    # Truncate if needed
+    if len(summary) > max_length:
+        summary = summary[: max_length - 3] + "..."
+
+    return summary
+
+
+def format_memories_for_llm(
+    memories: list[Memory],
+) -> tuple[list[FormattedMemory], str]:
+    """Transform memories into LLM-friendly format.
+
+    Returns:
+        Tuple of (formatted memories list, context summary string)
+    """
+    if not memories:
+        return [], "No matching memories found"
+
+    formatted = []
+    type_counts: dict[str, int] = {}
+
+    for m in memories:
+        # Count by type for summary
+        mem_type = m.memory_type.value
+        type_counts[mem_type] = type_counts.get(mem_type, 0) + 1
+
+        formatted.append(
+            FormattedMemory(
+                summary=summarize_content(m.content),
+                memory_type=mem_type,
+                tags=m.tags[:5],  # Limit tags shown
+                age=format_age(m.created_at),
+                confidence=get_similarity_confidence(m.similarity),
+                source_hint="hot cache" if m.is_hot else "cold storage",
+            )
+        )
+
+    # Build context summary
+    type_parts = [f"{count} {typ}" for typ, count in type_counts.items()]
+    summary = f"Found {len(memories)} memories: {', '.join(type_parts)}"
+
+    return formatted, summary
+
+
 @mcp.tool
 def remember(
     content: Annotated[str, Field(description="The content to remember")],
@@ -478,6 +596,9 @@ def recall(
                         )
                     )
 
+    # Format memories for LLM-friendly consumption
+    formatted_context, context_summary = format_memories_for_llm(result.memories)
+
     return RecallResponse(
         memories=[memory_to_response(m) for m in result.memories],
         confidence=result.confidence,
@@ -485,6 +606,8 @@ def recall(
         mode=result.mode.value if result.mode else "balanced",
         guidance=result.guidance or "",
         ranking_factors=build_ranking_factors(result.mode),
+        formatted_context=formatted_context if formatted_context else None,
+        context_summary=context_summary,
         promotion_suggestions=suggestions if suggestions else None,
         related_memories=related_list if related_list else None,
     )
@@ -526,6 +649,9 @@ def recall_with_fallback(
     # Generate promotion suggestions for frequently-accessed cold memories
     suggestions = get_promotion_suggestions(result.memories) if result.memories else None
 
+    # Format memories for LLM-friendly consumption
+    formatted_context, context_summary = format_memories_for_llm(result.memories)
+
     return RecallResponse(
         memories=[memory_to_response(m) for m in result.memories],
         confidence=result.confidence,
@@ -533,6 +659,8 @@ def recall_with_fallback(
         mode=result.mode.value if result.mode else "balanced",
         guidance=result.guidance or "",
         ranking_factors=build_ranking_factors(result.mode, prefix="Fallback search"),
+        formatted_context=formatted_context if formatted_context else None,
+        context_summary=context_summary,
         promotion_suggestions=suggestions if suggestions else None,
     )
 

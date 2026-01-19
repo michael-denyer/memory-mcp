@@ -640,3 +640,216 @@ class TestEmptyContentValidation:
         result = log_output_fn(content="  \t\n  ")
         assert result.get("success") is False
         assert "empty" in result.get("error", "").lower()
+
+
+# ========== Context Shaping Tests ==========
+
+
+class TestContextShaping:
+    """Tests for LLM-friendly context shaping in recall responses."""
+
+    def test_format_age_just_now(self):
+        """format_age returns 'just now' for very recent times."""
+        from datetime import datetime, timedelta, timezone
+
+        from memory_mcp.server import format_age
+
+        now = datetime.now(timezone.utc)
+        recent = now - timedelta(seconds=30)
+        assert format_age(recent) == "just now"
+
+    def test_format_age_hours(self):
+        """format_age returns hours for recent times."""
+        from datetime import datetime, timedelta, timezone
+
+        from memory_mcp.server import format_age
+
+        now = datetime.now(timezone.utc)
+        hours_ago = now - timedelta(hours=5)
+        assert format_age(hours_ago) == "5 hours"
+
+    def test_format_age_days(self):
+        """format_age returns days for multi-day times."""
+        from datetime import datetime, timedelta, timezone
+
+        from memory_mcp.server import format_age
+
+        now = datetime.now(timezone.utc)
+        days_ago = now - timedelta(days=3)
+        assert format_age(days_ago) == "3 days"
+
+    def test_format_age_weeks(self):
+        """format_age returns weeks for multi-week times."""
+        from datetime import datetime, timedelta, timezone
+
+        from memory_mcp.server import format_age
+
+        now = datetime.now(timezone.utc)
+        weeks_ago = now - timedelta(days=14)
+        assert format_age(weeks_ago) == "2 weeks"
+
+    def test_format_age_months(self):
+        """format_age returns months for multi-month times."""
+        from datetime import datetime, timedelta, timezone
+
+        from memory_mcp.server import format_age
+
+        now = datetime.now(timezone.utc)
+        months_ago = now - timedelta(days=60)
+        assert format_age(months_ago) == "2 months"
+
+    def test_format_age_years(self):
+        """format_age returns years for multi-year times."""
+        from datetime import datetime, timedelta, timezone
+
+        from memory_mcp.server import format_age
+
+        now = datetime.now(timezone.utc)
+        years_ago = now - timedelta(days=400)
+        assert format_age(years_ago) == "1 year"
+
+    def test_summarize_content_short_text(self):
+        """summarize_content returns short text unchanged."""
+        from memory_mcp.server import summarize_content
+
+        content = "This is a short fact about the project."
+        assert summarize_content(content) == content
+
+    def test_summarize_content_long_text_truncates(self):
+        """summarize_content truncates long text with ellipsis."""
+        from memory_mcp.server import summarize_content
+
+        content = "x" * 200
+        result = summarize_content(content, max_length=50)
+        assert len(result) == 50
+        assert result.endswith("...")
+
+    def test_summarize_content_multiline_takes_first(self):
+        """summarize_content takes first line of multiline text."""
+        from memory_mcp.server import summarize_content
+
+        content = "First line is important.\nSecond line is detail.\nThird is more."
+        assert summarize_content(content) == "First line is important."
+
+    def test_summarize_content_code_block_extracts_code(self):
+        """summarize_content extracts meaningful content from code blocks."""
+        from memory_mcp.server import summarize_content
+
+        content = "```python\ndef hello_world():\n    print('hello')\n```"
+        result = summarize_content(content)
+        assert "def hello_world" in result
+
+    def test_get_similarity_confidence_high(self):
+        """get_similarity_confidence returns 'high' for high scores."""
+        from memory_mcp.server import get_similarity_confidence
+
+        assert get_similarity_confidence(0.90) == "high"
+        assert get_similarity_confidence(0.95) == "high"
+
+    def test_get_similarity_confidence_medium(self):
+        """get_similarity_confidence returns 'medium' for medium scores."""
+        from memory_mcp.server import get_similarity_confidence
+
+        assert get_similarity_confidence(0.75) == "medium"
+        assert get_similarity_confidence(0.80) == "medium"
+
+    def test_get_similarity_confidence_low(self):
+        """get_similarity_confidence returns 'low' for low scores."""
+        from memory_mcp.server import get_similarity_confidence
+
+        assert get_similarity_confidence(0.50) == "low"
+        assert get_similarity_confidence(0.65) == "low"
+
+    def test_get_similarity_confidence_none(self):
+        """get_similarity_confidence returns 'unknown' for None."""
+        from memory_mcp.server import get_similarity_confidence
+
+        assert get_similarity_confidence(None) == "unknown"
+
+    def test_format_memories_for_llm_empty(self):
+        """format_memories_for_llm handles empty list."""
+        from memory_mcp.server import format_memories_for_llm
+
+        formatted, summary = format_memories_for_llm([])
+        assert formatted == []
+        assert summary == "No matching memories found"
+
+    def test_format_memories_for_llm_basic(self, storage):
+        """format_memories_for_llm creates formatted memories with annotations."""
+        from memory_mcp.server import format_memories_for_llm
+
+        # Store a memory
+        mem_id, _ = storage.store_memory(
+            "This project uses SQLite for persistence.",
+            MemoryType.PROJECT,
+            tags=["database", "architecture"],
+        )
+        memory = storage.get_memory(mem_id)
+        memory.similarity = 0.80  # Simulate recall score (below high_confidence_threshold of 0.85)
+
+        formatted, summary = format_memories_for_llm([memory])
+
+        assert len(formatted) == 1
+        assert formatted[0].memory_type == "project"
+        assert "database" in formatted[0].tags
+        assert formatted[0].age == "just now"
+        assert formatted[0].confidence == "medium"  # 0.80 is medium (below 0.85 high threshold)
+        assert formatted[0].source_hint == "cold storage"  # Not promoted
+
+    def test_format_memories_for_llm_hot_cache_hint(self, storage):
+        """format_memories_for_llm shows hot cache hint for promoted memories."""
+        from memory_mcp.server import format_memories_for_llm
+
+        mem_id, _ = storage.store_memory("Hot memory content", MemoryType.PROJECT)
+        storage.promote_to_hot(mem_id)
+        memory = storage.get_memory(mem_id)
+        memory.similarity = 0.90
+
+        formatted, summary = format_memories_for_llm([memory])
+
+        assert formatted[0].source_hint == "hot cache"
+        assert formatted[0].confidence == "high"  # 0.90 is high
+
+    def test_format_memories_for_llm_summary(self, storage):
+        """format_memories_for_llm generates context summary."""
+        from memory_mcp.server import format_memories_for_llm
+
+        # Store different memory types
+        id1, _ = storage.store_memory("Project fact 1", MemoryType.PROJECT)
+        id2, _ = storage.store_memory("Pattern code 1", MemoryType.PATTERN)
+        id3, _ = storage.store_memory("Pattern code 2", MemoryType.PATTERN)
+
+        memories = [storage.get_memory(id1), storage.get_memory(id2), storage.get_memory(id3)]
+        for m in memories:
+            m.similarity = 0.80
+
+        formatted, summary = format_memories_for_llm(memories)
+
+        assert "Found 3 memories" in summary
+        assert "1 project" in summary
+        assert "2 pattern" in summary
+
+    def test_recall_includes_formatted_context(self, storage, monkeypatch):
+        """recall response includes formatted_context and context_summary."""
+        import memory_mcp.server as server_module
+
+        monkeypatch.setattr(server_module, "storage", storage)
+        monkeypatch.setattr(server_module, "settings", storage.settings)
+
+        # Store a memory
+        storage.store_memory(
+            "The API uses JWT tokens for authentication.",
+            MemoryType.PROJECT,
+            tags=["auth", "api"],
+        )
+
+        recall_fn = server_module.recall.fn
+        result = recall_fn(query="authentication tokens")
+
+        # Response should have formatted_context
+        assert hasattr(result, "formatted_context")
+        assert hasattr(result, "context_summary")
+        if result.memories:  # If we got results
+            assert result.formatted_context is not None
+            assert len(result.formatted_context) == len(result.memories)
+            assert "Found" in result.context_summary
