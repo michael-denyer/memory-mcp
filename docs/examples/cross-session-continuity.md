@@ -78,9 +78,46 @@ Claude: [calls recall("authentication approaches", mode="exploratory")]
 Claude: [calls recall_with_fallback("auth token")]
 ```
 
+## Linking Related Decisions
+
+Use the knowledge graph to connect related memories:
+
+```
+You: "Link the JWT algorithm decision to the token expiry decision"
+
+Claude: [calls link_memories(from_id=5, to_id=6, relation="related_to",
+         metadata="Both part of auth system design")]
+
+→ Created relationship between #5 and #6
+
+You: "What decisions are related to the JWT one?"
+
+Claude: [calls get_related_memories(memory_id=5, direction="both")]
+
+→ Shows #6 (token expiry) and any other linked memories
+```
+
+## Updating Confidence Over Time
+
+If you discover a memory is outdated or confirmed correct:
+
+```
+You: "The 15-minute token expiry is working well, strengthen that memory"
+
+Claude: [calls strengthen_trust(memory_id=6, amount=0.1,
+         reason="Confirmed working in production")]
+
+You: "Actually, we changed to RS384 - weaken the RS256 memory"
+
+Claude: [calls weaken_trust(memory_id=5, amount=0.2,
+         reason="Algorithm changed to RS384")]
+```
+
 ## Tips
 
 - **Store decisions with reasoning**: Include the "why" not just the "what"
 - **Tag related decisions**: Use consistent tags like `auth`, `decision`, `api`
+- **Link related memories**: Use knowledge graph for decision chains
+- **Update trust**: Strengthen confirmed info, weaken outdated info
 - **Store gotchas**: "This doesn't work because..." saves future debugging
 - **Use precision mode**: When implementing, use high-confidence results only

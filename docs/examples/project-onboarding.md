@@ -6,6 +6,21 @@ Store key project facts in memory so Claude can reference them across sessions.
 
 You're starting work on a new project and want Claude to remember the important details without repeating them each session.
 
+## Quick Start: Auto-Bootstrap
+
+If your project has README.md or CLAUDE.md, the hot cache auto-populates on first access:
+
+```
+# Via CLI
+uv run memory-mcp-cli bootstrap
+
+# Or via MCP tool
+Claude: [calls bootstrap_project()]
+→ Bootstrapped 15 memories from 2 file(s) (15 promoted to hot cache)
+```
+
+For manual control, follow the steps below.
+
 ## Step 1: Store Project Facts
 
 Tell Claude about your project:
