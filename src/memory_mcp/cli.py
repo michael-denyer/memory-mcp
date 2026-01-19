@@ -3,98 +3,119 @@
 These commands can be called from shell scripts and Claude Code hooks.
 """
 
-import argparse
 import json
 import sys
 from pathlib import Path
+
+import click
 
 from memory_mcp.config import get_settings
 from memory_mcp.storage import MemorySource, MemoryType, Storage
 from memory_mcp.text_parsing import parse_content_into_chunks
 
 
-def log_output_cmd(args: argparse.Namespace) -> int:
+@click.group()
+@click.option("--json", "use_json", is_flag=True, help="Output in JSON format")
+@click.pass_context
+def cli(ctx: click.Context, use_json: bool) -> None:
+    """CLI commands for memory-mcp."""
+    ctx.ensure_object(dict)
+    ctx.obj["json"] = use_json
+
+
+@cli.command("log-output")
+@click.option("-c", "--content", help="Content to log (or use stdin)")
+@click.option(
+    "-f", "--file", "filepath", type=click.Path(exists=True), help="Read content from file"
+)
+@click.pass_context
+def log_output(ctx: click.Context, content: str | None, filepath: str | None) -> None:
     """Log output content for pattern mining."""
     settings = get_settings()
+    use_json = ctx.obj["json"]
 
     if not settings.mining_enabled:
-        print("Mining is disabled", file=sys.stderr)
-        return 1
+        click.echo("Mining is disabled", err=True)
+        raise SystemExit(1)
 
     # Read content from file or stdin
-    if args.file:
-        with open(args.file, encoding="utf-8") as f:
-            content = f.read()
-    elif args.content:
-        content = args.content
-    else:
+    if filepath:
+        content = Path(filepath).read_text(encoding="utf-8")
+    elif content is None:
         content = sys.stdin.read()
 
     if not content.strip():
-        print("No content to log", file=sys.stderr)
-        return 1
+        click.echo("No content to log", err=True)
+        raise SystemExit(1)
 
     if len(content) > settings.max_content_length:
-        print(
+        click.echo(
             f"Content too long ({len(content)} chars). Max: {settings.max_content_length}",
-            file=sys.stderr,
+            err=True,
         )
-        return 1
+        raise SystemExit(1)
 
     storage = Storage(settings)
     try:
         log_id = storage.log_output(content)
-        if args.json:
-            print(json.dumps({"success": True, "log_id": log_id}))
+        if use_json:
+            click.echo(json.dumps({"success": True, "log_id": log_id}))
         else:
-            print(f"Logged output (id={log_id})")
-        return 0
+            click.echo(f"Logged output (id={log_id})")
     finally:
         storage.close()
 
 
-def run_mining_cmd(args: argparse.Namespace) -> int:
+@cli.command("run-mining")
+@click.option("--hours", default=24, help="Hours of logs to process")
+@click.pass_context
+def run_mining(ctx: click.Context, hours: int) -> None:
     """Run pattern mining on logged outputs."""
     settings = get_settings()
+    use_json = ctx.obj["json"]
 
     if not settings.mining_enabled:
-        print("Mining is disabled", file=sys.stderr)
-        return 1
+        click.echo("Mining is disabled", err=True)
+        raise SystemExit(1)
 
-    from memory_mcp.mining import run_mining
+    from memory_mcp.mining import run_mining as do_mining
 
     storage = Storage(settings)
     try:
-        result = run_mining(storage, hours=args.hours)
-        if args.json:
-            print(json.dumps(result))
+        result = do_mining(storage, hours=hours)
+        if use_json:
+            click.echo(json.dumps(result))
         else:
-            print(f"Processed {result['outputs_processed']} outputs")
-            print(f"Found {result['patterns_found']} patterns")
-        return 0
+            click.echo(f"Processed {result['outputs_processed']} outputs")
+            click.echo(f"Found {result['patterns_found']} patterns")
     finally:
         storage.close()
 
 
-def seed_cmd(args: argparse.Namespace) -> int:
-    """Seed memories from a file."""
-    path = Path(args.file).expanduser()
-    if not path.exists():
-        print(f"File not found: {args.file}", file=sys.stderr)
-        return 1
+@cli.command("seed")
+@click.argument("file", type=click.Path(exists=True))
+@click.option(
+    "-t",
+    "--type",
+    "memory_type",
+    default="project",
+    type=click.Choice(["project", "pattern", "reference", "conversation"]),
+    help="Memory type",
+)
+@click.option("--promote", is_flag=True, help="Promote all seeded memories to hot cache")
+@click.pass_context
+def seed(ctx: click.Context, file: str, memory_type: str, promote: bool) -> None:
+    """Seed memories from a file (e.g., CLAUDE.md)."""
+    use_json = ctx.obj["json"]
+    path = Path(file).expanduser()
 
     try:
         content = path.read_text(encoding="utf-8")
     except OSError as e:
-        print(f"Read error: {e}", file=sys.stderr)
-        return 1
+        click.echo(f"Read error: {e}", err=True)
+        raise SystemExit(1)
 
-    try:
-        mem_type = MemoryType(args.type)
-    except ValueError:
-        print(f"Invalid type: {args.type}", file=sys.stderr)
-        return 1
-
+    mem_type = MemoryType(memory_type)
     settings = get_settings()
     chunks = parse_content_into_chunks(content)
     created, skipped, errors = 0, 0, []
@@ -113,15 +134,15 @@ def seed_cmd(args: argparse.Namespace) -> int:
             )
             if is_new:
                 created += 1
-                if args.promote:
+                if promote:
                     storage.promote_to_hot(memory_id)
             else:
                 skipped += 1
     finally:
         storage.close()
 
-    if args.json:
-        print(
+    if use_json:
+        click.echo(
             json.dumps(
                 {
                     "memories_created": created,
@@ -131,77 +152,21 @@ def seed_cmd(args: argparse.Namespace) -> int:
             )
         )
     else:
-        print(f"Created {created} memories, skipped {skipped} duplicates")
+        click.echo(f"Created {created} memories, skipped {skipped} duplicates")
         if errors:
-            print(f"Errors: {len(errors)}")
-
-    return 0
+            click.echo(f"Errors: {len(errors)}")
 
 
 def main() -> int:
     """Main CLI entry point."""
-    parser = argparse.ArgumentParser(
-        prog="memory-mcp-cli",
-        description="CLI commands for memory-mcp",
-    )
-    parser.add_argument("--json", action="store_true", help="Output in JSON format")
-
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    # log-output command
-    log_parser = subparsers.add_parser(
-        "log-output",
-        help="Log output content for pattern mining",
-    )
-    log_parser.add_argument(
-        "-c",
-        "--content",
-        help="Content to log (or use stdin)",
-    )
-    log_parser.add_argument(
-        "-f",
-        "--file",
-        help="Read content from file",
-    )
-    log_parser.set_defaults(func=log_output_cmd)
-
-    # run-mining command
-    mining_parser = subparsers.add_parser(
-        "run-mining",
-        help="Run pattern mining on logged outputs",
-    )
-    mining_parser.add_argument(
-        "--hours",
-        type=int,
-        default=24,
-        help="Hours of logs to process (default: 24)",
-    )
-    mining_parser.set_defaults(func=run_mining_cmd)
-
-    # seed command
-    seed_parser = subparsers.add_parser(
-        "seed",
-        help="Seed memories from a file (e.g., CLAUDE.md)",
-    )
-    seed_parser.add_argument(
-        "file",
-        help="File to import memories from",
-    )
-    seed_parser.add_argument(
-        "-t",
-        "--type",
-        default="project",
-        help="Memory type (project, pattern, reference, conversation)",
-    )
-    seed_parser.add_argument(
-        "--promote",
-        action="store_true",
-        help="Promote all seeded memories to hot cache",
-    )
-    seed_parser.set_defaults(func=seed_cmd)
-
-    args = parser.parse_args()
-    return args.func(args)
+    try:
+        cli(standalone_mode=False)
+        return 0
+    except click.ClickException as e:
+        e.show()
+        return 1
+    except SystemExit as e:
+        return e.code if isinstance(e.code, int) else 1
 
 
 if __name__ == "__main__":
