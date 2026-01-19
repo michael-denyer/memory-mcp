@@ -1837,6 +1837,7 @@ class Storage:
 
         with self._connection() as conn:
             # Build query with optional type filter
+            # Include all Memory fields for accurate response mapping
             if memory_types:
                 type_placeholders = ",".join("?" * len(memory_types))
                 type_values = [t.value for t in memory_types]
@@ -1848,10 +1849,15 @@ class Storage:
                         m.memory_type,
                         m.source,
                         m.is_hot,
+                        m.is_pinned,
+                        m.promotion_source,
                         m.access_count,
                         m.last_accessed_at,
                         m.created_at,
                         m.trust_score,
+                        m.source_log_id,
+                        m.extracted_at,
+                        m.session_id,
                         vec_distance_cosine(v.embedding, ?) as distance
                     FROM memory_vectors v
                     JOIN memories m ON m.id = v.rowid
@@ -1873,10 +1879,15 @@ class Storage:
                         m.memory_type,
                         m.source,
                         m.is_hot,
+                        m.is_pinned,
+                        m.promotion_source,
                         m.access_count,
                         m.last_accessed_at,
                         m.created_at,
                         m.trust_score,
+                        m.source_log_id,
+                        m.extracted_at,
+                        m.session_id,
                         vec_distance_cosine(v.embedding, ?) as distance
                     FROM memory_vectors v
                     JOIN memories m ON m.id = v.rowid
@@ -2390,16 +2401,9 @@ class Storage:
                 (content, session_id),
             )
 
-            # Update session log count if session_id provided
+            # Update session log count if session_id provided (upsert creates if needed)
             if session_id:
-                conn.execute(
-                    """
-                    UPDATE sessions
-                    SET log_count = log_count + 1, last_activity_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (session_id,),
-                )
+                self._update_session_activity(conn, session_id, log_delta=1)
 
             # Cleanup old logs
             conn.execute(
