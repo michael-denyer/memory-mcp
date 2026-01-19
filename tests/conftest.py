@@ -51,12 +51,10 @@ def mock_embedding_engine():
     This dramatically speeds up tests by avoiding the ~90MB model load.
     Embeddings are deterministic based on content hash for reproducibility.
     """
-    mock_engine = MockEmbeddingEngine()
-
     with (
-        patch("memory_mcp.embeddings.get_embedding_engine", return_value=mock_engine),
+        patch("memory_mcp.embeddings.get_embedding_engine", MockEmbeddingEngine),
         patch("memory_mcp.embeddings.EmbeddingEngine", MockEmbeddingEngine),
-        patch("memory_mcp.storage.get_embedding_engine", return_value=mock_engine),
+        patch("memory_mcp.storage.EmbeddingEngine", MockEmbeddingEngine),
     ):
         yield
 

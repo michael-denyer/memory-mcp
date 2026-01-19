@@ -581,3 +581,62 @@ class TestLoggingConfiguration:
         assert "timestamp" in parsed
         assert parsed["level"] == "INFO"
         assert parsed["message"] == "Test message"
+
+
+# ========== Empty Content Validation Tests ==========
+
+
+class TestEmptyContentValidation:
+    """Tests for empty content validation in server tools.
+
+    Tests call the underlying functions directly since FastMCP wraps
+    decorated functions in FunctionTool objects.
+    """
+
+    def test_remember_empty_content_returns_error(self, storage, monkeypatch):
+        """remember with empty content returns error, not exception."""
+        # Import the module-level function (not the FastMCP-wrapped tool)
+        import memory_mcp.server as server_module
+
+        monkeypatch.setattr(server_module, "storage", storage)
+
+        # Get the actual function from the tool wrapper
+        remember_fn = server_module.remember.fn
+        result = remember_fn(content="")
+        assert result.get("success") is False
+        assert "empty" in result.get("error", "").lower()
+
+    def test_remember_whitespace_content_returns_error(self, storage, monkeypatch):
+        """remember with whitespace-only content returns error."""
+        import memory_mcp.server as server_module
+
+        monkeypatch.setattr(server_module, "storage", storage)
+
+        remember_fn = server_module.remember.fn
+        result = remember_fn(content="   \n\t  ")
+        assert result.get("success") is False
+        assert "empty" in result.get("error", "").lower()
+
+    def test_log_output_empty_content_returns_error(self, storage, monkeypatch):
+        """log_output with empty content returns error, not exception."""
+        import memory_mcp.server as server_module
+
+        monkeypatch.setattr(server_module, "storage", storage)
+        monkeypatch.setattr(server_module, "settings", storage.settings)
+
+        log_output_fn = server_module.log_output.fn
+        result = log_output_fn(content="")
+        assert result.get("success") is False
+        assert "empty" in result.get("error", "").lower()
+
+    def test_log_output_whitespace_content_returns_error(self, storage, monkeypatch):
+        """log_output with whitespace-only content returns error."""
+        import memory_mcp.server as server_module
+
+        monkeypatch.setattr(server_module, "storage", storage)
+        monkeypatch.setattr(server_module, "settings", storage.settings)
+
+        log_output_fn = server_module.log_output.fn
+        result = log_output_fn(content="  \t\n  ")
+        assert result.get("success") is False
+        assert "empty" in result.get("error", "").lower()

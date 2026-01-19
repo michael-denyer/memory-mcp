@@ -14,7 +14,7 @@ import numpy as np
 import sqlite_vec
 
 from memory_mcp.config import Settings, ensure_data_dir, get_settings
-from memory_mcp.embeddings import content_hash, get_embedding_engine
+from memory_mcp.embeddings import EmbeddingEngine, content_hash
 from memory_mcp.logging import get_logger
 
 log = get_logger("storage")
@@ -430,7 +430,8 @@ class Storage:
         self.settings = settings or get_settings()
         self._conn: sqlite3.Connection | None = None
         self._lock = threading.RLock()  # Reentrant lock for nested calls
-        self._embedding_engine = get_embedding_engine()
+        # Use settings-aware embedding engine, not global singleton
+        self._embedding_engine = EmbeddingEngine(self.settings)
         self._hot_cache_metrics = HotCacheMetrics()
         log.info("Storage initialized with db_path={}", self.settings.db_path)
 
@@ -2252,6 +2253,7 @@ class Storage:
         """Demote hot memories that haven't been accessed in demotion_days.
 
         Skips pinned memories. Called during maintenance if auto_demote is enabled.
+        Uses created_at as fallback when last_accessed_at is NULL (newly promoted).
 
         Returns list of demoted memory IDs.
         """
@@ -2263,13 +2265,13 @@ class Storage:
 
         with self._connection() as conn:
             # Find stale non-pinned hot memories
+            # Use COALESCE to fall back to created_at for newly promoted memories
             rows = conn.execute(
                 """
                 SELECT id FROM memories
                 WHERE is_hot = 1
                   AND is_pinned = 0
-                  AND (last_accessed_at IS NULL
-                       OR last_accessed_at < datetime('now', ?))
+                  AND COALESCE(last_accessed_at, created_at) < datetime('now', ?)
                 """,
                 (cutoff,),
             ).fetchall()
@@ -2369,8 +2371,12 @@ class Storage:
 
     # ========== Output Logging ==========
 
-    def log_output(self, content: str) -> int:
+    def log_output(self, content: str, session_id: str | None = None) -> int:
         """Log an output for pattern mining.
+
+        Args:
+            content: The output content to log.
+            session_id: Optional session ID for provenance tracking.
 
         Raises:
             ValidationError: If content is empty or exceeds max length.
@@ -2379,7 +2385,21 @@ class Storage:
         self._validate_content(content, "output content")
 
         with self.transaction() as conn:
-            cursor = conn.execute("INSERT INTO output_log (content) VALUES (?)", (content,))
+            cursor = conn.execute(
+                "INSERT INTO output_log (content, session_id) VALUES (?, ?)",
+                (content, session_id),
+            )
+
+            # Update session log count if session_id provided
+            if session_id:
+                conn.execute(
+                    """
+                    UPDATE sessions
+                    SET log_count = log_count + 1, last_activity_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (session_id,),
+                )
 
             # Cleanup old logs
             conn.execute(
@@ -2388,7 +2408,12 @@ class Storage:
             )
 
             log_id = cursor.lastrowid or 0
-            log.debug("Logged output id={} ({} chars)", log_id, len(content))
+            log.debug(
+                "Logged output id={} ({} chars) session={}",
+                log_id,
+                len(content),
+                session_id,
+            )
             return log_id
 
     def get_recent_outputs(self, hours: int = 24) -> list[tuple[int, str, datetime]]:

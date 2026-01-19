@@ -417,17 +417,47 @@ class TestAutoDemotion:
         settings = Settings(
             db_path=tmp_path / "test.db",
             auto_demote=True,
-            demotion_days=0,  # Demote immediately if no recent access
+            demotion_days=1,  # Demote after 1 day without access
         )
         stor = Storage(settings)
 
         memory_id, _ = stor.store_memory("Test content", MemoryType.PROJECT)
         stor.promote_to_hot(memory_id)
 
-        # Memory has NULL last_accessed_at, should be considered stale
+        # Simulate an old memory (demotion uses COALESCE(last_accessed_at, created_at))
+        with stor.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE memories
+                SET created_at = datetime('now', '-30 days'),
+                    last_accessed_at = datetime('now', '-30 days')
+                WHERE id = ?
+                """,
+                (memory_id,),
+            )
+
         demoted = stor.demote_stale_hot_memories()
         assert memory_id in demoted
         assert stor.get_memory(memory_id).is_hot is False
+        stor.close()
+
+    def test_newly_promoted_memory_not_demoted(self, tmp_path):
+        """Newly promoted memory should NOT be demoted even with NULL last_accessed_at."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_demote=True,
+            demotion_days=1,  # Demote after 1 day without access
+        )
+        stor = Storage(settings)
+
+        memory_id, _ = stor.store_memory("Test content", MemoryType.PROJECT)
+        stor.promote_to_hot(memory_id)
+
+        # Memory just created (created_at is now), should NOT be demoted
+        # even though last_accessed_at is NULL
+        demoted = stor.demote_stale_hot_memories()
+        assert demoted == []
+        assert stor.get_memory(memory_id).is_hot is True
         stor.close()
 
     def test_maintenance_includes_auto_demote(self, tmp_path):
@@ -435,12 +465,25 @@ class TestAutoDemotion:
         settings = Settings(
             db_path=tmp_path / "test.db",
             auto_demote=True,
-            demotion_days=0,
+            demotion_days=1,  # Demote after 1 day without access
         )
         stor = Storage(settings)
 
         memory_id, _ = stor.store_memory("Test content", MemoryType.PROJECT)
         stor.promote_to_hot(memory_id)
+
+        # Simulate an old memory by backdating created_at and last_accessed_at
+        # (both need to be old to trigger demotion - created_at is fallback)
+        with stor.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE memories
+                SET created_at = datetime('now', '-30 days'),
+                    last_accessed_at = datetime('now', '-30 days')
+                WHERE id = ?
+                """,
+                (memory_id,),
+            )
 
         result = stor.maintenance()
         assert result["auto_demoted_count"] == 1
@@ -1361,6 +1404,35 @@ class TestSessionProvenance:
         with storage._connection() as conn:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
             assert "session_id" in columns
+
+    def test_log_output_with_session(self, storage):
+        """log_output with session_id increments session log count."""
+        storage.create_or_get_session("log-session")
+
+        storage.log_output("Test output 1", session_id="log-session")
+        storage.log_output("Test output 2", session_id="log-session")
+
+        session = storage.get_session("log-session")
+        assert session.log_count == 2
+
+    def test_log_output_without_session(self, storage):
+        """log_output without session_id works fine."""
+        log_id = storage.log_output("Test output no session")
+        assert log_id > 0
+
+    def test_log_output_stores_session_id_in_log(self, storage):
+        """log_output persists session_id in output_log table."""
+        storage.create_or_get_session("persist-session")
+
+        storage.log_output("Output with session", session_id="persist-session")
+
+        with storage._connection() as conn:
+            row = conn.execute(
+                "SELECT session_id FROM output_log WHERE content = ?",
+                ("Output with session",),
+            ).fetchone()
+            assert row is not None
+            assert row["session_id"] == "persist-session"
 
 
 class TestBootstrap:

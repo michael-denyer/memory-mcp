@@ -314,6 +314,10 @@ def remember(
     """Store a new memory. Returns the memory ID."""
     log.debug("remember() called: type={} tags={} session={}", memory_type, tags, session_id)
 
+    # Validate content not empty
+    if not content or not content.strip():
+        return error_response("Content cannot be empty")
+
     # Validate content length
     if len(content) > settings.max_content_length:
         return error_response(
@@ -784,10 +788,17 @@ def hot_cache_resource() -> str:
 @mcp.tool
 def log_output(
     content: Annotated[str, Field(description="Output content to log for pattern mining")],
+    session_id: Annotated[
+        str | None, Field(description="Session ID for provenance tracking")
+    ] = None,
 ) -> dict:
     """Log an output for pattern mining. Called automatically or manually."""
     if not settings.mining_enabled:
         return error_response("Mining is disabled")
+
+    # Validate content not empty
+    if not content or not content.strip():
+        return error_response("Content cannot be empty")
 
     # Validate content length
     if len(content) > settings.max_content_length:
@@ -795,7 +806,7 @@ def log_output(
             f"Content too long ({len(content)} chars). Max: {settings.max_content_length}"
         )
 
-    log_id = storage.log_output(content)
+    log_id = storage.log_output(content, session_id=session_id)
     return success_response("Output logged", log_id=log_id)
 
 
@@ -1021,7 +1032,7 @@ class BootstrapResponse(BaseModel):
     memories_created: int = 0
     memories_skipped: int = 0
     hot_cache_promoted: int = 0
-    errors: list[str] = []
+    errors: list[str] = Field(default_factory=list)
     message: str = ""
 
 
@@ -1399,7 +1410,7 @@ class MaintenanceResponse(BaseModel):
     vector_count: int
     schema_version: int
     auto_demoted_count: int = 0
-    auto_demoted_ids: list[int] = []
+    auto_demoted_ids: list[int] = Field(default_factory=list)
 
 
 @mcp.tool
