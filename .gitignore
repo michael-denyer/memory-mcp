@@ -47,3 +47,6 @@ Thumbs.db
 
 # Project-specific
 .beads/
+
+# Claude local settings
+.claude/settings.local.json
