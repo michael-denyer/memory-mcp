@@ -4,6 +4,7 @@ import pytest
 
 from memory_mcp.config import Settings
 from memory_mcp.storage import (
+    HotCacheMetrics,
     MemorySource,
     MemoryType,
     Storage,
@@ -180,3 +181,78 @@ class TestStorageValidation:
         """ValidationError is a ValueError subclass for compatibility."""
         with pytest.raises(ValueError):
             storage.store_memory("", MemoryType.PROJECT)
+
+
+# ========== Hot Cache Metrics Tests ==========
+
+
+class TestHotCacheMetrics:
+    """Tests for hot cache observability metrics."""
+
+    def test_initial_metrics_are_zero(self, storage):
+        """Metrics should start at zero."""
+        metrics = storage.get_hot_cache_metrics()
+        assert metrics.hits == 0
+        assert metrics.misses == 0
+        assert metrics.evictions == 0
+        assert metrics.promotions == 0
+
+    def test_record_hit(self, storage):
+        """record_hot_cache_hit should increment hits."""
+        storage.record_hot_cache_hit()
+        storage.record_hot_cache_hit()
+        metrics = storage.get_hot_cache_metrics()
+        assert metrics.hits == 2
+
+    def test_record_miss(self, storage):
+        """record_hot_cache_miss should increment misses."""
+        storage.record_hot_cache_miss()
+        metrics = storage.get_hot_cache_metrics()
+        assert metrics.misses == 1
+
+    def test_promotion_increments_metric(self, storage):
+        """Promoting to hot cache should increment promotions."""
+        memory_id, _ = storage.store_memory("Test content", MemoryType.PROJECT)
+        storage.promote_to_hot(memory_id)
+        metrics = storage.get_hot_cache_metrics()
+        assert metrics.promotions == 1
+
+    def test_eviction_increments_metric(self, tmp_path):
+        """Evicting from hot cache should increment evictions."""
+        settings = Settings(db_path=tmp_path / "test.db", hot_cache_max_items=2)
+        stor = Storage(settings)
+
+        # Fill hot cache
+        id1, _ = stor.store_memory("Content 1", MemoryType.PROJECT)
+        id2, _ = stor.store_memory("Content 2", MemoryType.PROJECT)
+        stor.promote_to_hot(id1)
+        stor.promote_to_hot(id2)
+
+        # Add third item, triggering eviction
+        id3, _ = stor.store_memory("Content 3", MemoryType.PROJECT)
+        stor.promote_to_hot(id3)
+
+        metrics = stor.get_hot_cache_metrics()
+        assert metrics.evictions == 1
+        assert metrics.promotions == 3
+        stor.close()
+
+    def test_get_hot_cache_stats(self, storage):
+        """get_hot_cache_stats should return comprehensive stats."""
+        memory_id, _ = storage.store_memory("Test content", MemoryType.PROJECT)
+        storage.promote_to_hot(memory_id)
+        storage.record_hot_cache_hit()
+
+        stats = storage.get_hot_cache_stats()
+        assert stats["current_count"] == 1
+        assert stats["max_items"] == storage.settings.hot_cache_max_items
+        assert stats["hits"] == 1
+        assert stats["promotions"] == 1
+        assert "avg_hot_score" in stats
+        assert stats["pinned_count"] == 0
+
+    def test_metrics_to_dict(self):
+        """HotCacheMetrics.to_dict should return correct dict."""
+        metrics = HotCacheMetrics(hits=5, misses=2, evictions=1, promotions=3)
+        d = metrics.to_dict()
+        assert d == {"hits": 5, "misses": 2, "evictions": 1, "promotions": 3}

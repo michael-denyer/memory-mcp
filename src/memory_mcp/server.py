@@ -70,12 +70,24 @@ class StatsResponse(BaseModel):
     by_source: dict[str, int]
 
 
+class HotCacheMetricsResponse(BaseModel):
+    """Metrics for hot cache observability."""
+
+    hits: int
+    misses: int
+    evictions: int
+    promotions: int
+
+
 class HotCacheResponse(BaseModel):
     """Response for hot cache status."""
 
     items: list[MemoryResponse]
     max_items: int
     current_count: int
+    pinned_count: int
+    avg_hot_score: float
+    metrics: HotCacheMetricsResponse
 
 
 def memory_to_response(m: Memory) -> MemoryResponse:
@@ -382,12 +394,31 @@ def memory_stats() -> StatsResponse:
 
 @mcp.tool
 def hot_cache_status() -> HotCacheResponse:
-    """Show current hot cache contents and stats."""
+    """Show current hot cache contents, stats, and observability metrics.
+
+    Returns items sorted by hot_score (highest first), along with:
+    - metrics.hits: Times hot cache resource was read with content
+    - metrics.misses: Times hot cache resource was empty
+    - metrics.evictions: Items removed to make space for new ones
+    - metrics.promotions: Items added to hot cache
+    - avg_hot_score: Average hot score of items (for LRU ranking)
+    """
+    stats = storage.get_hot_cache_stats()
     hot_memories = storage.get_hot_memories()
+    metrics = storage.get_hot_cache_metrics()
+
     return HotCacheResponse(
         items=[memory_to_response(m) for m in hot_memories],
-        max_items=settings.hot_cache_max_items,
-        current_count=len(hot_memories),
+        max_items=stats["max_items"],
+        current_count=stats["current_count"],
+        pinned_count=stats["pinned_count"],
+        avg_hot_score=stats["avg_hot_score"],
+        metrics=HotCacheMetricsResponse(
+            hits=metrics.hits,
+            misses=metrics.misses,
+            evictions=metrics.evictions,
+            promotions=metrics.promotions,
+        ),
     )
 
 
@@ -444,12 +475,16 @@ def hot_cache_resource() -> str:
 
     Configure Claude Code to include this resource in system prompts
     for zero-latency access to frequently-used knowledge.
+
+    Records hit/miss metrics for observability (see hot_cache_status).
     """
     hot_memories = storage.get_hot_memories()
 
     if not hot_memories:
+        storage.record_hot_cache_miss()
         return "[MEMORY: Hot cache empty - no frequently-accessed patterns yet]"
 
+    storage.record_hot_cache_hit()
     lines = ["[MEMORY: Hot Cache - High-confidence patterns]"]
     for m in hot_memories:
         tags_str = f" [{', '.join(m.tags)}]" if m.tags else ""

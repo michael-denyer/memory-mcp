@@ -115,6 +115,25 @@ class RecallResult:
     guidance: str | None = None  # Hallucination prevention guidance
 
 
+@dataclass
+class HotCacheMetrics:
+    """Metrics for hot cache observability."""
+
+    hits: int = 0  # Times hot cache resource was read with content
+    misses: int = 0  # Recalls that returned no hot cache results
+    evictions: int = 0  # Items removed to make space for new ones
+    promotions: int = 0  # Items added to hot cache
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for API responses."""
+        return {
+            "hits": self.hits,
+            "misses": self.misses,
+            "evictions": self.evictions,
+            "promotions": self.promotions,
+        }
+
+
 # Current schema version - increment when making breaking changes
 SCHEMA_VERSION = 3
 
@@ -209,6 +228,7 @@ class Storage:
         self._conn: sqlite3.Connection | None = None
         self._lock = threading.RLock()  # Reentrant lock for nested calls
         self._embedding_engine = get_embedding_engine()
+        self._hot_cache_metrics = HotCacheMetrics()
         log.info("Storage initialized with db_path={}", self.settings.db_path)
 
     @property
@@ -1141,6 +1161,37 @@ class Storage:
         memories.sort(key=lambda m: m.hot_score or 0, reverse=True)
         return memories
 
+    def record_hot_cache_hit(self) -> None:
+        """Record a hot cache hit (resource was read with content)."""
+        self._hot_cache_metrics.hits += 1
+
+    def record_hot_cache_miss(self) -> None:
+        """Record a hot cache miss (resource was read but empty)."""
+        self._hot_cache_metrics.misses += 1
+
+    def get_hot_cache_metrics(self) -> HotCacheMetrics:
+        """Get current hot cache metrics."""
+        return self._hot_cache_metrics
+
+    def get_hot_cache_stats(self) -> dict:
+        """Get hot cache statistics including metrics and computed values."""
+        hot_memories = self.get_hot_memories()
+        metrics = self._hot_cache_metrics.to_dict()
+
+        # Compute average hot score
+        avg_score = 0.0
+        if hot_memories:
+            scores = [m.hot_score for m in hot_memories if m.hot_score is not None]
+            avg_score = sum(scores) / len(scores) if scores else 0.0
+
+        return {
+            **metrics,
+            "current_count": len(hot_memories),
+            "max_items": self.settings.hot_cache_max_items,
+            "avg_hot_score": round(avg_score, 3),
+            "pinned_count": sum(1 for m in hot_memories if m.is_pinned),
+        }
+
     def _find_eviction_candidate(self, conn: sqlite3.Connection) -> int | None:
         """Find the lowest-scoring non-pinned hot memory for eviction."""
         rows = conn.execute(
@@ -1215,6 +1266,7 @@ class Storage:
                     "UPDATE memories SET is_hot = 0, promotion_source = NULL WHERE id = ?",
                     (evict_id,),
                 )
+                self._hot_cache_metrics.evictions += 1
                 log.debug("Evicted memory id={} from hot cache (lowest score)", evict_id)
 
             # Promote the memory
@@ -1228,6 +1280,7 @@ class Storage:
             )
             promoted = cursor.rowcount > 0
             if promoted:
+                self._hot_cache_metrics.promotions += 1
                 log.info(
                     "Promoted memory id={} to hot cache (source={}, pinned={})",
                     memory_id,
