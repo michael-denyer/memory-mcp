@@ -263,3 +263,135 @@ class TestTrustManagementTools:
         assert mem1.trust_score > mem2.trust_score
         assert mem1.trust_score == 1.0  # Manual memory, never weakened
         assert mem2.trust_score < 0.3  # Started at 0.7, weakened by 0.5
+
+
+# ========== Auto-Bootstrap Tests ==========
+
+
+class TestAutoBootstrap:
+    """Tests for auto-bootstrap functionality."""
+
+    def test_try_auto_bootstrap_with_files(self, tmp_path, monkeypatch):
+        """Auto-bootstrap creates memories when documentation files exist."""
+        from memory_mcp import server
+        from memory_mcp.config import Settings
+
+        # Set up temp directory with README
+        readme = tmp_path / "README.md"
+        readme.write_text("# Test Project\n\n- Feature one\n- Feature two\n")
+
+        # Create fresh storage for this test
+        settings = Settings(db_path=tmp_path / "test.db")
+        test_storage = Storage(settings)
+
+        # Monkeypatch the server's storage and cwd
+        monkeypatch.setattr(server, "storage", test_storage)
+        monkeypatch.chdir(tmp_path)
+
+        # Clear the bootstrap tracking set
+        server._auto_bootstrap_attempted.clear()
+
+        # Trigger auto-bootstrap
+        result = server._try_auto_bootstrap()
+
+        assert result is True
+
+        # Verify memories were created
+        hot_memories = test_storage.get_hot_memories()
+        assert len(hot_memories) >= 1
+
+        # Verify tag was applied
+        assert any("auto-bootstrap" in m.tags for m in hot_memories)
+
+        test_storage.close()
+
+    def test_try_auto_bootstrap_no_files(self, tmp_path, monkeypatch):
+        """Auto-bootstrap returns False when no documentation files exist."""
+        from memory_mcp import server
+        from memory_mcp.config import Settings
+
+        # Create fresh storage for this test
+        settings = Settings(db_path=tmp_path / "test.db")
+        test_storage = Storage(settings)
+
+        # Monkeypatch the server's storage and cwd (empty directory)
+        monkeypatch.setattr(server, "storage", test_storage)
+        monkeypatch.chdir(tmp_path)
+
+        # Clear the bootstrap tracking set
+        server._auto_bootstrap_attempted.clear()
+
+        # Trigger auto-bootstrap
+        result = server._try_auto_bootstrap()
+
+        assert result is False
+
+        # Verify no memories were created
+        hot_memories = test_storage.get_hot_memories()
+        assert len(hot_memories) == 0
+
+        test_storage.close()
+
+    def test_try_auto_bootstrap_only_once_per_directory(self, tmp_path, monkeypatch):
+        """Auto-bootstrap only runs once per directory per session."""
+        from memory_mcp import server
+        from memory_mcp.config import Settings
+
+        # Set up temp directory with README
+        readme = tmp_path / "README.md"
+        readme.write_text("# Test Project\n\n- New content\n")
+
+        # Create fresh storage for this test
+        settings = Settings(db_path=tmp_path / "test.db")
+        test_storage = Storage(settings)
+
+        # Monkeypatch the server's storage and cwd
+        monkeypatch.setattr(server, "storage", test_storage)
+        monkeypatch.chdir(tmp_path)
+
+        # Clear the bootstrap tracking set
+        server._auto_bootstrap_attempted.clear()
+
+        # First call should bootstrap
+        result1 = server._try_auto_bootstrap()
+        assert result1 is True
+
+        # Second call should return False (already attempted)
+        result2 = server._try_auto_bootstrap()
+        assert result2 is False
+
+        test_storage.close()
+
+    def test_hot_cache_resource_triggers_auto_bootstrap(self, tmp_path, monkeypatch):
+        """Hot cache resource triggers auto-bootstrap when empty."""
+        from memory_mcp import server
+        from memory_mcp.config import Settings
+
+        # Set up temp directory with README
+        readme = tmp_path / "README.md"
+        readme.write_text("# Auto Bootstrap Test\n\n- Content line\n")
+
+        # Create fresh storage for this test
+        settings = Settings(db_path=tmp_path / "test.db")
+        test_storage = Storage(settings)
+
+        # Monkeypatch the server's storage and cwd
+        monkeypatch.setattr(server, "storage", test_storage)
+        monkeypatch.chdir(tmp_path)
+
+        # Clear the bootstrap tracking set
+        server._auto_bootstrap_attempted.clear()
+
+        # Call the underlying function (not the FastMCP FunctionResource wrapper)
+        # The actual function is stored in hot_cache_resource.fn
+        content = server.hot_cache_resource.fn()
+
+        # Should have bootstrapped and returned content
+        assert "[MEMORY: Hot Cache" in content
+        assert "empty" not in content.lower()
+
+        # Verify memories exist
+        hot_memories = test_storage.get_hot_memories()
+        assert len(hot_memories) >= 1
+
+        test_storage.close()

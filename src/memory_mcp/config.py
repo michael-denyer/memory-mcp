@@ -159,6 +159,30 @@ class Settings(BaseSettings):
     model_config = {"env_prefix": "MEMORY_MCP_"}
 
 
+# Default files to auto-detect for bootstrap (priority order)
+BOOTSTRAP_DEFAULT_FILES = (
+    "CLAUDE.md",
+    ".claude/CLAUDE.md",
+    "README.md",
+    "README",
+    "CONTRIBUTING.md",
+    "docs/README.md",
+    "ARCHITECTURE.md",
+)
+
+
+def find_bootstrap_files(root: Path) -> list[Path]:
+    """Find existing bootstrap files in a directory.
+
+    Args:
+        root: Directory to search for documentation files.
+
+    Returns:
+        List of existing file paths, in priority order.
+    """
+    return [root / f for f in BOOTSTRAP_DEFAULT_FILES if (root / f).exists()]
+
+
 def get_settings() -> Settings:
     """Get settings instance."""
     return Settings()

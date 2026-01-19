@@ -9,7 +9,7 @@ from pathlib import Path
 
 import click
 
-from memory_mcp.config import get_settings
+from memory_mcp.config import find_bootstrap_files, get_settings
 from memory_mcp.storage import MemorySource, MemoryType, Storage
 from memory_mcp.text_parsing import parse_content_into_chunks
 
@@ -155,6 +155,125 @@ def seed(ctx: click.Context, file: str, memory_type: str, promote: bool) -> None
         click.echo(f"Created {created} memories, skipped {skipped} duplicates")
         if errors:
             click.echo(f"Errors: {len(errors)}")
+
+
+@cli.command("bootstrap")
+@click.option(
+    "-r",
+    "--root",
+    "root_path",
+    type=click.Path(exists=True),
+    default=".",
+    help="Project root directory",
+)
+@click.option(
+    "-f",
+    "--files",
+    multiple=True,
+    help="Specific files to seed (default: auto-detect)",
+)
+@click.option(
+    "-t",
+    "--type",
+    "memory_type",
+    default="project",
+    type=click.Choice(["project", "pattern", "reference", "conversation"]),
+    help="Memory type for all content",
+)
+@click.option(
+    "--promote/--no-promote",
+    default=True,
+    help="Promote to hot cache (default: yes)",
+)
+@click.option(
+    "--tag",
+    "tags",
+    multiple=True,
+    help="Tags to apply to all memories",
+)
+@click.pass_context
+def bootstrap(
+    ctx: click.Context,
+    root_path: str,
+    files: tuple[str, ...],
+    memory_type: str,
+    promote: bool,
+    tags: tuple[str, ...],
+) -> None:
+    """Bootstrap hot cache from project documentation files.
+
+    Scans for common documentation files (README.md, CLAUDE.md, etc.),
+    parses them into memories, and promotes to hot cache.
+
+    Examples:
+
+        # Auto-detect and bootstrap from current directory
+        memory-mcp-cli bootstrap
+
+        # Bootstrap from specific project root
+        memory-mcp-cli bootstrap -r /path/to/project
+
+        # Bootstrap specific files only
+        memory-mcp-cli bootstrap -f README.md -f ARCHITECTURE.md
+
+        # Bootstrap without promoting to hot cache
+        memory-mcp-cli bootstrap --no-promote
+
+        # JSON output for scripting
+        memory-mcp-cli --json bootstrap
+    """
+    use_json = ctx.obj["json"]
+    root = Path(root_path).expanduser().resolve()
+
+    # Determine files to process
+    if files:
+        file_paths = [root / f for f in files]
+    else:
+        file_paths = find_bootstrap_files(root)
+
+    # Handle empty repo case
+    if not file_paths:
+        result = {
+            "success": True,
+            "files_found": 0,
+            "files_processed": 0,
+            "memories_created": 0,
+            "memories_skipped": 0,
+            "hot_cache_promoted": 0,
+            "errors": [],
+            "message": (
+                "No documentation files found. " "Create README.md or CLAUDE.md to bootstrap."
+            ),
+        }
+        if use_json:
+            click.echo(json.dumps(result))
+        else:
+            click.echo(result["message"])
+        return
+
+    mem_type = MemoryType(memory_type)
+    tag_list = list(tags) if tags else None
+    settings = get_settings()
+
+    storage = Storage(settings)
+    try:
+        result = storage.bootstrap_from_files(
+            file_paths=file_paths,
+            memory_type=mem_type,
+            promote_to_hot=promote,
+            tags=tag_list,
+        )
+    finally:
+        storage.close()
+
+    if use_json:
+        click.echo(json.dumps(result))
+    else:
+        click.echo(result["message"])
+        errors = result.get("errors")
+        if isinstance(errors, list):
+            for err in errors:
+                click.echo(f"  Warning: {err}", err=True)
 
 
 def main() -> int:

@@ -5,13 +5,16 @@ from typing import Annotated
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
-from memory_mcp.config import get_settings
+from memory_mcp.config import find_bootstrap_files, get_settings
 from memory_mcp.logging import get_logger
 from memory_mcp.storage import (
     Memory,
+    MemoryRelation,
     MemorySource,
     MemoryType,
     RecallMode,
+    RelationType,
+    Session,
     Storage,
     TrustReason,
 )
@@ -46,6 +49,7 @@ class MemoryResponse(BaseModel):
     trust_score: float
     source_log_id: int | None = None
     extracted_at: str | None = None
+    session_id: str | None = None  # Conversation session this came from
     # Computed scores
     similarity: float | None = None
     hot_score: float | None = None
@@ -54,6 +58,23 @@ class MemoryResponse(BaseModel):
     trust_score_decayed: float | None = None
     composite_score: float | None = None
     created_at: str
+
+
+class RelationshipResponse(BaseModel):
+    """Response for a single memory relationship."""
+
+    id: int
+    from_memory_id: int
+    to_memory_id: int
+    relation_type: str
+    created_at: str
+
+
+class RelatedMemoryResponse(BaseModel):
+    """A related memory with its relationship info."""
+
+    memory: MemoryResponse
+    relationship: RelationshipResponse
 
 
 class RecallResponse(BaseModel):
@@ -68,6 +89,8 @@ class RecallResponse(BaseModel):
     ranking_factors: str
     # Promotion feedback
     promotion_suggestions: list[dict] | None = None
+    # Related memories (when include_related=True)
+    related_memories: list[RelatedMemoryResponse] | None = None
 
 
 class StatsResponse(BaseModel):
@@ -110,6 +133,60 @@ class HotCacheResponse(BaseModel):
     effectiveness: HotCacheEffectivenessResponse
 
 
+class RelationshipStatsResponse(BaseModel):
+    """Statistics about memory relationships."""
+
+    total_relationships: int
+    by_type: dict[str, int]
+    linked_memories: int
+
+
+class SessionResponse(BaseModel):
+    """Response for a conversation session."""
+
+    id: str
+    started_at: str
+    last_activity_at: str
+    topic: str | None
+    project_path: str | None
+    memory_count: int
+    log_count: int
+
+
+class CrossSessionPatternResponse(BaseModel):
+    """Pattern appearing across multiple sessions."""
+
+    content: str
+    memory_type: str
+    session_count: int
+    total_accesses: int
+    sessions: list[str]
+
+
+def session_to_response(s: Session) -> SessionResponse:
+    """Convert Session to response model."""
+    return SessionResponse(
+        id=s.id,
+        started_at=s.started_at.isoformat(),
+        last_activity_at=s.last_activity_at.isoformat(),
+        topic=s.topic,
+        project_path=s.project_path,
+        memory_count=s.memory_count,
+        log_count=s.log_count,
+    )
+
+
+def relation_to_response(r: MemoryRelation) -> RelationshipResponse:
+    """Convert MemoryRelation to response model."""
+    return RelationshipResponse(
+        id=r.id,
+        from_memory_id=r.from_memory_id,
+        to_memory_id=r.to_memory_id,
+        relation_type=r.relation_type.value,
+        created_at=r.created_at.isoformat(),
+    )
+
+
 def memory_to_response(m: Memory) -> MemoryResponse:
     """Convert Memory to response model."""
     return MemoryResponse(
@@ -125,6 +202,7 @@ def memory_to_response(m: Memory) -> MemoryResponse:
         trust_score=m.trust_score,
         source_log_id=m.source_log_id,
         extracted_at=m.extracted_at.isoformat() if m.extracted_at else None,
+        session_id=m.session_id,
         similarity=m.similarity,
         hot_score=m.hot_score,
         recency_score=m.recency_score,
@@ -219,9 +297,12 @@ def remember(
         ),
     ] = "project",
     tags: Annotated[list[str] | None, Field(description="Tags for categorization")] = None,
+    session_id: Annotated[
+        str | None, Field(description="Session ID for conversation provenance tracking")
+    ] = None,
 ) -> dict:
     """Store a new memory. Returns the memory ID."""
-    log.debug("remember() called: type={} tags={}", memory_type, tags)
+    log.debug("remember() called: type={} tags={} session={}", memory_type, tags, session_id)
 
     # Validate content length
     if len(content) > settings.max_content_length:
@@ -243,6 +324,7 @@ def remember(
         memory_type=mem_type,
         source=MemorySource.MANUAL,
         tags=tag_list,
+        session_id=session_id,
     )
 
     if is_new:
@@ -284,6 +366,10 @@ def recall(
     memory_type: Annotated[
         str | None, Field(description="Filter by type: project, pattern, reference")
     ] = None,
+    include_related: Annotated[
+        bool,
+        Field(description="Include related memories from knowledge graph for top results"),
+    ] = False,
 ) -> RecallResponse:
     """Semantic search with confidence gating and composite ranking.
 
@@ -347,6 +433,23 @@ def recall(
     # Generate promotion suggestions for frequently-accessed cold memories
     suggestions = get_promotion_suggestions(result.memories) if result.memories else None
 
+    # Fetch related memories if requested (for top 3 results)
+    related_list: list[RelatedMemoryResponse] | None = None
+    if include_related and result.memories:
+        related_list = []
+        seen_ids: set[int] = {m.id for m in result.memories}  # Avoid duplicates
+        for memory in result.memories[:3]:  # Only top 3 to limit response size
+            related = storage.get_related(memory.id)
+            for rel_memory, relation in related:
+                if rel_memory.id not in seen_ids:
+                    seen_ids.add(rel_memory.id)
+                    related_list.append(
+                        RelatedMemoryResponse(
+                            memory=memory_to_response(rel_memory),
+                            relationship=relation_to_response(relation),
+                        )
+                    )
+
     return RecallResponse(
         memories=[memory_to_response(m) for m in result.memories],
         confidence=result.confidence,
@@ -355,6 +458,7 @@ def recall(
         guidance=result.guidance or "",
         ranking_factors=build_ranking_factors(result.mode),
         promotion_suggestions=suggestions if suggestions else None,
+        related_memories=related_list if related_list else None,
     )
 
 
@@ -547,6 +651,50 @@ def unpin(
 
 # ========== Hot Cache Resource (Auto-Injection) ==========
 
+# Track whether we've attempted auto-bootstrap this session (per working directory)
+_auto_bootstrap_attempted: set[str] = set()
+
+
+def _try_auto_bootstrap() -> bool:
+    """Attempt to auto-bootstrap from current directory if hot cache is empty.
+
+    Returns True if bootstrap was attempted and created memories.
+    Only runs once per working directory per session.
+    """
+    import os
+    from pathlib import Path
+
+    cwd = os.getcwd()
+
+    # Only attempt once per directory per session
+    if cwd in _auto_bootstrap_attempted:
+        return False
+    _auto_bootstrap_attempted.add(cwd)
+
+    file_paths = find_bootstrap_files(Path(cwd))
+    if not file_paths:
+        log.debug("Auto-bootstrap: no documentation files found in {}", cwd)
+        return False
+
+    log.info("Auto-bootstrap: found {} documentation files in {}", len(file_paths), cwd)
+
+    result = storage.bootstrap_from_files(
+        file_paths=file_paths,
+        memory_type=MemoryType.PROJECT,
+        promote_to_hot=True,
+        tags=["auto-bootstrap"],
+    )
+
+    if result["memories_created"] > 0:
+        log.info(
+            "Auto-bootstrap: created {} memories from {} files",
+            result["memories_created"],
+            result["files_processed"],
+        )
+        return True
+
+    return False
+
 
 @mcp.resource("memory://hot-cache")
 def hot_cache_resource() -> str:
@@ -555,9 +703,18 @@ def hot_cache_resource() -> str:
     Configure Claude Code to include this resource in system prompts
     for zero-latency access to frequently-used knowledge.
 
+    If the hot cache is empty and documentation files exist in the current
+    directory, auto-bootstraps from README.md, CLAUDE.md, etc.
+
     Records hit/miss metrics for observability (see hot_cache_status).
     """
     hot_memories = storage.get_hot_memories()
+
+    # Auto-bootstrap if hot cache is empty
+    if not hot_memories:
+        if _try_auto_bootstrap():
+            # Re-fetch after bootstrap
+            hot_memories = storage.get_hot_memories()
 
     if not hot_memories:
         storage.record_hot_cache_miss()
@@ -796,6 +953,122 @@ def seed_from_file(
         return SeedResult(memories_created=0, memories_skipped=0, errors=[f"Read error: {e}"])
 
     return seed_from_text(content=content, memory_type=memory_type, promote_to_hot=promote_to_hot)
+
+
+class BootstrapResponse(BaseModel):
+    """Response for bootstrap operation."""
+
+    success: bool
+    files_found: int = 0
+    files_processed: int = 0
+    memories_created: int = 0
+    memories_skipped: int = 0
+    hot_cache_promoted: int = 0
+    errors: list[str] = []
+    message: str = ""
+
+
+def _empty_bootstrap_response(
+    message: str,
+    errors: list[str] | None = None,
+    success: bool = True,
+) -> BootstrapResponse:
+    """Create a BootstrapResponse for early-exit cases (no files processed)."""
+    return BootstrapResponse(
+        success=success,
+        message=message,
+        errors=errors or [],
+    )
+
+
+@mcp.tool
+def bootstrap_project(
+    root_path: Annotated[
+        str,
+        Field(description="Project root directory (default: current directory)"),
+    ] = ".",
+    file_patterns: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Specific files to seed. If not provided, auto-detects: "
+                "CLAUDE.md, README.md, CONTRIBUTING.md, ARCHITECTURE.md"
+            )
+        ),
+    ] = None,
+    promote_to_hot: Annotated[
+        bool,
+        Field(description="Promote all bootstrapped memories to hot cache"),
+    ] = True,
+    memory_type: Annotated[
+        str,
+        Field(description="Memory type for all content"),
+    ] = "project",
+    tags: Annotated[
+        list[str] | None,
+        Field(description="Tags to apply to all memories"),
+    ] = None,
+) -> BootstrapResponse:
+    """Bootstrap hot cache from project documentation files.
+
+    Scans for common project documentation files (README.md, CLAUDE.md, etc.),
+    parses them into memories, and optionally promotes to hot cache.
+
+    This is ideal for quickly populating the hot cache when starting work
+    on a new codebase.
+
+    Edge cases handled gracefully:
+    - Empty repo: Returns success with files_found=0 and helpful message
+    - No markdown files: Returns success with message
+    - File read errors: Logged in errors list, continues with other files
+    - Empty files: Skipped silently
+    - Binary files: Skipped with warning
+    - All content already exists: Returns memories_skipped count
+    """
+    from pathlib import Path
+
+    root = Path(root_path).expanduser().resolve()
+
+    if not root.exists():
+        return _empty_bootstrap_response(
+            "Root path does not exist.",
+            errors=[f"Root path not found: {root_path}"],
+        )
+
+    if not root.is_dir():
+        return _empty_bootstrap_response(
+            "Root path is not a directory.",
+            errors=[f"Not a directory: {root_path}"],
+        )
+
+    # Determine files to process
+    if file_patterns:
+        file_paths = [root / f for f in file_patterns]
+    else:
+        file_paths = find_bootstrap_files(root)
+
+    if not file_paths:
+        return _empty_bootstrap_response(
+            "No documentation files found. Create README.md or CLAUDE.md to bootstrap."
+        )
+
+    # Validate memory type
+    mem_type = parse_memory_type(memory_type)
+    if mem_type is None:
+        return _empty_bootstrap_response(
+            "Invalid memory type specified.",
+            errors=[f"Invalid memory_type. Use: {[t.value for t in MemoryType]}"],
+            success=False,
+        )
+
+    result = storage.bootstrap_from_files(
+        file_paths=file_paths,
+        memory_type=mem_type,
+        promote_to_hot=promote_to_hot,
+        tags=tags,
+    )
+
+    return BootstrapResponse(**result)
 
 
 # ========== Trust Management Tools ==========
@@ -1123,6 +1396,222 @@ def embedding_info() -> dict:
         "cache_size": cache_stats["size"],
         "cache_max_size": cache_stats["max_size"],
     }
+
+
+# ========== Memory Relationships (Knowledge Graph) Tools ==========
+
+
+def parse_relation_type(relation_type: str) -> RelationType | None:
+    """Parse relation type string, returning None if invalid."""
+    try:
+        return RelationType(relation_type)
+    except ValueError:
+        return None
+
+
+def invalid_relation_type_error() -> dict:
+    """Return error for invalid relation type."""
+    return error_response(f"Invalid relation_type. Use: {[t.value for t in RelationType]}")
+
+
+@mcp.tool
+def link_memories(
+    from_memory_id: Annotated[int, Field(description="Source memory ID")],
+    to_memory_id: Annotated[int, Field(description="Target memory ID")],
+    relation_type: Annotated[
+        str,
+        Field(
+            description=(
+                "Relationship type: 'relates_to' (general), 'depends_on' (prerequisite), "
+                "'supersedes' (replaces), 'refines' (more specific), "
+                "'contradicts' (conflict), 'elaborates' (more detail)"
+            )
+        ),
+    ],
+) -> RelationshipResponse | dict:
+    """Create a typed relationship between two memories.
+
+    Use this to build a knowledge graph connecting related concepts.
+    Relationships are directional: from_memory -[relation_type]-> to_memory.
+
+    Examples:
+    - "Python 3.12 features" -[supersedes]-> "Python 3.11 features"
+    - "Auth implementation" -[depends_on]-> "Database schema"
+    - "API endpoint details" -[elaborates]-> "API overview"
+    """
+    rel_type = parse_relation_type(relation_type)
+    if rel_type is None:
+        return invalid_relation_type_error()
+
+    relation = storage.link_memories(from_memory_id, to_memory_id, rel_type)
+    if relation is None:
+        return error_response(
+            f"Failed to link memories #{from_memory_id} -> #{to_memory_id}. "
+            "Check that both memories exist and aren't already linked with this type."
+        )
+
+    return relation_to_response(relation)
+
+
+@mcp.tool
+def unlink_memories(
+    from_memory_id: Annotated[int, Field(description="Source memory ID")],
+    to_memory_id: Annotated[int, Field(description="Target memory ID")],
+    relation_type: Annotated[
+        str | None,
+        Field(description="Specific relation type to remove, or None to remove all"),
+    ] = None,
+) -> dict:
+    """Remove relationship(s) between two memories.
+
+    If relation_type is specified, only removes that specific relationship.
+    If not specified, removes all relationships between the two memories.
+    """
+    rel_type = None
+    if relation_type:
+        rel_type = parse_relation_type(relation_type)
+        if rel_type is None:
+            return invalid_relation_type_error()
+
+    count = storage.unlink_memories(from_memory_id, to_memory_id, rel_type)
+    if count == 0:
+        return error_response(
+            f"No relationships found between #{from_memory_id} and #{to_memory_id}"
+        )
+
+    return success_response(
+        f"Removed {count} relationship(s) between #{from_memory_id} and #{to_memory_id}",
+        removed_count=count,
+    )
+
+
+@mcp.tool
+def get_related_memories(
+    memory_id: Annotated[int, Field(description="Memory ID to find relationships for")],
+    relation_type: Annotated[
+        str | None,
+        Field(description="Filter by relation type"),
+    ] = None,
+    direction: Annotated[
+        str,
+        Field(
+            description=(
+                "Direction: 'outgoing' (from this memory), "
+                "'incoming' (to this memory), or 'both' (default)"
+            )
+        ),
+    ] = "both",
+) -> list[RelatedMemoryResponse] | dict:
+    """Get memories related to a given memory.
+
+    Returns related memories along with their relationship information.
+    Use this to explore the knowledge graph around a specific concept.
+    """
+    if direction not in ("outgoing", "incoming", "both"):
+        return error_response("Invalid direction. Use: 'outgoing', 'incoming', or 'both'")
+
+    rel_type = None
+    if relation_type:
+        rel_type = parse_relation_type(relation_type)
+        if rel_type is None:
+            return invalid_relation_type_error()
+
+    related = storage.get_related(memory_id, rel_type, direction)
+
+    return [
+        RelatedMemoryResponse(
+            memory=memory_to_response(memory),
+            relationship=relation_to_response(relation),
+        )
+        for memory, relation in related
+    ]
+
+
+@mcp.tool
+def relationship_stats() -> RelationshipStatsResponse:
+    """Get statistics about memory relationships in the knowledge graph."""
+    stats = storage.get_relationship_stats()
+    return RelationshipStatsResponse(**stats)
+
+
+# ========== Session (Conversation Provenance) Tools ==========
+
+
+@mcp.tool
+def get_sessions(
+    limit: Annotated[int, Field(description="Maximum sessions to return")] = 20,
+    project_path: Annotated[
+        str | None, Field(description="Filter to sessions from this project path")
+    ] = None,
+) -> list[SessionResponse]:
+    """Get recent conversation sessions.
+
+    Sessions track which conversations memories originated from.
+    Use this to see conversation history and navigate to specific sessions.
+    """
+    sessions = storage.get_sessions(limit=limit, project_path=project_path)
+    return [session_to_response(s) for s in sessions]
+
+
+@mcp.tool
+def get_session(
+    session_id: Annotated[str, Field(description="Session ID to retrieve")],
+) -> SessionResponse | dict:
+    """Get details for a specific session."""
+    session = storage.get_session(session_id)
+    if session is None:
+        return error_response(f"Session not found: {session_id}")
+    return session_to_response(session)
+
+
+@mcp.tool
+def get_session_memories(
+    session_id: Annotated[str, Field(description="Session ID to get memories from")],
+    limit: Annotated[int, Field(description="Maximum memories to return")] = 100,
+) -> list[MemoryResponse] | dict:
+    """Get all memories from a specific conversation session.
+
+    Use this to explore what was learned during a particular conversation.
+    """
+    session = storage.get_session(session_id)
+    if session is None:
+        return error_response(f"Session not found: {session_id}")
+
+    memories = storage.get_session_memories(session_id, limit=limit)
+    return [memory_to_response(m) for m in memories]
+
+
+@mcp.tool
+def cross_session_patterns(
+    min_sessions: Annotated[
+        int, Field(description="Minimum sessions a pattern must appear in")
+    ] = 2,
+) -> list[CrossSessionPatternResponse]:
+    """Find content patterns appearing across multiple conversation sessions.
+
+    Useful for identifying frequently-discussed topics that might warrant
+    promotion to hot cache. Patterns appearing in many sessions are likely
+    important project knowledge.
+
+    Returns patterns sorted by session count and total accesses.
+    """
+    patterns = storage.get_cross_session_patterns(min_sessions=min_sessions)
+    return [CrossSessionPatternResponse(**p) for p in patterns]
+
+
+@mcp.tool
+def set_session_topic(
+    session_id: Annotated[str, Field(description="Session ID to update")],
+    topic: Annotated[str, Field(description="Topic description for the session")],
+) -> dict:
+    """Set or update the topic for a conversation session.
+
+    Topics help identify what conversations were about when reviewing
+    session history. Can be auto-detected or manually set.
+    """
+    if storage.update_session_topic(session_id, topic):
+        return success_response(f"Updated topic for session {session_id}", topic=topic)
+    return error_response(f"Session not found: {session_id}")
 
 
 # ========== Entry Point ==========

@@ -68,6 +68,17 @@ class TrustReason(str, Enum):
     LOW_UTILITY = "low_utility"
 
 
+class RelationType(str, Enum):
+    """Types of relationships between memories."""
+
+    RELATES_TO = "relates_to"  # General association
+    DEPENDS_ON = "depends_on"  # Prerequisite knowledge
+    SUPERSEDES = "supersedes"  # Newer version replaces older
+    REFINES = "refines"  # More specific version
+    CONTRADICTS = "contradicts"  # Conflicting information
+    ELABORATES = "elaborates"  # Provides more detail
+
+
 # Default boost/penalty amounts per reason
 TRUST_REASON_DEFAULTS: dict[TrustReason, float] = {
     TrustReason.USED_CORRECTLY: 0.05,
@@ -113,6 +124,7 @@ class Memory:
     trust_score: float = 1.0  # Base trust (decays over time)
     source_log_id: int | None = None  # For mined memories: originating log
     extracted_at: datetime | None = None  # When pattern was extracted
+    session_id: str | None = None  # Conversation session this came from
     # Computed scores (populated during search/recall)
     similarity: float | None = None  # Populated during search
     hot_score: float | None = None  # Computed score for LRU ranking
@@ -140,6 +152,30 @@ class TrustEvent:
     similarity: float | None  # For confidence-weighted updates
     note: str | None  # Optional human-readable note
     created_at: datetime
+
+
+@dataclass
+class MemoryRelation:
+    """A relationship between two memories."""
+
+    id: int
+    from_memory_id: int
+    to_memory_id: int
+    relation_type: RelationType
+    created_at: datetime
+
+
+@dataclass
+class Session:
+    """A conversation session for provenance tracking."""
+
+    id: str  # UUID or transcript path hash
+    started_at: datetime
+    last_activity_at: datetime
+    topic: str | None  # Auto-detected or user-provided
+    project_path: str | None  # Working directory
+    memory_count: int
+    log_count: int
 
 
 @dataclass
@@ -197,7 +233,7 @@ class HotCacheMetrics:
 
 
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 -- Schema version tracking
@@ -259,6 +295,27 @@ CREATE TABLE IF NOT EXISTS trust_history (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Memory relationships (knowledge graph edges)
+CREATE TABLE IF NOT EXISTS memory_relationships (
+    id INTEGER PRIMARY KEY,
+    from_memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    to_memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    relation_type TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(from_memory_id, to_memory_id, relation_type)
+);
+
+-- Sessions (conversation provenance tracking)
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,  -- UUID or transcript path hash
+    started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_activity_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    topic TEXT,  -- Auto-detected or user-provided topic
+    project_path TEXT,  -- Working directory path
+    memory_count INTEGER DEFAULT 0,
+    log_count INTEGER DEFAULT 0
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_memories_hash ON memories(content_hash);
 CREATE INDEX IF NOT EXISTS idx_memories_hot ON memories(is_hot);
@@ -267,6 +324,11 @@ CREATE INDEX IF NOT EXISTS idx_output_log_timestamp ON output_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_mined_patterns_hash ON mined_patterns(pattern_hash);
 CREATE INDEX IF NOT EXISTS idx_trust_history_memory ON trust_history(memory_id);
 CREATE INDEX IF NOT EXISTS idx_trust_history_reason ON trust_history(reason);
+CREATE INDEX IF NOT EXISTS idx_relationships_from ON memory_relationships(from_memory_id);
+CREATE INDEX IF NOT EXISTS idx_relationships_to ON memory_relationships(to_memory_id);
+CREATE INDEX IF NOT EXISTS idx_relationships_type ON memory_relationships(relation_type);
+CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_path);
+CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(last_activity_at);
 """
 
 
@@ -326,6 +388,7 @@ class Storage:
             # Enable WAL mode for better concurrency
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA busy_timeout=30000")  # 30s busy timeout
+            self._conn.execute("PRAGMA foreign_keys=ON")  # Enable cascade deletes
 
             # Load sqlite-vec extension
             self._conn.enable_load_extension(True)
@@ -386,6 +449,10 @@ class Storage:
             self._migrate_v2_to_v3(conn)
         if from_version < 4:
             self._migrate_v3_to_v4(conn)
+        if from_version < 5:
+            self._migrate_v4_to_v5(conn)
+        if from_version < 6:
+            self._migrate_v5_to_v6(conn)
 
     def _get_table_columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
         """Get set of column names for a table."""
@@ -449,6 +516,65 @@ class Storage:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trust_history_reason ON trust_history(reason)")
         log.info("Created trust_history table for audit trail")
+
+    def _migrate_v4_to_v5(self, conn: sqlite3.Connection) -> None:
+        """Add memory_relationships table for knowledge graph."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_relationships (
+                id INTEGER PRIMARY KEY,
+                from_memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                to_memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                relation_type TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(from_memory_id, to_memory_id, relation_type)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_relationships_from "
+            "ON memory_relationships(from_memory_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_relationships_to "
+            "ON memory_relationships(to_memory_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_relationships_type "
+            "ON memory_relationships(relation_type)"
+        )
+        log.info("Created memory_relationships table for knowledge graph")
+
+    def _migrate_v5_to_v6(self, conn: sqlite3.Connection) -> None:
+        """Add sessions table and session_id columns for conversation provenance."""
+        # Create sessions table
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                last_activity_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                topic TEXT,
+                project_path TEXT,
+                memory_count INTEGER DEFAULT 0,
+                log_count INTEGER DEFAULT 0
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_path)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(last_activity_at)"
+        )
+
+        # Add session_id to memories table
+        self._add_column_if_missing(conn, "memories", "session_id", "TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id)")
+
+        # Add session_id to output_log table
+        self._add_column_if_missing(conn, "output_log", "session_id", "TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_output_log_session ON output_log(session_id)")
+
+        log.info("Created sessions table and session tracking columns")
 
     def _check_schema_version(self, conn: sqlite3.Connection) -> None:
         """Check schema version compatibility."""
@@ -619,6 +745,7 @@ class Storage:
         tags: list[str] | None = None,
         is_hot: bool = False,
         source_log_id: int | None = None,
+        session_id: str | None = None,
     ) -> tuple[int, bool]:
         """Store a new memory with embedding.
 
@@ -629,6 +756,7 @@ class Storage:
             tags: Optional tags for categorization
             is_hot: Whether to add to hot cache immediately
             source_log_id: For mined memories, the originating output_log ID
+            session_id: Conversation session ID for provenance tracking
 
         Returns:
             Tuple of (memory_id, is_new) where is_new indicates if a new
@@ -697,9 +825,9 @@ class Storage:
                     """
                     INSERT INTO memories (
                         content, content_hash, memory_type, source, is_hot,
-                        trust_score, source_log_id, extracted_at
+                        trust_score, source_log_id, extracted_at, session_id
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     RETURNING id
                     """,
                     (
@@ -711,9 +839,14 @@ class Storage:
                         trust_score,
                         source_log_id,
                         extracted_at,
+                        session_id,
                     ),
                 )
                 memory_id = cursor.fetchone()[0]
+
+                # Update session memory count if session provided
+                if session_id:
+                    self._update_session_activity(conn, session_id, memory_delta=1)
 
                 # Insert embedding only for new memories
                 conn.execute(
@@ -793,6 +926,7 @@ class Storage:
         source_log_id = self._get_row_value(row, "source_log_id")
         extracted_at_str = self._get_row_value(row, "extracted_at")
         extracted_at = datetime.fromisoformat(extracted_at_str) if extracted_at_str else None
+        session_id = self._get_row_value(row, "session_id")
 
         hot_score = self._compute_hot_score(row["access_count"], last_accessed_dt)
 
@@ -812,6 +946,7 @@ class Storage:
             trust_score=trust_score,
             source_log_id=source_log_id,
             extracted_at=extracted_at,
+            session_id=session_id,
             similarity=similarity,
             hot_score=hot_score,
         )
@@ -1925,3 +2060,659 @@ class Storage:
         with self.transaction() as conn:
             cursor = conn.execute("DELETE FROM mined_patterns WHERE id = ?", (pattern_id,))
             return cursor.rowcount > 0
+
+    # ========== Memory Relationships (Knowledge Graph) ==========
+
+    def link_memories(
+        self,
+        from_memory_id: int,
+        to_memory_id: int,
+        relation_type: RelationType,
+    ) -> MemoryRelation | None:
+        """Create a typed relationship between two memories.
+
+        Args:
+            from_memory_id: Source memory ID
+            to_memory_id: Target memory ID
+            relation_type: Type of relationship
+
+        Returns:
+            MemoryRelation if created, None if memories don't exist or already linked.
+        """
+        if from_memory_id == to_memory_id:
+            log.warning("Cannot link memory to itself: id={}", from_memory_id)
+            return None
+
+        with self.transaction() as conn:
+            # Verify both memories exist
+            from_exists = conn.execute(
+                "SELECT 1 FROM memories WHERE id = ?", (from_memory_id,)
+            ).fetchone()
+            to_exists = conn.execute(
+                "SELECT 1 FROM memories WHERE id = ?", (to_memory_id,)
+            ).fetchone()
+
+            if not from_exists or not to_exists:
+                log.warning(
+                    "Cannot link: memory {} or {} does not exist",
+                    from_memory_id,
+                    to_memory_id,
+                )
+                return None
+
+            try:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO memory_relationships (from_memory_id, to_memory_id, relation_type)
+                    VALUES (?, ?, ?)
+                    RETURNING id, created_at
+                    """,
+                    (from_memory_id, to_memory_id, relation_type.value),
+                )
+                row = cursor.fetchone()
+                log.info(
+                    "Linked memories: {} -[{}]-> {}",
+                    from_memory_id,
+                    relation_type.value,
+                    to_memory_id,
+                )
+                return MemoryRelation(
+                    id=row[0],
+                    from_memory_id=from_memory_id,
+                    to_memory_id=to_memory_id,
+                    relation_type=relation_type,
+                    created_at=datetime.fromisoformat(row[1]),
+                )
+            except sqlite3.IntegrityError:
+                # Already linked with this relation type
+                log.debug(
+                    "Relationship already exists: {} -[{}]-> {}",
+                    from_memory_id,
+                    relation_type.value,
+                    to_memory_id,
+                )
+                return None
+
+    def unlink_memories(
+        self,
+        from_memory_id: int,
+        to_memory_id: int,
+        relation_type: RelationType | None = None,
+    ) -> int:
+        """Remove relationship(s) between memories.
+
+        Args:
+            from_memory_id: Source memory ID
+            to_memory_id: Target memory ID
+            relation_type: If specified, only remove this type. Otherwise remove all.
+
+        Returns:
+            Number of relationships removed.
+        """
+        with self.transaction() as conn:
+            if relation_type:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM memory_relationships
+                    WHERE from_memory_id = ? AND to_memory_id = ? AND relation_type = ?
+                    """,
+                    (from_memory_id, to_memory_id, relation_type.value),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    DELETE FROM memory_relationships
+                    WHERE from_memory_id = ? AND to_memory_id = ?
+                    """,
+                    (from_memory_id, to_memory_id),
+                )
+
+            count = cursor.rowcount
+            if count > 0:
+                log.info(
+                    "Unlinked {} relationship(s): {} -> {}",
+                    count,
+                    from_memory_id,
+                    to_memory_id,
+                )
+            return count
+
+    def get_related(
+        self,
+        memory_id: int,
+        relation_type: RelationType | None = None,
+        direction: str = "both",
+    ) -> list[tuple[Memory, MemoryRelation]]:
+        """Get memories related to a given memory.
+
+        Args:
+            memory_id: The memory to find relationships for
+            relation_type: Filter by relationship type (optional)
+            direction: "outgoing" (from this memory), "incoming" (to this memory), or "both"
+
+        Returns:
+            List of (related_memory, relationship) tuples.
+        """
+        results: list[tuple[Memory, MemoryRelation]] = []
+
+        with self._connection() as conn:
+            queries: list[tuple[str, tuple[int, ...] | tuple[int, str], str]] = []
+
+            if direction in ("outgoing", "both"):
+                # Relationships FROM this memory
+                if relation_type:
+                    queries.append(
+                        (
+                            """
+                            SELECT r.*, 'outgoing' as direction
+                            FROM memory_relationships r
+                            WHERE r.from_memory_id = ? AND r.relation_type = ?
+                            """,
+                            (memory_id, relation_type.value),
+                            "to_memory_id",
+                        )
+                    )
+                else:
+                    queries.append(
+                        (
+                            """
+                            SELECT r.*, 'outgoing' as direction
+                            FROM memory_relationships r
+                            WHERE r.from_memory_id = ?
+                            """,
+                            (memory_id,),
+                            "to_memory_id",
+                        )
+                    )
+
+            if direction in ("incoming", "both"):
+                # Relationships TO this memory
+                if relation_type:
+                    queries.append(
+                        (
+                            """
+                            SELECT r.*, 'incoming' as direction
+                            FROM memory_relationships r
+                            WHERE r.to_memory_id = ? AND r.relation_type = ?
+                            """,
+                            (memory_id, relation_type.value),
+                            "from_memory_id",
+                        )
+                    )
+                else:
+                    queries.append(
+                        (
+                            """
+                            SELECT r.*, 'incoming' as direction
+                            FROM memory_relationships r
+                            WHERE r.to_memory_id = ?
+                            """,
+                            (memory_id,),
+                            "from_memory_id",
+                        )
+                    )
+
+            for query, params, related_id_col in queries:
+                rows = conn.execute(query, params).fetchall()
+                for row in rows:
+                    related_id = row[related_id_col]
+                    relation = MemoryRelation(
+                        id=row["id"],
+                        from_memory_id=row["from_memory_id"],
+                        to_memory_id=row["to_memory_id"],
+                        relation_type=RelationType(row["relation_type"]),
+                        created_at=datetime.fromisoformat(row["created_at"]),
+                    )
+                    # Fetch the related memory
+                    memory = self.get_memory(related_id)
+                    if memory:
+                        results.append((memory, relation))
+
+        return results
+
+    def get_relationship(
+        self,
+        from_memory_id: int,
+        to_memory_id: int,
+        relation_type: RelationType | None = None,
+    ) -> list[MemoryRelation]:
+        """Get specific relationship(s) between two memories.
+
+        Args:
+            from_memory_id: Source memory ID
+            to_memory_id: Target memory ID
+            relation_type: Filter by type (optional)
+
+        Returns:
+            List of matching relationships.
+        """
+        with self._connection() as conn:
+            if relation_type:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM memory_relationships
+                    WHERE from_memory_id = ? AND to_memory_id = ? AND relation_type = ?
+                    """,
+                    (from_memory_id, to_memory_id, relation_type.value),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM memory_relationships
+                    WHERE from_memory_id = ? AND to_memory_id = ?
+                    """,
+                    (from_memory_id, to_memory_id),
+                ).fetchall()
+
+            return [
+                MemoryRelation(
+                    id=row["id"],
+                    from_memory_id=row["from_memory_id"],
+                    to_memory_id=row["to_memory_id"],
+                    relation_type=RelationType(row["relation_type"]),
+                    created_at=datetime.fromisoformat(row["created_at"]),
+                )
+                for row in rows
+            ]
+
+    def get_relationship_stats(self) -> dict:
+        """Get statistics about memory relationships."""
+        with self._connection() as conn:
+            total = conn.execute("SELECT COUNT(*) FROM memory_relationships").fetchone()[0]
+            by_type = {
+                row["relation_type"]: row["count"]
+                for row in conn.execute(
+                    """
+                    SELECT relation_type, COUNT(*) as count
+                    FROM memory_relationships
+                    GROUP BY relation_type
+                    """
+                )
+            }
+            # Count memories with at least one relationship
+            linked_memories = conn.execute(
+                """
+                SELECT COUNT(DISTINCT memory_id) FROM (
+                    SELECT from_memory_id as memory_id FROM memory_relationships
+                    UNION
+                    SELECT to_memory_id as memory_id FROM memory_relationships
+                )
+                """
+            ).fetchone()[0]
+
+            return {
+                "total_relationships": total,
+                "by_type": by_type,
+                "linked_memories": linked_memories,
+            }
+
+    # ========== Session (Conversation Provenance) Methods ==========
+
+    def _update_session_activity(
+        self,
+        conn: sqlite3.Connection,
+        session_id: str,
+        memory_delta: int = 0,
+        log_delta: int = 0,
+    ) -> None:
+        """Update session activity counters. Creates session if needed."""
+        # Upsert: insert or update session
+        conn.execute(
+            """
+            INSERT INTO sessions (id, memory_count, log_count)
+            VALUES (?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                last_activity_at = CURRENT_TIMESTAMP,
+                memory_count = memory_count + excluded.memory_count,
+                log_count = log_count + excluded.log_count
+            """,
+            (session_id, memory_delta, log_delta),
+        )
+
+    def create_or_get_session(
+        self,
+        session_id: str,
+        topic: str | None = None,
+        project_path: str | None = None,
+    ) -> Session:
+        """Create a new session or return existing one.
+
+        Args:
+            session_id: Unique session identifier (UUID or transcript hash)
+            topic: Optional topic description
+            project_path: Working directory for the session
+
+        Returns:
+            Session object (created or existing)
+        """
+        with self.transaction() as conn:
+            # Try to get existing
+            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+
+            if row:
+                return self._row_to_session(row)
+
+            # Create new session
+            conn.execute(
+                """
+                INSERT INTO sessions (id, topic, project_path)
+                VALUES (?, ?, ?)
+                """,
+                (session_id, topic, project_path),
+            )
+
+            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            log.info("Created session id={} topic={}", session_id, topic)
+            return self._row_to_session(row)
+
+    def update_session_topic(self, session_id: str, topic: str) -> bool:
+        """Update the topic for a session."""
+        with self.transaction() as conn:
+            cursor = conn.execute("UPDATE sessions SET topic = ? WHERE id = ?", (topic, session_id))
+            return cursor.rowcount > 0
+
+    def get_session(self, session_id: str) -> Session | None:
+        """Get a session by ID."""
+        with self._connection() as conn:
+            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            return self._row_to_session(row) if row else None
+
+    def get_sessions(
+        self,
+        limit: int = 20,
+        project_path: str | None = None,
+    ) -> list[Session]:
+        """Get recent sessions, optionally filtered by project.
+
+        Args:
+            limit: Maximum sessions to return
+            project_path: Filter to sessions from this project
+
+        Returns:
+            List of sessions ordered by last activity (most recent first)
+        """
+        with self._connection() as conn:
+            if project_path:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM sessions
+                    WHERE project_path = ?
+                    ORDER BY last_activity_at DESC
+                    LIMIT ?
+                    """,
+                    (project_path, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM sessions
+                    ORDER BY last_activity_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+
+            return [self._row_to_session(row) for row in rows]
+
+    def get_session_memories(
+        self,
+        session_id: str,
+        limit: int = 100,
+    ) -> list[Memory]:
+        """Get all memories from a specific session.
+
+        Args:
+            session_id: Session to get memories from
+            limit: Maximum memories to return
+
+        Returns:
+            List of memories from the session, ordered by creation time
+        """
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT m.*, GROUP_CONCAT(t.tag, ',') as tags_str
+                FROM memories m
+                LEFT JOIN memory_tags t ON m.id = t.memory_id
+                WHERE m.session_id = ?
+                GROUP BY m.id
+                ORDER BY m.created_at DESC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+
+            memories = []
+            for row in rows:
+                tags_str = row["tags_str"]
+                tags = tags_str.split(",") if tags_str else []
+                memories.append(self._row_to_memory(row, conn, tags=tags))
+
+            return memories
+
+    def get_cross_session_patterns(self, min_sessions: int = 2) -> list[dict]:
+        """Find content patterns that appear across multiple sessions.
+
+        Useful for identifying frequently-discussed topics that might
+        warrant promotion to hot cache.
+
+        Args:
+            min_sessions: Minimum sessions a pattern must appear in
+
+        Returns:
+            List of dicts with pattern info and session counts
+        """
+        with self._connection() as conn:
+            # Find memories that appear in multiple sessions via similar content
+            # This uses a simple approach: group by content_hash
+            rows = conn.execute(
+                """
+                SELECT
+                    content,
+                    memory_type,
+                    COUNT(DISTINCT session_id) as session_count,
+                    SUM(access_count) as total_accesses,
+                    GROUP_CONCAT(DISTINCT session_id) as sessions
+                FROM memories
+                WHERE session_id IS NOT NULL
+                GROUP BY content_hash
+                HAVING COUNT(DISTINCT session_id) >= ?
+                ORDER BY session_count DESC, total_accesses DESC
+                LIMIT 50
+                """,
+                (min_sessions,),
+            ).fetchall()
+
+            return [
+                {
+                    "content": row["content"][:200],  # Truncate for display
+                    "memory_type": row["memory_type"],
+                    "session_count": row["session_count"],
+                    "total_accesses": row["total_accesses"],
+                    "sessions": row["sessions"].split(",") if row["sessions"] else [],
+                }
+                for row in rows
+            ]
+
+    def _row_to_session(self, row: sqlite3.Row) -> Session:
+        """Convert a database row to a Session object."""
+        return Session(
+            id=row["id"],
+            started_at=datetime.fromisoformat(row["started_at"]),
+            last_activity_at=datetime.fromisoformat(row["last_activity_at"]),
+            topic=row["topic"],
+            project_path=row["project_path"],
+            memory_count=row["memory_count"],
+            log_count=row["log_count"],
+        )
+
+    # ========== Bootstrap Methods ==========
+
+    def bootstrap_from_files(
+        self,
+        file_paths: list[Path],
+        memory_type: MemoryType = MemoryType.PROJECT,
+        promote_to_hot: bool = True,
+        tags: list[str] | None = None,
+    ) -> dict:
+        """Seed memories from multiple files with deduplication.
+
+        Reads each file, parses into chunks, and stores as memories.
+        Handles edge cases gracefully (empty files, permission errors, etc.).
+
+        Args:
+            file_paths: List of file paths to process.
+            memory_type: Type to assign to all created memories.
+            promote_to_hot: Whether to promote new memories to hot cache.
+            tags: Optional tags to apply to all memories.
+
+        Returns:
+            Dict with:
+                - success: Always True (errors are reported, not raised)
+                - files_found: Number of files in input
+                - files_processed: Files successfully read
+                - memories_created: New memories stored
+                - memories_skipped: Duplicates (already existed)
+                - hot_cache_promoted: Memories added to hot cache
+                - errors: List of error messages
+                - message: Human-readable summary
+        """
+        from memory_mcp.text_parsing import parse_content_into_chunks
+
+        # Track results with explicit types to satisfy mypy
+        errors: list[str] = []
+        files_processed = 0
+        memories_created = 0
+        memories_skipped = 0
+        hot_cache_promoted = 0
+
+        tag_list = tags or []
+
+        files_found = len(file_paths)
+
+        for path in file_paths:
+            # Check file exists
+            if not path.exists():
+                errors.append(f"{path.name}: file not found")
+                continue
+
+            # Check it's a file
+            if not path.is_file():
+                errors.append(f"{path.name}: not a file")
+                continue
+
+            # Detect binary files (skip them)
+            if self._is_binary_file(path):
+                errors.append(f"{path.name}: binary file skipped")
+                continue
+
+            # Read file content
+            try:
+                content = path.read_text(encoding="utf-8")
+            except PermissionError:
+                errors.append(f"{path.name}: permission denied")
+                continue
+            except UnicodeDecodeError:
+                errors.append(f"{path.name}: encoding error (not UTF-8)")
+                continue
+            except OSError as e:
+                errors.append(f"{path.name}: read error ({e})")
+                continue
+
+            # Skip empty files
+            if not content.strip():
+                log.debug("Skipping empty file: {}", path.name)
+                continue
+
+            files_processed += 1
+
+            # Parse into chunks
+            chunks = parse_content_into_chunks(content)
+
+            for chunk in chunks:
+                # Skip chunks that are too long
+                if len(chunk) > self.settings.max_content_length:
+                    errors.append(f"{path.name}: chunk too long ({len(chunk)} chars), skipped")
+                    continue
+
+                # Store the memory
+                memory_id, is_new = self.store_memory(
+                    content=chunk,
+                    memory_type=memory_type,
+                    source=MemorySource.MANUAL,
+                    tags=tag_list,
+                )
+
+                if is_new:
+                    memories_created += 1
+                    if promote_to_hot:
+                        if self.promote_to_hot(memory_id):
+                            hot_cache_promoted += 1
+                else:
+                    memories_skipped += 1
+
+        # Build summary message
+        if files_found == 0:
+            message = "No files provided. Pass file paths or use auto-detection."
+        elif files_processed == 0 and files_found > 0:
+            message = (
+                f"No files could be processed from {files_found} provided. "
+                "Check file permissions and paths."
+            )
+        elif memories_created == 0 and files_processed > 0:
+            if memories_skipped > 0:
+                message = (
+                    f"All {memories_skipped} memories already exist "
+                    f"from {files_processed} file(s)."
+                )
+            else:
+                message = (
+                    f"No memories extracted from {files_processed} file(s). "
+                    "Files may be empty or contain only non-extractable content."
+                )
+        else:
+            message = f"Bootstrapped {memories_created} memories " f"from {files_processed} file(s)"
+            if hot_cache_promoted > 0:
+                message += f" ({hot_cache_promoted} promoted to hot cache)"
+
+        log.info(
+            "bootstrap_from_files: files={}/{} created={} skipped={} errors={}",
+            files_processed,
+            files_found,
+            memories_created,
+            memories_skipped,
+            len(errors),
+        )
+
+        return {
+            "success": True,
+            "files_found": files_found,
+            "files_processed": files_processed,
+            "memories_created": memories_created,
+            "memories_skipped": memories_skipped,
+            "hot_cache_promoted": hot_cache_promoted,
+            "errors": errors,
+            "message": message,
+        }
+
+    def _is_binary_file(self, path: Path) -> bool:
+        """Check if a file is binary by reading first bytes.
+
+        Args:
+            path: File path to check.
+
+        Returns:
+            True if file appears to be binary.
+        """
+        try:
+            with open(path, "rb") as f:
+                chunk = f.read(8192)
+                # Check for null bytes (common in binary files)
+                if b"\x00" in chunk:
+                    return True
+                # Check for very high ratio of non-text bytes
+                text_chars = bytearray({7, 8, 9, 10, 12, 13, 27} | set(range(0x20, 0x100)) - {0x7F})
+                non_text = sum(1 for byte in chunk if byte not in text_chars)
+                return len(chunk) > 0 and non_text / len(chunk) > 0.30
+        except OSError:
+            return False  # Can't read, let the main read handle the error

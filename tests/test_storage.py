@@ -668,3 +668,605 @@ class TestAutoTrustBoostOnRecall:
         assert len(history) == 0  # No trust changes
 
         stor.close()
+
+
+# ========== Memory Relationships (Knowledge Graph) Tests ==========
+
+
+class TestMemoryRelationships:
+    """Tests for memory relationships / knowledge graph functionality."""
+
+    @pytest.fixture
+    def storage(self, tmp_path):
+        """Create a storage instance with temp database."""
+        settings = Settings(db_path=tmp_path / "test.db")
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    def test_link_memories_basic(self, storage):
+        """link_memories creates a relationship between two memories."""
+        mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        relation = storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
+
+        assert relation is not None
+        assert relation.from_memory_id == mid1
+        assert relation.to_memory_id == mid2
+        assert relation.relation_type == RelationType.RELATES_TO
+
+    def test_link_memories_different_types(self, storage):
+        """Can create different relationship types."""
+        mid1, _ = storage.store_memory("Overview", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Details", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        # Create multiple relationship types
+        r1 = storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
+        r2 = storage.link_memories(mid2, mid1, RelationType.ELABORATES)
+
+        assert r1 is not None
+        assert r2 is not None
+        assert r1.relation_type == RelationType.RELATES_TO
+        assert r2.relation_type == RelationType.ELABORATES
+
+    def test_link_memories_prevents_duplicates(self, storage):
+        """Same relationship type between same memories returns None."""
+        mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        r1 = storage.link_memories(mid1, mid2, RelationType.DEPENDS_ON)
+        r2 = storage.link_memories(mid1, mid2, RelationType.DEPENDS_ON)  # Duplicate
+
+        assert r1 is not None
+        assert r2 is None  # Should be None for duplicate
+
+    def test_link_memories_nonexistent_memory(self, storage):
+        """link_memories returns None when memory doesn't exist."""
+        mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        relation = storage.link_memories(mid1, 99999, RelationType.RELATES_TO)
+        assert relation is None
+
+    def test_link_memories_self_reference(self, storage):
+        """Cannot link a memory to itself."""
+        mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        relation = storage.link_memories(mid1, mid1, RelationType.RELATES_TO)
+        assert relation is None
+
+    def test_unlink_memories_specific_type(self, storage):
+        """unlink_memories removes specific relationship type."""
+        mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
+        storage.link_memories(mid1, mid2, RelationType.SUPERSEDES)
+
+        count = storage.unlink_memories(mid1, mid2, RelationType.RELATES_TO)
+        assert count == 1
+
+        # SUPERSEDES should still exist
+        rels = storage.get_relationship(mid1, mid2)
+        assert len(rels) == 1
+        assert rels[0].relation_type == RelationType.SUPERSEDES
+
+    def test_unlink_memories_all_types(self, storage):
+        """unlink_memories without type removes all relationships."""
+        mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
+        storage.link_memories(mid1, mid2, RelationType.SUPERSEDES)
+
+        count = storage.unlink_memories(mid1, mid2)
+        assert count == 2
+
+        rels = storage.get_relationship(mid1, mid2)
+        assert len(rels) == 0
+
+    def test_get_related_outgoing(self, storage):
+        """get_related with direction='outgoing' returns target memories."""
+        mid1, _ = storage.store_memory("Source memory", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Target A", MemoryType.PROJECT)
+        mid3, _ = storage.store_memory("Target B", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        storage.link_memories(mid1, mid2, RelationType.DEPENDS_ON)
+        storage.link_memories(mid1, mid3, RelationType.RELATES_TO)
+
+        related = storage.get_related(mid1, direction="outgoing")
+        assert len(related) == 2
+
+        related_ids = {m.id for m, _ in related}
+        assert mid2 in related_ids
+        assert mid3 in related_ids
+
+    def test_get_related_incoming(self, storage):
+        """get_related with direction='incoming' returns source memories."""
+        mid1, _ = storage.store_memory("Destination memory", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Source A", MemoryType.PROJECT)
+        mid3, _ = storage.store_memory("Source B", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        storage.link_memories(mid2, mid1, RelationType.RELATES_TO)
+        storage.link_memories(mid3, mid1, RelationType.ELABORATES)
+
+        related = storage.get_related(mid1, direction="incoming")
+        assert len(related) == 2
+
+        related_ids = {m.id for m, _ in related}
+        assert mid2 in related_ids
+        assert mid3 in related_ids
+
+    def test_get_related_both_directions(self, storage):
+        """get_related with direction='both' returns all related memories."""
+        mid1, _ = storage.store_memory("Center memory", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Outgoing target", MemoryType.PROJECT)
+        mid3, _ = storage.store_memory("Incoming source", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        storage.link_memories(mid1, mid2, RelationType.DEPENDS_ON)
+        storage.link_memories(mid3, mid1, RelationType.ELABORATES)
+
+        related = storage.get_related(mid1, direction="both")
+        assert len(related) == 2
+
+        related_ids = {m.id for m, _ in related}
+        assert mid2 in related_ids
+        assert mid3 in related_ids
+
+    def test_get_related_filter_by_type(self, storage):
+        """get_related filters by relation type."""
+        mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
+        mid3, _ = storage.store_memory("Memory C", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        storage.link_memories(mid1, mid2, RelationType.DEPENDS_ON)
+        storage.link_memories(mid1, mid3, RelationType.RELATES_TO)
+
+        related = storage.get_related(mid1, relation_type=RelationType.DEPENDS_ON)
+        assert len(related) == 1
+        assert related[0][0].id == mid2
+
+    def test_get_relationship_specific(self, storage):
+        """get_relationship returns specific relationships between two memories."""
+        mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        storage.link_memories(mid1, mid2, RelationType.SUPERSEDES)
+        storage.link_memories(mid1, mid2, RelationType.REFINES)
+
+        # Get all relationships
+        rels = storage.get_relationship(mid1, mid2)
+        assert len(rels) == 2
+
+        # Get specific type
+        rels = storage.get_relationship(mid1, mid2, RelationType.SUPERSEDES)
+        assert len(rels) == 1
+        assert rels[0].relation_type == RelationType.SUPERSEDES
+
+    def test_relationship_stats(self, storage):
+        """get_relationship_stats returns correct statistics."""
+        mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
+        mid3, _ = storage.store_memory("Memory C", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
+        storage.link_memories(mid1, mid3, RelationType.RELATES_TO)
+        storage.link_memories(mid2, mid3, RelationType.DEPENDS_ON)
+
+        stats = storage.get_relationship_stats()
+        assert stats["total_relationships"] == 3
+        assert stats["by_type"]["relates_to"] == 2
+        assert stats["by_type"]["depends_on"] == 1
+        assert stats["linked_memories"] == 3  # All 3 memories have relationships
+
+    def test_cascade_delete_relationships(self, storage):
+        """Deleting a memory removes its relationships."""
+        mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
+
+        from memory_mcp.storage import RelationType
+
+        storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
+
+        # Delete mid1
+        storage.delete_memory(mid1)
+
+        # Relationships should be gone
+        stats = storage.get_relationship_stats()
+        assert stats["total_relationships"] == 0
+
+    def test_relationship_table_created(self, storage):
+        """memory_relationships table should exist in schema."""
+        with storage._connection() as conn:
+            result = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='memory_relationships'"
+            ).fetchone()
+            assert result is not None
+
+    def test_schema_version_is_6(self, storage):
+        """Schema version should be 6 after migration."""
+        version = storage.get_schema_version()
+        assert version == 6
+
+
+# ========== Session (Conversation Provenance) Tests ==========
+
+
+class TestSessionProvenance:
+    """Tests for session/conversation provenance tracking."""
+
+    @pytest.fixture
+    def storage(self, tmp_path):
+        """Create a storage instance with temp database."""
+        settings = Settings(db_path=tmp_path / "test.db")
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    def test_create_session(self, storage):
+        """create_or_get_session creates a new session."""
+        session = storage.create_or_get_session(
+            session_id="test-session-123",
+            topic="Testing sessions",
+            project_path="/path/to/project",
+        )
+
+        assert session.id == "test-session-123"
+        assert session.topic == "Testing sessions"
+        assert session.project_path == "/path/to/project"
+        assert session.memory_count == 0
+        assert session.log_count == 0
+
+    def test_get_existing_session(self, storage):
+        """create_or_get_session returns existing session."""
+        storage.create_or_get_session("existing-session", topic="Original topic")
+
+        session = storage.create_or_get_session("existing-session", topic="New topic")
+
+        assert session.topic == "Original topic"  # Original preserved
+
+    def test_get_session_by_id(self, storage):
+        """get_session retrieves session by ID."""
+        storage.create_or_get_session("session-abc", topic="Test")
+
+        session = storage.get_session("session-abc")
+
+        assert session is not None
+        assert session.id == "session-abc"
+
+    def test_get_session_not_found(self, storage):
+        """get_session returns None for unknown session."""
+        session = storage.get_session("nonexistent")
+        assert session is None
+
+    def test_store_memory_with_session(self, storage):
+        """store_memory associates memory with session."""
+        storage.create_or_get_session("mem-session", project_path="/test")
+
+        mid, _ = storage.store_memory(
+            "Test memory content",
+            MemoryType.PROJECT,
+            session_id="mem-session",
+        )
+
+        memory = storage.get_memory(mid)
+        assert memory is not None
+        assert memory.session_id == "mem-session"
+
+    def test_session_memory_count_increments(self, storage):
+        """Storing memory increments session memory count."""
+        storage.create_or_get_session("count-session")
+
+        storage.store_memory("Memory 1", MemoryType.PROJECT, session_id="count-session")
+        storage.store_memory("Memory 2", MemoryType.PROJECT, session_id="count-session")
+
+        session = storage.get_session("count-session")
+        assert session.memory_count == 2
+
+    def test_get_session_memories(self, storage):
+        """get_session_memories returns memories from session."""
+        storage.create_or_get_session("filter-session")
+        storage.create_or_get_session("other-session")
+
+        storage.store_memory("Memory A", MemoryType.PROJECT, session_id="filter-session")
+        storage.store_memory("Memory B", MemoryType.PROJECT, session_id="filter-session")
+        storage.store_memory("Memory C", MemoryType.PROJECT, session_id="other-session")
+
+        memories = storage.get_session_memories("filter-session")
+
+        assert len(memories) == 2
+        contents = {m.content for m in memories}
+        assert "Memory A" in contents
+        assert "Memory B" in contents
+        assert "Memory C" not in contents
+
+    def test_get_sessions_returns_all(self, storage):
+        """get_sessions returns all sessions up to limit."""
+        storage.create_or_get_session("session-1")
+        storage.create_or_get_session("session-2")
+        storage.create_or_get_session("session-3")
+
+        sessions = storage.get_sessions(limit=10)
+        assert len(sessions) == 3
+
+        ids = {s.id for s in sessions}
+        assert "session-1" in ids
+        assert "session-2" in ids
+        assert "session-3" in ids
+
+    def test_get_sessions_filter_by_project(self, storage):
+        """get_sessions filters by project_path."""
+        storage.create_or_get_session("proj-a-1", project_path="/project/a")
+        storage.create_or_get_session("proj-a-2", project_path="/project/a")
+        storage.create_or_get_session("proj-b-1", project_path="/project/b")
+
+        sessions = storage.get_sessions(project_path="/project/a")
+
+        assert len(sessions) == 2
+        ids = {s.id for s in sessions}
+        assert "proj-a-1" in ids
+        assert "proj-a-2" in ids
+
+    def test_update_session_topic(self, storage):
+        """update_session_topic changes topic."""
+        storage.create_or_get_session("topic-session", topic="Old topic")
+
+        result = storage.update_session_topic("topic-session", "New topic")
+        assert result is True
+
+        session = storage.get_session("topic-session")
+        assert session.topic == "New topic"
+
+    def test_update_session_topic_not_found(self, storage):
+        """update_session_topic returns False for unknown session."""
+        result = storage.update_session_topic("nonexistent", "Topic")
+        assert result is False
+
+    def test_sessions_table_created(self, storage):
+        """sessions table should exist in schema."""
+        with storage._connection() as conn:
+            result = conn.execute(
+                "SELECT name FROM sqlite_master " "WHERE type='table' AND name='sessions'"
+            ).fetchone()
+            assert result is not None
+
+    def test_memory_session_id_column_exists(self, storage):
+        """session_id column should exist in memories table."""
+        with storage._connection() as conn:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
+            assert "session_id" in columns
+
+
+class TestBootstrap:
+    """Tests for bootstrap_from_files functionality."""
+
+    @pytest.fixture
+    def storage(self, tmp_path):
+        """Create a storage instance with temp database."""
+        settings = Settings(db_path=tmp_path / "test.db")
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    @pytest.fixture
+    def project_dir(self, tmp_path):
+        """Create a temp directory with sample files."""
+        project = tmp_path / "project"
+        project.mkdir()
+        return project
+
+    def test_bootstrap_single_file(self, storage, project_dir):
+        """Bootstrap from a single README file creates memories."""
+        readme = project_dir / "README.md"
+        readme.write_text("# Project\n\n- Feature one\n- Feature two\n")
+
+        result = storage.bootstrap_from_files([readme])
+
+        assert result["success"] is True
+        assert result["files_found"] == 1
+        assert result["files_processed"] == 1
+        assert result["memories_created"] >= 1
+        assert result["hot_cache_promoted"] >= 1
+
+    def test_bootstrap_multiple_files(self, storage, project_dir):
+        """Bootstrap from multiple files processes all."""
+        readme = project_dir / "README.md"
+        readme.write_text("# README\n\n- Readme content\n")
+
+        claude = project_dir / "CLAUDE.md"
+        claude.write_text("# Claude\n\n- Claude instructions\n")
+
+        result = storage.bootstrap_from_files([readme, claude])
+
+        assert result["success"] is True
+        assert result["files_found"] == 2
+        assert result["files_processed"] == 2
+        assert result["memories_created"] >= 2
+
+    def test_bootstrap_empty_file_list(self, storage):
+        """Bootstrap with no files returns graceful message."""
+        result = storage.bootstrap_from_files([])
+
+        assert result["success"] is True
+        assert result["files_found"] == 0
+        assert result["files_processed"] == 0
+        assert result["memories_created"] == 0
+        assert "No files provided" in result["message"]
+
+    def test_bootstrap_file_not_found(self, storage, project_dir):
+        """Bootstrap handles missing files gracefully."""
+        missing = project_dir / "NONEXISTENT.md"
+
+        result = storage.bootstrap_from_files([missing])
+
+        assert result["success"] is True
+        assert result["files_found"] == 1
+        assert result["files_processed"] == 0
+        assert result["memories_created"] == 0
+        assert len(result["errors"]) == 1
+        assert "file not found" in result["errors"][0]
+
+    def test_bootstrap_empty_file(self, storage, project_dir):
+        """Bootstrap skips empty files silently."""
+        empty = project_dir / "EMPTY.md"
+        empty.write_text("")
+
+        readme = project_dir / "README.md"
+        readme.write_text("# Content\n\n- Actual content\n")
+
+        result = storage.bootstrap_from_files([empty, readme])
+
+        assert result["success"] is True
+        assert result["files_processed"] == 1  # Only README counted
+        assert result["memories_created"] >= 1
+
+    def test_bootstrap_directory_instead_of_file(self, storage, project_dir):
+        """Bootstrap handles directory path gracefully."""
+        subdir = project_dir / "subdir"
+        subdir.mkdir()
+
+        result = storage.bootstrap_from_files([subdir])
+
+        assert result["success"] is True
+        assert result["files_processed"] == 0
+        assert len(result["errors"]) == 1
+        assert "not a file" in result["errors"][0]
+
+    def test_bootstrap_no_promote(self, storage, project_dir):
+        """Bootstrap with promote_to_hot=False doesn't promote."""
+        readme = project_dir / "README.md"
+        readme.write_text("# Project\n\n- Some content\n")
+
+        result = storage.bootstrap_from_files([readme], promote_to_hot=False)
+
+        assert result["success"] is True
+        assert result["memories_created"] >= 1
+        assert result["hot_cache_promoted"] == 0
+
+        # Verify not in hot cache
+        hot = storage.get_hot_memories()
+        assert len(hot) == 0
+
+    def test_bootstrap_with_tags(self, storage, project_dir):
+        """Bootstrap applies tags to all memories."""
+        readme = project_dir / "README.md"
+        readme.write_text("# Project\n\n- Tagged content\n")
+
+        result = storage.bootstrap_from_files(
+            [readme],
+            tags=["bootstrap", "readme"],
+        )
+
+        assert result["success"] is True
+        assert result["memories_created"] >= 1
+
+        # Check tags were applied
+        memories = storage.list_memories(limit=10)
+        assert len(memories) >= 1
+        for mem in memories:
+            assert "bootstrap" in mem.tags
+            assert "readme" in mem.tags
+
+    def test_bootstrap_with_memory_type(self, storage, project_dir):
+        """Bootstrap uses specified memory type."""
+        readme = project_dir / "README.md"
+        readme.write_text("# Reference\n\n- Reference content\n")
+
+        result = storage.bootstrap_from_files(
+            [readme],
+            memory_type=MemoryType.REFERENCE,
+        )
+
+        assert result["success"] is True
+        assert result["memories_created"] >= 1
+
+        # Check type was applied
+        memories = storage.list_memories(limit=10)
+        for mem in memories:
+            assert mem.memory_type == MemoryType.REFERENCE
+
+    def test_bootstrap_deduplication(self, storage, project_dir):
+        """Bootstrap skips duplicate content."""
+        readme = project_dir / "README.md"
+        readme.write_text("# Project\n\n- Unique content\n")
+
+        # First bootstrap
+        result1 = storage.bootstrap_from_files([readme])
+        assert result1["memories_created"] >= 1
+
+        # Second bootstrap - same content
+        result2 = storage.bootstrap_from_files([readme])
+        assert result2["memories_created"] == 0
+        assert result2["memories_skipped"] >= 1
+
+    def test_bootstrap_binary_file_skipped(self, storage, project_dir):
+        """Bootstrap skips binary files."""
+        binary = project_dir / "image.png"
+        # Write some binary content with null bytes
+        binary.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00")
+
+        result = storage.bootstrap_from_files([binary])
+
+        assert result["success"] is True
+        assert result["files_processed"] == 0
+        assert len(result["errors"]) == 1
+        assert "binary" in result["errors"][0].lower()
+
+    def test_bootstrap_mixed_success_and_errors(self, storage, project_dir):
+        """Bootstrap reports errors but continues with valid files."""
+        readme = project_dir / "README.md"
+        readme.write_text("# Valid\n\n- Valid content\n")
+
+        missing = project_dir / "MISSING.md"
+
+        result = storage.bootstrap_from_files([readme, missing])
+
+        assert result["success"] is True
+        assert result["files_found"] == 2
+        assert result["files_processed"] == 1
+        assert result["memories_created"] >= 1
+        assert len(result["errors"]) == 1
+
+    def test_is_binary_file_detection(self, storage, project_dir):
+        """_is_binary_file correctly detects binary vs text."""
+        # Text file
+        text_file = project_dir / "text.txt"
+        text_file.write_text("This is plain text content")
+        assert storage._is_binary_file(text_file) is False
+
+        # Binary file with null bytes
+        binary_file = project_dir / "binary.bin"
+        binary_file.write_bytes(b"\x00\x01\x02\x03\x04")
+        assert storage._is_binary_file(binary_file) is True
+
+        # UTF-8 with special chars (still text)
+        utf8_file = project_dir / "utf8.txt"
+        utf8_file.write_text("Unicode: \u00e9\u00e8\u00ea")
+        assert storage._is_binary_file(utf8_file) is False
