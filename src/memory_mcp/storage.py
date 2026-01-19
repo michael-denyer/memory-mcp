@@ -120,6 +120,11 @@ class Memory:
     recency_score: float | None = None  # 0-1 based on age with decay
     trust_score_decayed: float | None = None  # Trust with time decay applied
     composite_score: float | None = None  # Combined ranking score
+    # Weighted component breakdown (for debugging/transparency)
+    similarity_component: float | None = None  # similarity * weight
+    recency_component: float | None = None  # recency_score * weight
+    access_component: float | None = None  # access_score * weight
+    trust_component: float | None = None  # trust * weight
 
 
 @dataclass
@@ -148,6 +153,17 @@ class MinedPattern:
     occurrence_count: int
     first_seen: datetime
     last_seen: datetime
+
+
+@dataclass
+class ScoreBreakdown:
+    """Weighted component breakdown for transparency."""
+
+    total: float  # Combined composite score
+    similarity_component: float  # similarity * weight
+    recency_component: float  # recency_score * weight
+    access_component: float  # access_score * weight
+    trust_component: float  # trust * weight
 
 
 @dataclass
@@ -1196,7 +1212,7 @@ class Storage:
         access_score: float,
         trust_score: float = 1.0,
         weights: RecallModeConfig | None = None,
-    ) -> float:
+    ) -> ScoreBreakdown:
         """Compute weighted composite score for ranking.
 
         Combines semantic similarity with recency, access frequency, and trust.
@@ -1208,6 +1224,9 @@ class Storage:
             access_score: Normalized access count (0-1)
             trust_score: Trust score with decay (0-1)
             weights: Optional custom weights from recall mode preset
+
+        Returns:
+            ScoreBreakdown with total and individual weighted components.
         """
         if weights:
             sim_weight = weights.similarity_weight
@@ -1220,11 +1239,17 @@ class Storage:
 
         trust_weight = self.settings.recall_trust_weight
 
-        return (
-            similarity * sim_weight
-            + recency_score * rec_weight
-            + access_score * acc_weight
-            + trust_score * trust_weight
+        sim_component = similarity * sim_weight
+        rec_component = recency_score * rec_weight
+        acc_component = access_score * acc_weight
+        trust_component = trust_score * trust_weight
+
+        return ScoreBreakdown(
+            total=sim_component + rec_component + acc_component + trust_component,
+            similarity_component=sim_component,
+            recency_component=rec_component,
+            access_component=acc_component,
+            trust_component=trust_component,
         )
 
     def recall(
@@ -1339,7 +1364,7 @@ class Storage:
                         base_trust, created_at, last_accessed_at, memory_type_enum
                     )
 
-                    composite_score = self._compute_composite_score(
+                    score_breakdown = self._compute_composite_score(
                         similarity,
                         recency_score,
                         access_score,
@@ -1350,7 +1375,12 @@ class Storage:
                     memory = self._row_to_memory(row, conn, similarity=similarity)
                     memory.recency_score = recency_score
                     memory.trust_score_decayed = trust_decayed
-                    memory.composite_score = composite_score
+                    memory.composite_score = score_breakdown.total
+                    # Populate weighted components for transparency
+                    memory.similarity_component = score_breakdown.similarity_component
+                    memory.recency_component = score_breakdown.recency_component
+                    memory.access_component = score_breakdown.access_component
+                    memory.trust_component = score_breakdown.trust_component
                     candidates.append(memory)
                 else:
                     gated_count += 1

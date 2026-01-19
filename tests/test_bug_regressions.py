@@ -602,6 +602,52 @@ class TestRecallCompositeScoring:
 
             storage.close()
 
+    def test_component_scores_populated(self, storage):
+        """Recall should populate weighted component scores for transparency."""
+        storage.store_memory("Test content for components", MemoryType.PROJECT)
+        result = storage.recall("test components", threshold=0.3)
+        assert len(result.memories) > 0
+
+        mem = result.memories[0]
+        # All component fields should be populated
+        assert mem.similarity_component is not None
+        assert mem.recency_component is not None
+        assert mem.access_component is not None
+        assert mem.trust_component is not None
+
+        # Components should sum to composite score
+        expected_total = (
+            mem.similarity_component
+            + mem.recency_component
+            + mem.access_component
+            + mem.trust_component
+        )
+        assert abs(mem.composite_score - expected_total) < 0.0001
+
+    def test_component_scores_use_weights(self):
+        """Component scores should reflect configured weights."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings = Settings(
+                db_path=Path(tmpdir) / "components.db",
+                recall_similarity_weight=0.6,
+                recall_recency_weight=0.2,
+                recall_access_weight=0.1,
+                recall_trust_weight=0.1,
+            )
+            storage = Storage(settings)
+
+            storage.store_memory("Component test memory", MemoryType.PROJECT)
+            result = storage.recall("component test", threshold=0.3)
+            assert len(result.memories) > 0
+
+            mem = result.memories[0]
+            # Verify similarity component uses correct weight
+            assert abs(mem.similarity_component - mem.similarity * 0.6) < 0.0001
+            # Verify recency component uses correct weight
+            assert abs(mem.recency_component - mem.recency_score * 0.2) < 0.0001
+
+            storage.close()
+
 
 class TestTrustScoring:
     """Tests for MemoryMCP-8fx: Trust scores and provenance tracking."""
