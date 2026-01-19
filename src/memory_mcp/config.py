@@ -31,6 +31,17 @@ class Settings(BaseSettings):
         default=14, description="Days without access before demotion"
     )
 
+    # Hot cache scoring weights (for LRU eviction)
+    hot_score_access_weight: float = Field(
+        default=1.0, description="Weight for access_count in hot score"
+    )
+    hot_score_recency_weight: float = Field(
+        default=0.5, description="Weight for recency boost in hot score"
+    )
+    hot_score_recency_halflife_days: float = Field(
+        default=7.0, description="Half-life in days for recency decay"
+    )
+
     # Mining
     mining_enabled: bool = Field(default=True, description="Enable pattern mining")
     log_retention_days: int = Field(default=7, description="Days to retain output logs")
@@ -42,6 +53,34 @@ class Settings(BaseSettings):
     )
     high_confidence_threshold: float = Field(
         default=0.85, description="Threshold for high confidence results"
+    )
+
+    # Recall scoring weights (composite ranking)
+    recall_similarity_weight: float = Field(
+        default=0.7, description="Weight for semantic similarity in recall score"
+    )
+    recall_recency_weight: float = Field(
+        default=0.2, description="Weight for recency in recall score"
+    )
+    recall_access_weight: float = Field(
+        default=0.1, description="Weight for access count in recall score"
+    )
+    recall_recency_halflife_days: float = Field(
+        default=30.0, description="Half-life in days for recency decay in recall"
+    )
+
+    # Trust scoring
+    trust_score_manual: float = Field(
+        default=1.0, description="Trust score for manually added memories"
+    )
+    trust_score_mined: float = Field(
+        default=0.7, description="Trust score for mined memories"
+    )
+    trust_decay_halflife_days: float = Field(
+        default=90.0, description="Half-life in days for trust decay"
+    )
+    recall_trust_weight: float = Field(
+        default=0.0, description="Weight for trust score in recall ranking (0 to disable)"
     )
 
     # Input limits

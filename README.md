@@ -125,6 +125,7 @@ Restart Claude Code, then verify with `/mcp` - you should see the memory server'
 |------|-------------|
 | `db_info()` | Get database info (path, size, schema version) |
 | `db_maintenance()` | Run vacuum and analyze, reclaim space |
+| `embedding_info()` | Get embedding provider and cache stats |
 
 ## Memory Types
 
@@ -272,3 +273,4 @@ Claude: [calls promote(1)]
 ## License
 
 MIT
+n 

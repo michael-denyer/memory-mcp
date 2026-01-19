@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from memory_mcp.config import get_settings
 from memory_mcp.logging import get_logger
-from memory_mcp.storage import Memory, MemorySource, MemoryType, RecallResult, Storage
+from memory_mcp.storage import Memory, MemorySource, MemoryType, PromotionSource, RecallResult, Storage
 
 log = get_logger("server")
 
@@ -30,9 +30,21 @@ class MemoryResponse(BaseModel):
     memory_type: str
     source: str
     is_hot: bool
+    is_pinned: bool
+    promotion_source: str | None
     tags: list[str]
     access_count: int
+    # Trust and provenance
+    trust_score: float
+    source_log_id: int | None = None
+    extracted_at: str | None = None
+    # Computed scores
     similarity: float | None = None
+    hot_score: float | None = None
+    # Recall scoring (populated during recall)
+    recency_score: float | None = None
+    trust_score_decayed: float | None = None
+    composite_score: float | None = None
     created_at: str
 
 
@@ -43,6 +55,8 @@ class RecallResponse(BaseModel):
     confidence: str
     gated_count: int
     hint: str
+    # Scoring explanation
+    ranking_factors: str
 
 
 class StatsResponse(BaseModel):
@@ -70,9 +84,18 @@ def memory_to_response(m: Memory) -> MemoryResponse:
         memory_type=m.memory_type.value,
         source=m.source.value,
         is_hot=m.is_hot,
+        is_pinned=m.is_pinned,
+        promotion_source=m.promotion_source.value if m.promotion_source else None,
         tags=m.tags,
         access_count=m.access_count,
+        trust_score=m.trust_score,
+        source_log_id=m.source_log_id,
+        extracted_at=m.extracted_at.isoformat() if m.extracted_at else None,
         similarity=m.similarity,
+        hot_score=m.hot_score,
+        recency_score=m.recency_score,
+        trust_score_decayed=m.trust_score_decayed,
+        composite_score=m.composite_score,
         created_at=m.created_at.isoformat(),
     )
 
@@ -136,14 +159,21 @@ def remember(
     if mem_type is None:
         return invalid_memory_type_error()
 
-    memory_id = storage.store_memory(
+    memory_id, is_new = storage.store_memory(
         content=content,
         memory_type=mem_type,
         source=MemorySource.MANUAL,
         tags=tag_list,
     )
 
-    return success_response(f"Stored as memory #{memory_id}", memory_id=memory_id)
+    if is_new:
+        return success_response(f"Stored as memory #{memory_id}", memory_id=memory_id)
+    else:
+        return success_response(
+            f"Memory #{memory_id} already exists (access count incremented, tags merged)",
+            memory_id=memory_id,
+            was_duplicate=True,
+        )
 
 
 @mcp.tool
@@ -154,7 +184,12 @@ def recall(
         float, Field(description="Minimum similarity (0.0-1.0) to include results")
     ] = None,
 ) -> RecallResponse:
-    """Semantic search with confidence gating.
+    """Semantic search with confidence gating and composite ranking.
+
+    Results are ranked by composite score combining:
+    - Semantic similarity (70% weight)
+    - Recency with exponential decay (20% weight)
+    - Access frequency (10% weight)
 
     Returns memories above threshold with confidence level:
     - 'high': Top result > 0.85 similarity - use confidently
@@ -178,11 +213,20 @@ def recall(
         "low": "No confident matches found - reason from scratch or try different query",
     }
 
+    # Build ranking explanation
+    sim_w = int(settings.recall_similarity_weight * 100)
+    rec_w = int(settings.recall_recency_weight * 100)
+    acc_w = int(settings.recall_access_weight * 100)
+    ranking_factors = (
+        f"Ranked by: similarity ({sim_w}%) + recency ({rec_w}%) + access ({acc_w}%)"
+    )
+
     return RecallResponse(
         memories=[memory_to_response(m) for m in result.memories],
         confidence=result.confidence,
         gated_count=result.gated_count,
         hint=hints[result.confidence],
+        ranking_factors=ranking_factors,
     )
 
 
@@ -262,6 +306,32 @@ def demote(
     if storage.demote_from_hot(memory_id):
         return success_response(f"Memory #{memory_id} demoted from hot cache")
     return error_response(f"Failed to demote memory #{memory_id}")
+
+
+@mcp.tool
+def pin(
+    memory_id: Annotated[int, Field(description="ID of hot memory to pin")],
+) -> dict:
+    """Pin a hot cache memory to prevent auto-eviction.
+
+    Pinned memories stay in hot cache even when space is needed for new items.
+    Only works on memories already in hot cache.
+    """
+    if storage.pin_memory(memory_id):
+        return success_response(f"Memory #{memory_id} pinned (won't be auto-evicted)")
+    return error_response(
+        f"Failed to pin memory #{memory_id} (not in hot cache or not found)"
+    )
+
+
+@mcp.tool
+def unpin(
+    memory_id: Annotated[int, Field(description="ID of memory to unpin")],
+) -> dict:
+    """Unpin a memory, making it eligible for auto-eviction from hot cache."""
+    if storage.unpin_memory(memory_id):
+        return success_response(f"Memory #{memory_id} unpinned")
+    return error_response(f"Failed to unpin memory #{memory_id}")
 
 
 # ========== Hot Cache Resource (Auto-Injection) ==========
@@ -365,7 +435,7 @@ def approve_candidate(
     if mem_type is None:
         return invalid_memory_type_error()
 
-    memory_id = storage.store_memory(
+    memory_id, is_new = storage.store_memory(
         content=candidate.pattern,
         memory_type=mem_type,
         source=MemorySource.MINED,
@@ -375,10 +445,17 @@ def approve_candidate(
     storage.promote_to_hot(memory_id)
     storage.delete_mined_pattern(pattern_id)
 
-    return success_response(
-        f"Pattern approved as memory #{memory_id} and promoted to hot cache",
-        memory_id=memory_id,
-    )
+    if is_new:
+        return success_response(
+            f"Pattern approved as memory #{memory_id} and promoted to hot cache",
+            memory_id=memory_id,
+        )
+    else:
+        return success_response(
+            f"Pattern matched existing memory #{memory_id} (tags merged, promoted to hot cache)",
+            memory_id=memory_id,
+            was_duplicate=True,
+        )
 
 
 @mcp.tool
@@ -457,6 +534,22 @@ def db_info() -> dict:
         "db_size_mb": round(db_size / (1024 * 1024), 2),
         "schema_version": storage.get_schema_version(),
         **stats,
+    }
+
+
+@mcp.tool
+def embedding_info() -> dict:
+    """Get embedding provider and cache information."""
+    from memory_mcp.embeddings import get_embedding_engine
+
+    engine = get_embedding_engine()
+    cache_stats = engine.cache_stats()
+
+    return {
+        "provider": cache_stats["provider"],
+        "dimension": engine.dimension,
+        "cache_size": cache_stats["size"],
+        "cache_max_size": cache_stats["max_size"],
     }
 
 

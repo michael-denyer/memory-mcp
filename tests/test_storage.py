@@ -21,11 +21,12 @@ def storage():
 
 def test_store_and_get_memory(storage):
     """Test storing and retrieving a memory."""
-    memory_id = storage.store_memory(
+    memory_id, is_new = storage.store_memory(
         content="Test content",
         memory_type=MemoryType.PROJECT,
         tags=["test", "example"],
     )
+    assert is_new is True
 
     memory = storage.get_memory(memory_id)
     assert memory is not None
@@ -56,7 +57,7 @@ def test_recall_semantic_search(storage):
 
 def test_hot_cache_promotion(storage):
     """Test promoting to hot cache."""
-    memory_id = storage.store_memory("Hot content", MemoryType.PATTERN)
+    memory_id, _ = storage.store_memory("Hot content", MemoryType.PATTERN)
 
     assert not storage.get_memory(memory_id).is_hot
 
@@ -70,7 +71,7 @@ def test_hot_cache_promotion(storage):
 
 def test_delete_memory(storage):
     """Test deleting a memory."""
-    memory_id = storage.store_memory("To delete", MemoryType.PROJECT)
+    memory_id, _ = storage.store_memory("To delete", MemoryType.PROJECT)
     assert storage.get_memory(memory_id) is not None
 
     storage.delete_memory(memory_id)

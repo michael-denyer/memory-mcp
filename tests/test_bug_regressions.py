@@ -53,16 +53,18 @@ class TestVectorSchemaDimension:
 
 
 class TestStoreMemoryConflict:
-    """Tests for MemoryMCP-cpp: store_memory conflict should handle is_hot correctly."""
+    """Tests for store_memory conflict handling and tag merging."""
 
     def test_duplicate_content_increments_access_count(self, storage):
         """Storing same content twice should increment access_count."""
-        id1 = storage.store_memory("Same content", MemoryType.PROJECT)
+        id1, is_new1 = storage.store_memory("Same content", MemoryType.PROJECT)
+        assert is_new1 is True
         mem1 = storage.get_memory(id1)
         initial_count = mem1.access_count
 
         # Store same content again
-        id2 = storage.store_memory("Same content", MemoryType.PROJECT)
+        id2, is_new2 = storage.store_memory("Same content", MemoryType.PROJECT)
+        assert is_new2 is False
 
         # Should return same ID
         assert id1 == id2
@@ -74,16 +76,73 @@ class TestStoreMemoryConflict:
     def test_promote_works_on_existing_memory(self, storage):
         """Promoting after store_memory conflict should work."""
         # Store once
-        id1 = storage.store_memory("Content to promote", MemoryType.PROJECT)
+        id1, _ = storage.store_memory("Content to promote", MemoryType.PROJECT)
         assert not storage.get_memory(id1).is_hot
 
         # Store again (conflict path) - is_hot param would be ignored
-        id2 = storage.store_memory("Content to promote", MemoryType.PROJECT)
+        id2, is_new = storage.store_memory("Content to promote", MemoryType.PROJECT)
         assert id1 == id2
+        assert is_new is False
 
         # Explicit promote should work
         storage.promote_to_hot(id1)
         assert storage.get_memory(id1).is_hot
+
+    def test_duplicate_content_merges_tags(self, storage):
+        """Storing duplicate with new tags should merge them."""
+        # Store with initial tags
+        id1, _ = storage.store_memory(
+            "Content with tags", MemoryType.PROJECT, tags=["tag1", "tag2"]
+        )
+        mem1 = storage.get_memory(id1)
+        assert set(mem1.tags) == {"tag1", "tag2"}
+
+        # Store same content with additional tags
+        id2, is_new = storage.store_memory(
+            "Content with tags", MemoryType.PROJECT, tags=["tag2", "tag3"]
+        )
+        assert id1 == id2
+        assert is_new is False
+
+        # Should have merged tags
+        mem2 = storage.get_memory(id2)
+        assert set(mem2.tags) == {"tag1", "tag2", "tag3"}
+
+    def test_duplicate_preserves_original_type(self, storage):
+        """Storing duplicate with different type should preserve original."""
+        # Store as project type
+        id1, _ = storage.store_memory("Type test content", MemoryType.PROJECT)
+        mem1 = storage.get_memory(id1)
+        assert mem1.memory_type == MemoryType.PROJECT
+
+        # Try to store same content as pattern type
+        id2, is_new = storage.store_memory("Type test content", MemoryType.PATTERN)
+        assert id1 == id2
+        assert is_new is False
+
+        # Should still be project type (first write wins)
+        mem2 = storage.get_memory(id2)
+        assert mem2.memory_type == MemoryType.PROJECT
+
+    def test_duplicate_preserves_original_source(self, storage):
+        """Storing duplicate with different source should preserve original."""
+        # Store as manual
+        id1, _ = storage.store_memory(
+            "Source test content", MemoryType.PROJECT, source=MemorySource.MANUAL
+        )
+        mem1 = storage.get_memory(id1)
+        assert mem1.source == MemorySource.MANUAL
+
+        # Try to store same content as mined
+        id2, is_new = storage.store_memory(
+            "Source test content", MemoryType.PROJECT, source=MemorySource.MINED
+        )
+        assert id1 == id2
+        assert is_new is False
+
+        # Should still be manual (first write wins)
+        mem2 = storage.get_memory(id2)
+        assert mem2.source == MemorySource.MANUAL
 
 
 class TestRecallThresholdHandling:
@@ -165,7 +224,7 @@ class TestHotCachePromotion:
         memory_ids = []
 
         for i in range(max_hot + 5):
-            mid = storage.store_memory(f"Content {i}", MemoryType.PROJECT)
+            mid, _ = storage.store_memory(f"Content {i}", MemoryType.PROJECT)
             memory_ids.append(mid)
             storage.promote_to_hot(mid)
 
@@ -175,7 +234,7 @@ class TestHotCachePromotion:
 
     def test_demote_keeps_in_cold_storage(self, storage):
         """Demoting should keep memory in cold storage."""
-        mid = storage.store_memory("To demote", MemoryType.PROJECT)
+        mid, _ = storage.store_memory("To demote", MemoryType.PROJECT)
         storage.promote_to_hot(mid)
         assert storage.get_memory(mid).is_hot
 
@@ -198,7 +257,7 @@ class TestSchemaVersioning:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(db_path=Path(tmpdir) / "new.db")
             storage = Storage(settings)
-            assert storage.get_schema_version() == 1
+            assert storage.get_schema_version() == 3  # Updated to v3
             storage.close()
 
     def test_wal_mode_enabled(self):
@@ -237,3 +296,444 @@ class TestMaintenanceOperations:
         assert "memory_count" in result
         assert result["memory_count"] == 1
         assert "schema_version" in result
+
+
+class TestHotCacheLRU:
+    """Tests for MemoryMCP-zpg: Hot cache LRU policy with score-based eviction."""
+
+    def test_hot_score_computed(self, storage):
+        """Hot score should be computed for memories."""
+        mid, _ = storage.store_memory("Score test", MemoryType.PROJECT)
+        storage.promote_to_hot(mid)
+        mem = storage.get_memory(mid)
+        assert mem.hot_score is not None
+        # New memory has access_count=0 and no last_accessed_at, so score is 0
+        assert mem.hot_score == 0.0
+
+        # After accessing, score should increase
+        storage.update_access(mid)
+        mem = storage.get_memory(mid)
+        assert mem.hot_score > 0
+
+    def test_eviction_removes_lowest_score(self):
+        """When hot cache is full, lowest-scoring item should be evicted."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Small hot cache for testing
+            settings = Settings(db_path=Path(tmpdir) / "lru.db", hot_cache_max_items=3)
+            storage = Storage(settings)
+
+            # Create 3 memories and promote them
+            ids = []
+            for i in range(3):
+                mid, _ = storage.store_memory(f"Content {i}", MemoryType.PROJECT)
+                ids.append(mid)
+                storage.promote_to_hot(mid)
+
+            # All 3 should be hot
+            assert len(storage.get_hot_memories()) == 3
+
+            # Access first memory multiple times to boost its score
+            for _ in range(5):
+                storage.update_access(ids[0])
+
+            # Add 4th memory - should evict lowest score (not ids[0])
+            mid4, _ = storage.store_memory("Content 4", MemoryType.PROJECT)
+            storage.promote_to_hot(mid4)
+
+            hot_mems = storage.get_hot_memories()
+            assert len(hot_mems) == 3
+            hot_ids = {m.id for m in hot_mems}
+
+            # First memory should still be hot (highest access count)
+            assert ids[0] in hot_ids
+            # Fourth memory should be hot (just added)
+            assert mid4 in hot_ids
+
+            storage.close()
+
+    def test_pinned_memory_not_evicted(self):
+        """Pinned memories should not be evicted even with low scores."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings = Settings(db_path=Path(tmpdir) / "pin.db", hot_cache_max_items=2)
+            storage = Storage(settings)
+
+            # Create 2 memories and promote them
+            mid1, _ = storage.store_memory("Pinned content", MemoryType.PROJECT)
+            mid2, _ = storage.store_memory("Normal content", MemoryType.PROJECT)
+            storage.promote_to_hot(mid1)
+            storage.promote_to_hot(mid2)
+
+            # Pin the first one
+            storage.pin_memory(mid1)
+            mem1 = storage.get_memory(mid1)
+            assert mem1.is_pinned
+
+            # Boost second memory's score
+            for _ in range(10):
+                storage.update_access(mid2)
+
+            # Try to add third - should evict mid2 (not pinned) even though
+            # mid1 has lower score
+            mid3, _ = storage.store_memory("Third content", MemoryType.PROJECT)
+            storage.promote_to_hot(mid3)
+
+            hot_mems = storage.get_hot_memories()
+            hot_ids = {m.id for m in hot_mems}
+
+            # Pinned memory should still be hot
+            assert mid1 in hot_ids
+            # New memory should be hot
+            assert mid3 in hot_ids
+            # Mid2 was evicted despite higher score (only non-pinned option)
+            assert mid2 not in hot_ids
+
+            storage.close()
+
+    def test_all_pinned_blocks_promotion(self):
+        """Cannot promote when cache full and all items pinned."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings = Settings(db_path=Path(tmpdir) / "allpin.db", hot_cache_max_items=2)
+            storage = Storage(settings)
+
+            # Fill cache with pinned memories
+            mid1, _ = storage.store_memory("Pinned 1", MemoryType.PROJECT)
+            mid2, _ = storage.store_memory("Pinned 2", MemoryType.PROJECT)
+            storage.promote_to_hot(mid1, pin=True)
+            storage.promote_to_hot(mid2, pin=True)
+
+            # Try to add third
+            mid3, _ = storage.store_memory("Cannot promote", MemoryType.PROJECT)
+            result = storage.promote_to_hot(mid3)
+
+            # Should fail
+            assert result is False
+            assert not storage.get_memory(mid3).is_hot
+
+            storage.close()
+
+    def test_unpin_allows_eviction(self):
+        """Unpinning a memory makes it eligible for eviction."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings = Settings(db_path=Path(tmpdir) / "unpin.db", hot_cache_max_items=2)
+            storage = Storage(settings)
+
+            # Fill cache with pinned memories
+            mid1, _ = storage.store_memory("To unpin", MemoryType.PROJECT)
+            mid2, _ = storage.store_memory("Stays pinned", MemoryType.PROJECT)
+            storage.promote_to_hot(mid1, pin=True)
+            storage.promote_to_hot(mid2, pin=True)
+
+            # Unpin first memory
+            storage.unpin_memory(mid1)
+            assert not storage.get_memory(mid1).is_pinned
+
+            # Now promotion should work
+            mid3, _ = storage.store_memory("Can promote now", MemoryType.PROJECT)
+            result = storage.promote_to_hot(mid3)
+            assert result is True
+
+            hot_ids = {m.id for m in storage.get_hot_memories()}
+            assert mid2 in hot_ids  # Still pinned
+            assert mid3 in hot_ids  # Newly promoted
+            assert mid1 not in hot_ids  # Evicted (was unpinned)
+
+            storage.close()
+
+    def test_promotion_source_tracked(self, storage):
+        """Promotion source should be tracked."""
+        from memory_mcp.storage import PromotionSource
+
+        mid, _ = storage.store_memory("Track source", MemoryType.PROJECT)
+
+        # Manual promotion (default)
+        storage.promote_to_hot(mid)
+        mem = storage.get_memory(mid)
+        assert mem.promotion_source == PromotionSource.MANUAL
+
+        # Demote and re-promote with different source
+        storage.demote_from_hot(mid)
+        storage.promote_to_hot(mid, promotion_source=PromotionSource.AUTO_THRESHOLD)
+        mem = storage.get_memory(mid)
+        assert mem.promotion_source == PromotionSource.AUTO_THRESHOLD
+
+    def test_hot_memories_ordered_by_score(self, storage):
+        """get_hot_memories should return memories ordered by hot_score desc."""
+        # Create 3 memories with different access patterns
+        ids = []
+        for i in range(3):
+            mid, _ = storage.store_memory(f"Ordered {i}", MemoryType.PROJECT)
+            ids.append(mid)
+            storage.promote_to_hot(mid)
+
+        # Boost scores differently
+        for _ in range(10):
+            storage.update_access(ids[0])  # Highest
+        for _ in range(5):
+            storage.update_access(ids[1])  # Middle
+        # ids[2] has lowest score
+
+        hot_mems = storage.get_hot_memories()
+        scores = [m.hot_score for m in hot_mems]
+
+        # Should be descending order
+        assert scores == sorted(scores, reverse=True)
+        # First should be highest scorer
+        assert hot_mems[0].id == ids[0]
+
+
+class TestRecallCompositeScoring:
+    """Tests for MemoryMCP-iz5: Recency and confidence shaping."""
+
+    def test_recall_returns_composite_scores(self, storage):
+        """Recall should populate recency_score and composite_score."""
+        storage.store_memory("Test database setup", MemoryType.PROJECT)
+
+        result = storage.recall("database", threshold=0.3)
+        assert len(result.memories) > 0
+
+        mem = result.memories[0]
+        assert mem.similarity is not None
+        assert mem.recency_score is not None
+        assert mem.composite_score is not None
+
+    def test_recency_score_decays_with_age(self, storage):
+        """Recency score should decay exponentially with age."""
+        # Recency score is computed based on created_at
+        # New items should have recency_score close to 1.0
+        storage.store_memory("Fresh content about testing", MemoryType.PROJECT)
+
+        result = storage.recall("testing", threshold=0.3)
+        assert len(result.memories) > 0
+
+        # Just-created item should have high recency score
+        mem = result.memories[0]
+        assert mem.recency_score > 0.99  # Very close to 1.0 for fresh items
+
+    def test_composite_score_combines_factors(self, storage):
+        """Composite score should combine similarity, recency, and access."""
+        storage.store_memory("PostgreSQL database configuration", MemoryType.PROJECT)
+
+        result = storage.recall("database config", threshold=0.3)
+        assert len(result.memories) > 0
+
+        mem = result.memories[0]
+        # Composite should be weighted sum
+        expected = (
+            mem.similarity * storage.settings.recall_similarity_weight
+            + mem.recency_score * storage.settings.recall_recency_weight
+            + 0.0  # access_score is 0 for single-item recall
+        )
+        # Allow small floating point difference
+        assert abs(mem.composite_score - expected) < 0.01
+
+    def test_results_ordered_by_composite_score(self):
+        """Results should be ordered by composite score, not just similarity."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Configure to heavily weight recency
+            settings = Settings(
+                db_path=Path(tmpdir) / "recency.db",
+                recall_similarity_weight=0.5,
+                recall_recency_weight=0.4,
+                recall_access_weight=0.1,
+            )
+            storage = Storage(settings)
+
+            # Store items (all will have same recency since created simultaneously)
+            storage.store_memory("Python programming language", MemoryType.PROJECT)
+            storage.store_memory("Python snake species", MemoryType.PROJECT)
+
+            result = storage.recall("Python", threshold=0.3)
+            assert len(result.memories) >= 1
+
+            # Results should be sorted by composite score descending
+            scores = [m.composite_score for m in result.memories]
+            assert scores == sorted(scores, reverse=True)
+
+            storage.close()
+
+    def test_access_count_affects_ranking(self):
+        """Frequently accessed items should rank higher."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Configure to weight access count
+            settings = Settings(
+                db_path=Path(tmpdir) / "access.db",
+                recall_similarity_weight=0.6,
+                recall_recency_weight=0.1,
+                recall_access_weight=0.3,
+            )
+            storage = Storage(settings)
+
+            # Store two similar items
+            id1, _ = storage.store_memory("Database migration tools", MemoryType.PROJECT)
+            id2, _ = storage.store_memory("Database migration scripts", MemoryType.PROJECT)
+
+            # Boost access count on second item
+            for _ in range(10):
+                storage.update_access(id2)
+
+            result = storage.recall("database migration", threshold=0.3)
+            assert len(result.memories) == 2
+
+            # The frequently accessed one should rank higher
+            # (assuming similar semantic similarity)
+            ids_in_order = [m.id for m in result.memories]
+            # id2 should be first due to higher access score
+            assert ids_in_order[0] == id2
+
+            storage.close()
+
+    def test_config_weights_respected(self):
+        """Custom config weights should be used in scoring."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Set custom weights that sum to 1.0
+            settings = Settings(
+                db_path=Path(tmpdir) / "weights.db",
+                recall_similarity_weight=0.5,
+                recall_recency_weight=0.3,
+                recall_access_weight=0.2,
+            )
+            storage = Storage(settings)
+
+            storage.store_memory("Test content for weights", MemoryType.PROJECT)
+            result = storage.recall("test weights", threshold=0.3)
+
+            assert len(result.memories) > 0
+            # Verify the weights are being used (composite should reflect them)
+            mem = result.memories[0]
+            assert mem.composite_score is not None
+
+            storage.close()
+
+
+class TestTrustScoring:
+    """Tests for MemoryMCP-8fx: Trust scores and provenance tracking."""
+
+    def test_manual_memory_has_high_trust(self, storage):
+        """Manual memories should have trust_score=1.0 by default."""
+        mid, _ = storage.store_memory(
+            "Manual content", MemoryType.PROJECT, source=MemorySource.MANUAL
+        )
+        mem = storage.get_memory(mid)
+        assert mem.trust_score == storage.settings.trust_score_manual
+        assert mem.trust_score == 1.0
+
+    def test_mined_memory_has_lower_trust(self, storage):
+        """Mined memories should have lower trust score."""
+        mid, _ = storage.store_memory(
+            "Mined content", MemoryType.PATTERN, source=MemorySource.MINED
+        )
+        mem = storage.get_memory(mid)
+        assert mem.trust_score == storage.settings.trust_score_mined
+        assert mem.trust_score == 0.7
+
+    def test_provenance_tracked_for_mined(self, storage):
+        """Mined memories should track provenance (source_log_id, extracted_at)."""
+        # First log some output
+        log_id = storage.log_output("Some output to mine from")
+
+        # Store mined memory with source_log_id
+        mid, _ = storage.store_memory(
+            "Pattern from output",
+            MemoryType.PATTERN,
+            source=MemorySource.MINED,
+            source_log_id=log_id,
+        )
+
+        mem = storage.get_memory(mid)
+        assert mem.source_log_id == log_id
+        assert mem.extracted_at is not None
+
+    def test_manual_memory_no_extraction_timestamp(self, storage):
+        """Manual memories should not have extracted_at set."""
+        mid, _ = storage.store_memory(
+            "Manual entry", MemoryType.PROJECT, source=MemorySource.MANUAL
+        )
+        mem = storage.get_memory(mid)
+        assert mem.extracted_at is None
+        assert mem.source_log_id is None
+
+    def test_trust_score_decayed_computed_in_recall(self, storage):
+        """Recall should compute decayed trust score."""
+        storage.store_memory("Trust decay test", MemoryType.PROJECT)
+
+        result = storage.recall("trust decay", threshold=0.3)
+        assert len(result.memories) > 0
+
+        mem = result.memories[0]
+        assert mem.trust_score_decayed is not None
+        # For fresh memory, decayed should be close to base trust
+        assert mem.trust_score_decayed > 0.99
+
+    def test_trust_weight_affects_ranking(self):
+        """When trust weight is non-zero, it should affect ranking."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings = Settings(
+                db_path=Path(tmpdir) / "trust.db",
+                recall_similarity_weight=0.5,
+                recall_recency_weight=0.2,
+                recall_access_weight=0.1,
+                recall_trust_weight=0.2,  # Enable trust in ranking
+            )
+            storage = Storage(settings)
+
+            # Store manual (trust=1.0) and mined (trust=0.7) memories
+            id_manual, _ = storage.store_memory(
+                "Manual database info", MemoryType.PROJECT, source=MemorySource.MANUAL
+            )
+            id_mined, _ = storage.store_memory(
+                "Mined database info", MemoryType.PATTERN, source=MemorySource.MINED
+            )
+
+            result = storage.recall("database info", threshold=0.3)
+            assert len(result.memories) == 2
+
+            # Manual should rank higher due to trust
+            # (assuming similar similarity and recency)
+            mem1, mem2 = result.memories
+            assert mem1.trust_score > mem2.trust_score
+
+            storage.close()
+
+    def test_custom_trust_scores_in_config(self):
+        """Custom trust scores should be configurable."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings = Settings(
+                db_path=Path(tmpdir) / "custom_trust.db",
+                trust_score_manual=0.9,
+                trust_score_mined=0.5,
+            )
+            storage = Storage(settings)
+
+            mid_manual, _ = storage.store_memory(
+                "Custom manual", MemoryType.PROJECT, source=MemorySource.MANUAL
+            )
+            mid_mined, _ = storage.store_memory(
+                "Custom mined", MemoryType.PATTERN, source=MemorySource.MINED
+            )
+
+            assert storage.get_memory(mid_manual).trust_score == 0.9
+            assert storage.get_memory(mid_mined).trust_score == 0.5
+
+            storage.close()
+
+    def test_schema_migration_v3_adds_trust_columns(self):
+        """Migration to v3 should add trust_score and provenance columns."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings = Settings(db_path=Path(tmpdir) / "migrate.db")
+            storage = Storage(settings)
+
+            # Check schema version is at least 3
+            assert storage.get_schema_version() >= 3
+
+            # Check columns exist
+            conn = storage._get_connection()
+            columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(memories)").fetchall()
+            }
+
+            assert "trust_score" in columns
+            assert "source_log_id" in columns
+            assert "extracted_at" in columns
+
+            storage.close()

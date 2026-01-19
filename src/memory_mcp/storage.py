@@ -35,6 +35,14 @@ class MemorySource(str, Enum):
     MINED = "mined"  # Extracted from output logs
 
 
+class PromotionSource(str, Enum):
+    """How a memory was promoted to hot cache."""
+
+    MANUAL = "manual"  # Explicitly promoted by user
+    AUTO_THRESHOLD = "auto_threshold"  # Auto-promoted based on access count
+    MINED_APPROVED = "mined_approved"  # Approved from mining candidates
+
+
 @dataclass
 class Memory:
     """A stored memory."""
@@ -45,11 +53,23 @@ class Memory:
     memory_type: MemoryType
     source: MemorySource
     is_hot: bool
+    is_pinned: bool
+    promotion_source: PromotionSource | None
     tags: list[str]
     access_count: int
     last_accessed_at: datetime | None
     created_at: datetime
+    # Trust and provenance
+    trust_score: float = 1.0  # Base trust (decays over time)
+    source_log_id: int | None = None  # For mined memories: originating log
+    extracted_at: datetime | None = None  # When pattern was extracted
+    # Computed scores (populated during search/recall)
     similarity: float | None = None  # Populated during search
+    hot_score: float | None = None  # Computed score for LRU ranking
+    # Recall scoring components (populated during recall)
+    recency_score: float | None = None  # 0-1 based on age with decay
+    trust_score_decayed: float | None = None  # Trust with time decay applied
+    composite_score: float | None = None  # Combined ranking score
 
 
 @dataclass
@@ -75,7 +95,7 @@ class RecallResult:
 
 
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 -- Schema version tracking
@@ -92,6 +112,8 @@ CREATE TABLE IF NOT EXISTS memories (
     memory_type TEXT NOT NULL,
     source TEXT NOT NULL,
     is_hot INTEGER DEFAULT 0,
+    is_pinned INTEGER DEFAULT 0,
+    promotion_source TEXT,
     access_count INTEGER DEFAULT 0,
     last_accessed_at TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -202,25 +224,79 @@ class Storage:
         # Check existing schema version before applying migrations
         self._check_schema_version(conn)
 
-        # Apply schema
+        # Apply base schema first (uses IF NOT EXISTS, safe to re-run)
         conn.executescript(SCHEMA)
         conn.execute(get_vector_schema(self.settings.embedding_dim))
 
-        # Record schema version if not present
+        # Get current version for migrations (now table exists)
         existing_version = conn.execute(
             "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
         ).fetchone()
-        if not existing_version:
+        current_version = existing_version[0] if existing_version else 0
+
+        # Run migrations
+        self._run_migrations(conn, current_version)
+
+        # Record new schema version
+        if current_version < SCHEMA_VERSION:
             conn.execute(
-                "INSERT INTO schema_version (version) VALUES (?)",
+                "INSERT OR REPLACE INTO schema_version (version) VALUES (?)",
                 (SCHEMA_VERSION,),
             )
+            log.info("Database migrated from v{} to v{}", current_version, SCHEMA_VERSION)
 
         conn.commit()
 
         # Validate embedding dimension (fail fast, not just warn)
         self._validate_vector_dimension(conn)
         log.debug("Database schema initialized (version={})", SCHEMA_VERSION)
+
+    def _run_migrations(self, conn: sqlite3.Connection, from_version: int) -> None:
+        """Run schema migrations from from_version to SCHEMA_VERSION."""
+        if from_version < 2:
+            self._migrate_v1_to_v2(conn)
+        if from_version < 3:
+            self._migrate_v2_to_v3(conn)
+
+    def _get_table_columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
+        """Get set of column names for a table."""
+        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+    def _add_column_if_missing(
+        self, conn: sqlite3.Connection, table: str, column: str, definition: str
+    ) -> bool:
+        """Add column if it doesn't exist. Returns True if added."""
+        columns = self._get_table_columns(conn, table)
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            log.debug("Added {} column to {} table", column, table)
+            return True
+        return False
+
+    def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
+        """Add is_pinned and promotion_source columns for hot cache LRU."""
+        self._add_column_if_missing(conn, "memories", "is_pinned", "INTEGER DEFAULT 0")
+        self._add_column_if_missing(conn, "memories", "promotion_source", "TEXT")
+
+    def _migrate_v2_to_v3(self, conn: sqlite3.Connection) -> None:
+        """Add trust_score and provenance columns."""
+        self._add_column_if_missing(conn, "memories", "trust_score", "REAL DEFAULT 1.0")
+        self._add_column_if_missing(conn, "memories", "source_log_id", "INTEGER")
+        self._add_column_if_missing(conn, "memories", "extracted_at", "TEXT")
+
+        # Set initial trust scores based on source type
+        conn.execute(
+            """
+            UPDATE memories
+            SET trust_score = CASE
+                WHEN source = 'manual' THEN ?
+                WHEN source = 'mined' THEN ?
+                ELSE 1.0
+            END
+            WHERE trust_score IS NULL OR trust_score = 1.0
+            """,
+            (self.settings.trust_score_manual, self.settings.trust_score_mined),
+        )
 
     def _check_schema_version(self, conn: sqlite3.Connection) -> None:
         """Check schema version compatibility."""
@@ -351,9 +427,36 @@ class Storage:
         source: MemorySource = MemorySource.MANUAL,
         tags: list[str] | None = None,
         is_hot: bool = False,
-    ) -> int:
-        """Store a new memory with embedding."""
+        source_log_id: int | None = None,
+    ) -> tuple[int, bool]:
+        """Store a new memory with embedding.
+
+        Args:
+            content: The memory content
+            memory_type: Type of memory (project, pattern, etc.)
+            source: How memory was created (manual, mined)
+            tags: Optional tags for categorization
+            is_hot: Whether to add to hot cache immediately
+            source_log_id: For mined memories, the originating output_log ID
+
+        Returns:
+            Tuple of (memory_id, is_new) where is_new indicates if a new
+            memory was created (False means existing memory was updated).
+
+        On duplicate content:
+            - Increments access_count and updates last_accessed_at
+            - Merges new tags with existing tags
+            - Does NOT change memory_type or source (first write wins)
+        """
         hash_val = content_hash(content)
+        tags = tags or []
+
+        # Trust score based on source type
+        trust_scores = {
+            MemorySource.MANUAL: self.settings.trust_score_manual,
+            MemorySource.MINED: self.settings.trust_score_mined,
+        }
+        trust_score = trust_scores.get(source, self.settings.trust_score_mined)
 
         with self.transaction() as conn:
             # Check if memory already exists
@@ -362,7 +465,7 @@ class Storage:
             ).fetchone()
 
             if existing:
-                # Update existing memory
+                # Update existing memory - merge tags, increment access
                 memory_id = existing[0]
                 conn.execute(
                     """
@@ -373,17 +476,47 @@ class Storage:
                     """,
                     (memory_id,),
                 )
-                log.debug("Updated existing memory id={}", memory_id)
+
+                # Merge new tags (INSERT OR IGNORE handles duplicates)
+                if tags:
+                    conn.executemany(
+                        "INSERT OR IGNORE INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                        [(memory_id, tag) for tag in tags],
+                    )
+                    log.debug(
+                        "Updated existing memory id={} (merged {} tags)",
+                        memory_id,
+                        len(tags),
+                    )
+                else:
+                    log.debug("Updated existing memory id={}", memory_id)
+
+                return memory_id, False
             else:
-                # Insert new memory
+                # Insert new memory with trust and provenance
                 embedding = self._embedding_engine.embed(content)
+                extracted_at = (
+                    datetime.now().isoformat() if source == MemorySource.MINED else None
+                )
                 cursor = conn.execute(
                     """
-                    INSERT INTO memories (content, content_hash, memory_type, source, is_hot)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO memories (
+                        content, content_hash, memory_type, source, is_hot,
+                        trust_score, source_log_id, extracted_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     RETURNING id
                     """,
-                    (content, hash_val, memory_type.value, source.value, int(is_hot)),
+                    (
+                        content,
+                        hash_val,
+                        memory_type.value,
+                        source.value,
+                        int(is_hot),
+                        trust_score,
+                        source_log_id,
+                        extracted_at,
+                    ),
                 )
                 memory_id = cursor.fetchone()[0]
 
@@ -400,9 +533,43 @@ class Storage:
                         [(memory_id, tag) for tag in tags],
                     )
 
-                log.info("Stored new memory id={} type={}", memory_id, memory_type.value)
+                log.info(
+                    "Stored new memory id={} type={} trust={}",
+                    memory_id,
+                    memory_type.value,
+                    trust_score,
+                )
 
-        return memory_id
+                return memory_id, True
+
+    def _compute_hot_score(
+        self, access_count: int, last_accessed_at: datetime | None
+    ) -> float:
+        """Compute hot cache score for LRU ranking.
+
+        Score = (access_count * access_weight) + (recency_boost * recency_weight)
+
+        Recency boost uses exponential decay with configurable half-life.
+        """
+        access_weight = self.settings.hot_score_access_weight
+        recency_weight = self.settings.hot_score_recency_weight
+        halflife_days = self.settings.hot_score_recency_halflife_days
+
+        # Access count component
+        access_score = access_count * access_weight
+
+        # Recency component with exponential decay
+        recency_boost = 0.0
+        if last_accessed_at:
+            days_since_access = (datetime.now() - last_accessed_at).total_seconds() / 86400
+            # Exponential decay: 1.0 at time 0, 0.5 at half-life, approaches 0
+            recency_boost = 2 ** (-days_since_access / halflife_days) * recency_weight
+
+        return access_score + recency_boost
+
+    def _get_row_value(self, row: sqlite3.Row, column: str, default=None):
+        """Get column value from row, returning default if column doesn't exist."""
+        return row[column] if column in row.keys() else default
 
     def _row_to_memory(
         self,
@@ -421,6 +588,20 @@ class Storage:
             ]
 
         last_accessed = row["last_accessed_at"]
+        last_accessed_dt = datetime.fromisoformat(last_accessed) if last_accessed else None
+
+        # Parse optional columns (may not exist before migrations)
+        promo_source_str = self._get_row_value(row, "promotion_source")
+        promotion_source = PromotionSource(promo_source_str) if promo_source_str else None
+
+        is_pinned = bool(self._get_row_value(row, "is_pinned", False))
+        trust_score = self._get_row_value(row, "trust_score", 1.0) or 1.0
+        source_log_id = self._get_row_value(row, "source_log_id")
+        extracted_at_str = self._get_row_value(row, "extracted_at")
+        extracted_at = datetime.fromisoformat(extracted_at_str) if extracted_at_str else None
+
+        hot_score = self._compute_hot_score(row["access_count"], last_accessed_dt)
+
         return Memory(
             id=row["id"],
             content=row["content"],
@@ -428,11 +609,17 @@ class Storage:
             memory_type=MemoryType(row["memory_type"]),
             source=MemorySource(row["source"]),
             is_hot=bool(row["is_hot"]),
+            is_pinned=is_pinned,
+            promotion_source=promotion_source,
             tags=tags,
             access_count=row["access_count"],
-            last_accessed_at=datetime.fromisoformat(last_accessed) if last_accessed else None,
+            last_accessed_at=last_accessed_dt,
             created_at=datetime.fromisoformat(row["created_at"]),
+            trust_score=trust_score,
+            source_log_id=source_log_id,
+            extracted_at=extracted_at,
             similarity=similarity,
+            hot_score=hot_score,
         )
 
     def get_memory(self, memory_id: int) -> Memory | None:
@@ -481,13 +668,74 @@ class Storage:
 
     # ========== Vector Search ==========
 
+    def _compute_recency_score(self, created_at: datetime) -> float:
+        """Compute recency score (0-1) with exponential decay.
+
+        Returns 1.0 for just-created items, decaying to 0.5 at half-life.
+        """
+        halflife_days = self.settings.recall_recency_halflife_days
+        days_old = (datetime.now() - created_at).total_seconds() / 86400
+        return 2 ** (-days_old / halflife_days)
+
+    def _compute_trust_decay(self, base_trust: float, created_at: datetime) -> float:
+        """Compute time-decayed trust score.
+
+        Args:
+            base_trust: Initial trust (1.0 for manual, 0.7 for mined by default)
+            created_at: When the memory was created
+
+        Returns:
+            Trust score with exponential decay applied based on age.
+        """
+        halflife_days = self.settings.trust_decay_halflife_days
+        days_old = (datetime.now() - created_at).total_seconds() / 86400
+        decay = 2 ** (-days_old / halflife_days)
+        return base_trust * decay
+
+    def _compute_access_score(self, access_count: int, max_access: int) -> float:
+        """Normalize access count to 0-1 range."""
+        if max_access <= 0:
+            return 0.0
+        return min(1.0, access_count / max_access)
+
+    def _compute_composite_score(
+        self,
+        similarity: float,
+        recency_score: float,
+        access_score: float,
+        trust_score: float = 1.0,
+    ) -> float:
+        """Compute weighted composite score for ranking.
+
+        Combines semantic similarity with recency, access frequency, and trust.
+        Trust weight is optional (default 0) for backwards compatibility.
+        """
+        sim_weight = self.settings.recall_similarity_weight
+        rec_weight = self.settings.recall_recency_weight
+        acc_weight = self.settings.recall_access_weight
+        trust_weight = self.settings.recall_trust_weight
+
+        return (
+            similarity * sim_weight
+            + recency_score * rec_weight
+            + access_score * acc_weight
+            + trust_score * trust_weight
+        )
+
     def recall(
         self,
         query: str,
         limit: int | None = None,
         threshold: float | None = None,
     ) -> RecallResult:
-        """Semantic search with confidence gating."""
+        """Semantic search with confidence gating and composite ranking.
+
+        Results are ranked by composite score combining:
+        - Semantic similarity (default 70%)
+        - Recency with exponential decay (default 20%)
+        - Access frequency (default 10%)
+        - Trust score with decay (optional, default 0%)
+        """
         # Use 'is None' to allow explicit 0 values
         if limit is None:
             limit = self.settings.default_recall_limit
@@ -497,7 +745,7 @@ class Storage:
         query_embedding = self._embedding_engine.embed(query)
 
         with self._connection() as conn:
-            # Vector similarity search - fetch extra for filtering
+            # Vector similarity search - fetch extra for filtering and re-ranking
             rows = conn.execute(
                 """
                 SELECT
@@ -510,31 +758,55 @@ class Storage:
                     m.access_count,
                     m.last_accessed_at,
                     m.created_at,
+                    m.trust_score,
                     vec_distance_cosine(v.embedding, ?) as distance
                 FROM memory_vectors v
                 JOIN memories m ON m.id = v.rowid
                 ORDER BY distance ASC
                 LIMIT ?
                 """,
-                (query_embedding.tobytes(), limit * 2),
+                (query_embedding.tobytes(), limit * 3),  # Fetch more for re-ranking
             ).fetchall()
 
-            # Convert distance to similarity (cosine distance to similarity)
-            memories = []
+            # Find max access count for normalization
+            max_access = max((row["access_count"] for row in rows), default=1)
+
+            # Convert distance to similarity and compute scores
+            candidates = []
             gated_count = 0
-            ids_to_update = []
 
             for row in rows:
                 similarity = 1 - row["distance"]  # cosine distance to similarity
 
                 if similarity >= threshold:
-                    memories.append(self._row_to_memory(row, conn, similarity=similarity))
-                    ids_to_update.append(row["id"])
+                    created_at = datetime.fromisoformat(row["created_at"])
+                    recency_score = self._compute_recency_score(created_at)
+                    access_score = self._compute_access_score(
+                        row["access_count"], max_access
+                    )
+
+                    # Compute trust with time decay
+                    base_trust = row["trust_score"] or 1.0
+                    trust_decayed = self._compute_trust_decay(base_trust, created_at)
+
+                    composite_score = self._compute_composite_score(
+                        similarity, recency_score, access_score, trust_decayed
+                    )
+
+                    memory = self._row_to_memory(row, conn, similarity=similarity)
+                    memory.recency_score = recency_score
+                    memory.trust_score_decayed = trust_decayed
+                    memory.composite_score = composite_score
+                    candidates.append(memory)
                 else:
                     gated_count += 1
 
-            # Update access counts within the same lock
-            for memory_id in ids_to_update:
+            # Re-rank by composite score
+            candidates.sort(key=lambda m: m.composite_score or 0, reverse=True)
+
+            # Take top results and update access counts
+            memories = candidates[:limit]
+            for memory in memories:
                 conn.execute(
                     """
                     UPDATE memories
@@ -542,17 +814,17 @@ class Storage:
                         last_accessed_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
-                    (memory_id,),
+                    (memory.id,),
                 )
             conn.commit()
 
-        # Limit results
-        memories = memories[:limit]
-
-        # Determine confidence level
+        # Determine confidence level based on top result's similarity
         if not memories:
             confidence = "low"
-        elif memories[0].similarity and memories[0].similarity > self.settings.high_confidence_threshold:
+        elif (
+            memories[0].similarity
+            and memories[0].similarity > self.settings.high_confidence_threshold
+        ):
             confidence = "high"
         else:
             confidence = "medium"
@@ -597,56 +869,154 @@ class Storage:
     # ========== Hot Cache ==========
 
     def get_hot_memories(self) -> list[Memory]:
-        """Get all memories in hot cache."""
+        """Get all memories in hot cache, ordered by hot_score descending."""
+        memories = []
         with self._connection() as conn:
             rows = conn.execute(
-                "SELECT id FROM memories WHERE is_hot = 1 ORDER BY access_count DESC"
+                "SELECT * FROM memories WHERE is_hot = 1"
             ).fetchall()
-            ids = [row["id"] for row in rows]
+            for row in rows:
+                memories.append(self._row_to_memory(row, conn))
 
-        return self._get_memories_by_ids(ids)
+        # Sort by hot_score descending (highest score first)
+        memories.sort(key=lambda m: m.hot_score or 0, reverse=True)
+        return memories
 
-    def promote_to_hot(self, memory_id: int) -> bool:
-        """Promote a memory to hot cache."""
+    def _find_eviction_candidate(self, conn: sqlite3.Connection) -> int | None:
+        """Find the lowest-scoring non-pinned hot memory for eviction."""
+        rows = conn.execute(
+            """
+            SELECT id, access_count, last_accessed_at
+            FROM memories
+            WHERE is_hot = 1 AND is_pinned = 0
+            """
+        ).fetchall()
+
+        if not rows:
+            return None
+
+        # Compute scores and find minimum
+        candidates = []
+        for row in rows:
+            last_accessed = row["last_accessed_at"]
+            last_accessed_dt = datetime.fromisoformat(last_accessed) if last_accessed else None
+            score = self._compute_hot_score(row["access_count"], last_accessed_dt)
+            candidates.append((row["id"], score))
+
+        if not candidates:
+            return None
+
+        # Return ID with lowest score
+        candidates.sort(key=lambda x: x[1])
+        return candidates[0][0]
+
+    def promote_to_hot(
+        self,
+        memory_id: int,
+        promotion_source: PromotionSource = PromotionSource.MANUAL,
+        pin: bool = False,
+    ) -> bool:
+        """Promote a memory to hot cache with score-based eviction.
+
+        Args:
+            memory_id: ID of memory to promote
+            promotion_source: How the memory is being promoted
+            pin: If True, memory won't be auto-evicted
+
+        Returns:
+            True if promoted successfully
+        """
         with self.transaction() as conn:
+            # Check if already hot
+            existing = conn.execute(
+                "SELECT is_hot FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if not existing:
+                return False
+            if existing["is_hot"]:
+                # Already hot, just update pinned status if requested
+                if pin:
+                    conn.execute(
+                        "UPDATE memories SET is_pinned = 1 WHERE id = ?", (memory_id,)
+                    )
+                return True
+
             # Check hot cache limit
             hot_count = conn.execute(
                 "SELECT COUNT(*) FROM memories WHERE is_hot = 1"
             ).fetchone()[0]
 
             if hot_count >= self.settings.hot_cache_max_items:
-                # Demote least accessed hot memory
-                conn.execute(
-                    """
-                    UPDATE memories SET is_hot = 0
-                    WHERE id = (
-                        SELECT id FROM memories
-                        WHERE is_hot = 1
-                        ORDER BY access_count ASC, last_accessed_at ASC
-                        LIMIT 1
+                # Find lowest-scoring non-pinned memory to evict
+                evict_id = self._find_eviction_candidate(conn)
+                if evict_id is None:
+                    log.warning(
+                        "Cannot promote memory id={}: hot cache full and all items pinned",
+                        memory_id,
                     )
-                    """
-                )
-                log.debug("Demoted least-accessed memory from hot cache (at limit)")
+                    return False
 
+                conn.execute(
+                    "UPDATE memories SET is_hot = 0, promotion_source = NULL WHERE id = ?",
+                    (evict_id,),
+                )
+                log.debug("Evicted memory id={} from hot cache (lowest score)", evict_id)
+
+            # Promote the memory
             cursor = conn.execute(
-                "UPDATE memories SET is_hot = 1 WHERE id = ?", (memory_id,)
+                """
+                UPDATE memories
+                SET is_hot = 1, is_pinned = ?, promotion_source = ?
+                WHERE id = ?
+                """,
+                (int(pin), promotion_source.value, memory_id),
             )
             promoted = cursor.rowcount > 0
             if promoted:
-                log.info("Promoted memory id={} to hot cache", memory_id)
+                log.info(
+                    "Promoted memory id={} to hot cache (source={}, pinned={})",
+                    memory_id,
+                    promotion_source.value,
+                    pin,
+                )
             return promoted
 
     def demote_from_hot(self, memory_id: int) -> bool:
-        """Remove a memory from hot cache."""
+        """Remove a memory from hot cache (ignores pinned status)."""
         with self.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE memories SET is_hot = 0 WHERE id = ?", (memory_id,)
+                "UPDATE memories SET is_hot = 0, is_pinned = 0, promotion_source = NULL WHERE id = ?",
+                (memory_id,),
             )
             demoted = cursor.rowcount > 0
             if demoted:
                 log.info("Demoted memory id={} from hot cache", memory_id)
             return demoted
+
+    def pin_memory(self, memory_id: int) -> bool:
+        """Pin a hot memory so it won't be auto-evicted."""
+        with self.transaction() as conn:
+            # Only pin if already in hot cache
+            cursor = conn.execute(
+                "UPDATE memories SET is_pinned = 1 WHERE id = ? AND is_hot = 1",
+                (memory_id,),
+            )
+            pinned = cursor.rowcount > 0
+            if pinned:
+                log.info("Pinned memory id={}", memory_id)
+            return pinned
+
+    def unpin_memory(self, memory_id: int) -> bool:
+        """Unpin a memory, making it eligible for auto-eviction."""
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE memories SET is_pinned = 0 WHERE id = ?",
+                (memory_id,),
+            )
+            unpinned = cursor.rowcount > 0
+            if unpinned:
+                log.info("Unpinned memory id={}", memory_id)
+            return unpinned
 
     # ========== Statistics ==========
 
