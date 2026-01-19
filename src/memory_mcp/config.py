@@ -137,6 +137,14 @@ class Settings(BaseSettings):
         default=30, description="Days before access sequence counts decay"
     )
 
+    # Semantic deduplication
+    semantic_dedup_enabled: bool = Field(
+        default=True, description="Merge semantically similar memories on store"
+    )
+    semantic_dedup_threshold: float = Field(
+        default=0.92, description="Similarity threshold for merging (0.92 = very similar)"
+    )
+
     # Recall mode presets
     # Precision mode: high threshold, few results, prioritize similarity
     precision_threshold: float = Field(

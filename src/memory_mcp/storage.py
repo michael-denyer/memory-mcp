@@ -10,6 +10,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Iterator
 
+import numpy as np
 import sqlite_vec
 
 from memory_mcp.config import Settings, ensure_data_dir, get_settings
@@ -263,6 +264,17 @@ class PredictionResult:
     memory: Memory
     probability: float
     source_memory_id: int  # Which memory triggered this prediction
+
+
+@dataclass
+class SemanticMergeResult:
+    """Result of semantic deduplication during store."""
+
+    memory_id: int
+    merged: bool  # True if merged with existing memory
+    merged_with_id: int | None  # ID of memory merged into (if merged)
+    similarity: float | None  # Similarity score (if merged)
+    content_updated: bool  # True if content was updated (longer/richer)
 
 
 # Current schema version - increment when making breaking changes
@@ -791,6 +803,124 @@ class Storage:
             )
         return normalized
 
+    def _find_semantic_duplicate(
+        self,
+        conn: sqlite3.Connection,
+        embedding: np.ndarray,
+        threshold: float,
+    ) -> tuple[int, float] | None:
+        """Find the most similar existing memory above threshold.
+
+        Args:
+            conn: Database connection
+            embedding: Embedding of new content
+            threshold: Minimum similarity to consider a duplicate
+
+        Returns:
+            Tuple of (memory_id, similarity) if found, None otherwise.
+        """
+        row = conn.execute(
+            """
+            SELECT m.id, vec_distance_cosine(v.embedding, ?) as distance
+            FROM memory_vectors v
+            JOIN memories m ON m.id = v.rowid
+            ORDER BY distance ASC
+            LIMIT 1
+            """,
+            (embedding.tobytes(),),
+        ).fetchone()
+
+        if row is None:
+            return None
+
+        similarity = 1 - row["distance"]
+        if similarity >= threshold:
+            return row["id"], similarity
+        return None
+
+    def _get_memory_by_id(
+        self,
+        conn: sqlite3.Connection,
+        memory_id: int,
+    ) -> Memory | None:
+        """Get a memory by ID using an existing connection."""
+        row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        if row is None:
+            return None
+        return self._row_to_memory(row, conn)
+
+    def _merge_with_existing(
+        self,
+        conn: sqlite3.Connection,
+        new_content: str,
+        existing: Memory,
+        new_tags: list[str],
+        similarity: float,
+    ) -> tuple[int, bool]:
+        """Merge new content with an existing similar memory.
+
+        Strategy:
+        - If new content is longer/richer: update content and embedding
+        - Always merge tags
+        - Increment access count
+
+        Returns:
+            Tuple of (memory_id, False) - False because not a new memory.
+        """
+        new_is_longer = len(new_content) > len(existing.content)
+
+        if new_is_longer:
+            # New content is richer - update content and embedding
+            new_embedding = self._embedding_engine.embed(new_content)
+            new_hash = content_hash(new_content)
+            conn.execute(
+                """
+                UPDATE memories
+                SET content = ?,
+                    content_hash = ?,
+                    access_count = access_count + 1,
+                    last_accessed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (new_content, new_hash, existing.id),
+            )
+            conn.execute(
+                "UPDATE memory_vectors SET embedding = ? WHERE rowid = ?",
+                (new_embedding.tobytes(), existing.id),
+            )
+            log.info(
+                "Merged memory #{}: updated content (similarity={:.2f}, {} -> {} chars)",
+                existing.id,
+                similarity,
+                len(existing.content),
+                len(new_content),
+            )
+        else:
+            # Existing content is richer - just increment access
+            conn.execute(
+                """
+                UPDATE memories
+                SET access_count = access_count + 1,
+                    last_accessed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (existing.id,),
+            )
+            log.info(
+                "Merged memory #{}: kept existing content (similarity={:.2f})",
+                existing.id,
+                similarity,
+            )
+
+        # Merge tags
+        if new_tags:
+            conn.executemany(
+                "INSERT OR IGNORE INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                [(existing.id, tag) for tag in new_tags],
+            )
+
+        return existing.id, False
+
     def store_memory(
         self,
         content: str,
@@ -871,58 +1001,73 @@ class Storage:
                     log.debug("Updated existing memory id={}", memory_id)
 
                 return memory_id, False
-            else:
-                # Insert new memory with trust and provenance
-                embedding = self._embedding_engine.embed(content)
-                extracted_at = datetime.now().isoformat() if source == MemorySource.MINED else None
-                cursor = conn.execute(
-                    """
-                    INSERT INTO memories (
-                        content, content_hash, memory_type, source, is_hot,
-                        trust_score, source_log_id, extracted_at, session_id
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    RETURNING id
-                    """,
-                    (
-                        content,
-                        hash_val,
-                        memory_type.value,
-                        source.value,
-                        int(is_hot),
-                        trust_score,
-                        source_log_id,
-                        extracted_at,
-                        session_id,
-                    ),
+
+            # Compute embedding for new content (needed for dedup check and insert)
+            embedding = self._embedding_engine.embed(content)
+
+            # Semantic deduplication: check for very similar existing memories
+            if self.settings.semantic_dedup_enabled:
+                similar = self._find_semantic_duplicate(
+                    conn, embedding, self.settings.semantic_dedup_threshold
                 )
-                memory_id = cursor.fetchone()[0]
+                if similar:
+                    existing_id, similarity = similar
+                    existing_memory = self._get_memory_by_id(conn, existing_id)
+                    if existing_memory:
+                        return self._merge_with_existing(
+                            conn, content, existing_memory, tags, similarity
+                        )
 
-                # Update session memory count if session provided
-                if session_id:
-                    self._update_session_activity(conn, session_id, memory_delta=1)
-
-                # Insert embedding only for new memories
-                conn.execute(
-                    "INSERT INTO memory_vectors (rowid, embedding) VALUES (?, ?)",
-                    (memory_id, embedding.tobytes()),
+            # No duplicate found - insert new memory
+            extracted_at = datetime.now().isoformat() if source == MemorySource.MINED else None
+            cursor = conn.execute(
+                """
+                INSERT INTO memories (
+                    content, content_hash, memory_type, source, is_hot,
+                    trust_score, source_log_id, extracted_at, session_id
                 )
-
-                # Insert tags only for new memories
-                if tags:
-                    conn.executemany(
-                        "INSERT OR IGNORE INTO memory_tags (memory_id, tag) VALUES (?, ?)",
-                        [(memory_id, tag) for tag in tags],
-                    )
-
-                log.info(
-                    "Stored new memory id={} type={} trust={}",
-                    memory_id,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+                """,
+                (
+                    content,
+                    hash_val,
                     memory_type.value,
+                    source.value,
+                    int(is_hot),
                     trust_score,
+                    source_log_id,
+                    extracted_at,
+                    session_id,
+                ),
+            )
+            memory_id = cursor.fetchone()[0]
+
+            # Update session memory count if session provided
+            if session_id:
+                self._update_session_activity(conn, session_id, memory_delta=1)
+
+            # Insert embedding only for new memories
+            conn.execute(
+                "INSERT INTO memory_vectors (rowid, embedding) VALUES (?, ?)",
+                (memory_id, embedding.tobytes()),
+            )
+
+            # Insert tags only for new memories
+            if tags:
+                conn.executemany(
+                    "INSERT OR IGNORE INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                    [(memory_id, tag) for tag in tags],
                 )
 
-                return memory_id, True
+            log.info(
+                "Stored new memory id={} type={} trust={}",
+                memory_id,
+                memory_type.value,
+                trust_score,
+            )
+
+            return memory_id, True
 
     def _compute_hot_score(self, access_count: int, last_accessed_at: datetime | None) -> float:
         """Compute hot cache score for LRU ranking.

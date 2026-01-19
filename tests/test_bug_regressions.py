@@ -17,9 +17,12 @@ from memory_mcp.storage import (
 
 @pytest.fixture
 def storage():
-    """Create a storage instance with temp database."""
+    """Create a storage instance with temp database.
+
+    Semantic dedup is disabled to keep test content independent.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
-        settings = Settings(db_path=Path(tmpdir) / "test.db")
+        settings = Settings(db_path=Path(tmpdir) / "test.db", semantic_dedup_enabled=False)
         storage = Storage(settings)
         yield storage
         storage.close()
@@ -317,7 +320,11 @@ class TestHotCacheLRU:
         """When hot cache is full, lowest-scoring item should be evicted."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Small hot cache for testing
-            settings = Settings(db_path=Path(tmpdir) / "lru.db", hot_cache_max_items=3)
+            settings = Settings(
+                db_path=Path(tmpdir) / "lru.db",
+                hot_cache_max_items=3,
+                semantic_dedup_enabled=False,
+            )
             storage = Storage(settings)
 
             # Create 3 memories and promote them
@@ -352,7 +359,11 @@ class TestHotCacheLRU:
     def test_pinned_memory_not_evicted(self):
         """Pinned memories should not be evicted even with low scores."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            settings = Settings(db_path=Path(tmpdir) / "pin.db", hot_cache_max_items=2)
+            settings = Settings(
+                db_path=Path(tmpdir) / "pin.db",
+                hot_cache_max_items=2,
+                semantic_dedup_enabled=False,
+            )
             storage = Storage(settings)
 
             # Create 2 memories and promote them
@@ -390,7 +401,11 @@ class TestHotCacheLRU:
     def test_all_pinned_blocks_promotion(self):
         """Cannot promote when cache full and all items pinned."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            settings = Settings(db_path=Path(tmpdir) / "allpin.db", hot_cache_max_items=2)
+            settings = Settings(
+                db_path=Path(tmpdir) / "allpin.db",
+                hot_cache_max_items=2,
+                semantic_dedup_enabled=False,
+            )
             storage = Storage(settings)
 
             # Fill cache with pinned memories

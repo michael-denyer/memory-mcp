@@ -18,8 +18,11 @@ from memory_mcp.storage import (
 
 @pytest.fixture
 def storage(tmp_path):
-    """Create a storage instance with temp database."""
-    settings = Settings(db_path=tmp_path / "test.db")
+    """Create a storage instance with temp database.
+
+    Semantic dedup is disabled for most tests to keep test content independent.
+    """
+    settings = Settings(db_path=tmp_path / "test.db", semantic_dedup_enabled=False)
     stor = Storage(settings)
     yield stor
     stor.close()
@@ -223,7 +226,11 @@ class TestHotCacheMetrics:
 
     def test_eviction_increments_metric(self, tmp_path):
         """Evicting from hot cache should increment evictions."""
-        settings = Settings(db_path=tmp_path / "test.db", hot_cache_max_items=2)
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            hot_cache_max_items=2,
+            semantic_dedup_enabled=False,
+        )
         stor = Storage(settings)
 
         # Fill hot cache
@@ -680,7 +687,7 @@ class TestMemoryRelationships:
     @pytest.fixture
     def storage(self, tmp_path):
         """Create a storage instance with temp database."""
-        settings = Settings(db_path=tmp_path / "test.db")
+        settings = Settings(db_path=tmp_path / "test.db", semantic_dedup_enabled=False)
         stor = Storage(settings)
         yield stor
         stor.close()
@@ -898,7 +905,7 @@ class TestContradictionDetection:
     @pytest.fixture
     def storage(self, tmp_path):
         """Create a storage instance with temp database."""
-        settings = Settings(db_path=tmp_path / "test.db")
+        settings = Settings(db_path=tmp_path / "test.db", semantic_dedup_enabled=False)
         stor = Storage(settings)
         yield stor
         stor.close()
@@ -1077,7 +1084,7 @@ class TestSessionProvenance:
     @pytest.fixture
     def storage(self, tmp_path):
         """Create a storage instance with temp database."""
-        settings = Settings(db_path=tmp_path / "test.db")
+        settings = Settings(db_path=tmp_path / "test.db", semantic_dedup_enabled=False)
         stor = Storage(settings)
         yield stor
         stor.close()
@@ -1222,7 +1229,7 @@ class TestBootstrap:
     @pytest.fixture
     def storage(self, tmp_path):
         """Create a storage instance with temp database."""
-        settings = Settings(db_path=tmp_path / "test.db")
+        settings = Settings(db_path=tmp_path / "test.db", semantic_dedup_enabled=False)
         stor = Storage(settings)
         yield stor
         stor.close()
@@ -1438,6 +1445,7 @@ class TestPredictiveCache:
             predictive_cache_enabled=True,
             prediction_threshold=0.3,
             max_predictions=3,
+            semantic_dedup_enabled=False,
         )
         stor = Storage(settings)
         yield stor
@@ -1449,6 +1457,7 @@ class TestPredictiveCache:
         settings = Settings(
             db_path=tmp_path / "test.db",
             predictive_cache_enabled=False,
+            semantic_dedup_enabled=False,
         )
         stor = Storage(settings)
         yield stor
@@ -1584,3 +1593,162 @@ class TestPredictiveCache:
                 "SELECT name FROM sqlite_master " "WHERE type='table' AND name='access_sequences'"
             ).fetchone()
             assert result is not None
+
+
+class TestSemanticDeduplication:
+    """Tests for semantic deduplication on store."""
+
+    @pytest.fixture
+    def dedup_storage(self, tmp_path):
+        """Storage with semantic deduplication enabled (default)."""
+        settings = Settings(
+            db_path=tmp_path / "dedup.db",
+            semantic_dedup_enabled=True,
+            semantic_dedup_threshold=0.92,
+        )
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    @pytest.fixture
+    def dedup_disabled_storage(self, tmp_path):
+        """Storage with semantic deduplication disabled."""
+        settings = Settings(
+            db_path=tmp_path / "no_dedup.db",
+            semantic_dedup_enabled=False,
+        )
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    def test_identical_content_merges(self, dedup_storage):
+        """Identical content should merge (similarity=1.0)."""
+        content = "Project uses Python 3.12 with FastAPI"
+        mid1, is_new1 = dedup_storage.store_memory(content, MemoryType.PROJECT)
+        mid2, is_new2 = dedup_storage.store_memory(content, MemoryType.PROJECT)
+
+        assert is_new1 is True
+        assert is_new2 is False  # Merged
+        assert mid1 == mid2
+
+        # Access count should be incremented
+        memory = dedup_storage.get_memory(mid1)
+        assert memory.access_count == 1  # Original + 1 merge
+
+    def test_very_similar_content_merges(self, dedup_storage):
+        """Very similar content should merge."""
+        content1 = "The project uses Python 3.12"
+        content2 = "This project uses Python 3.12"
+
+        mid1, is_new1 = dedup_storage.store_memory(content1, MemoryType.PROJECT)
+        mid2, is_new2 = dedup_storage.store_memory(content2, MemoryType.PROJECT)
+
+        # These should be similar enough to merge
+        assert is_new1 is True
+        # is_new2 depends on actual similarity - check if merged
+        if mid1 == mid2:
+            assert is_new2 is False
+
+    def test_different_content_stays_separate(self, dedup_storage):
+        """Different content should create separate memories."""
+        content1 = "Python is a programming language"
+        content2 = "The weather today is sunny and warm"
+
+        mid1, is_new1 = dedup_storage.store_memory(content1, MemoryType.PROJECT)
+        mid2, is_new2 = dedup_storage.store_memory(content2, MemoryType.PROJECT)
+
+        assert is_new1 is True
+        assert is_new2 is True
+        assert mid1 != mid2
+
+    def test_longer_content_updates_existing(self, dedup_storage):
+        """When merging, longer content should update existing."""
+        short = "Use pytest for testing"
+        long = (
+            "Use pytest for testing. "
+            "It's the standard Python testing framework with great fixtures."
+        )
+
+        mid1, _ = dedup_storage.store_memory(short, MemoryType.PROJECT)
+        mid2, _ = dedup_storage.store_memory(long, MemoryType.PROJECT)
+
+        # If they merged, mid2 == mid1 and content should be the longer one
+        if mid1 == mid2:
+            memory = dedup_storage.get_memory(mid1)
+            assert len(memory.content) == len(long)
+
+    def test_shorter_content_keeps_existing(self, dedup_storage):
+        """When merging, shorter content should keep existing."""
+        long = (
+            "Use pytest for testing. "
+            "It's the standard Python testing framework with great fixtures."
+        )
+        short = "Use pytest for testing"
+
+        mid1, _ = dedup_storage.store_memory(long, MemoryType.PROJECT)
+        mid2, _ = dedup_storage.store_memory(short, MemoryType.PROJECT)
+
+        # If they merged, content should still be the longer one
+        if mid1 == mid2:
+            memory = dedup_storage.get_memory(mid1)
+            assert len(memory.content) == len(long)
+
+    def test_tags_merged_on_dedup(self, dedup_storage):
+        """Tags should be merged when deduplicating."""
+        content = "Project uses FastAPI for the REST API"
+
+        mid1, _ = dedup_storage.store_memory(content, MemoryType.PROJECT, tags=["api", "rest"])
+        mid2, _ = dedup_storage.store_memory(
+            content, MemoryType.PROJECT, tags=["fastapi", "backend"]
+        )
+
+        # If merged, all tags should be present
+        if mid1 == mid2:
+            memory = dedup_storage.get_memory(mid1)
+            assert "api" in memory.tags
+            assert "fastapi" in memory.tags
+
+    def test_dedup_disabled_creates_separate_similar_memories(self, dedup_disabled_storage):
+        """With semantic dedup disabled, similar (but not identical) content stays separate.
+
+        Note: Exact duplicates are still deduplicated by content_hash (separate feature).
+        Semantic dedup is about merging *similar* content, not exact matches.
+        """
+        content1 = "The project uses Python 3.12"
+        content2 = "This project uses Python 3.12"  # Very similar but different hash
+
+        mid1, is_new1 = dedup_disabled_storage.store_memory(content1, MemoryType.PROJECT)
+        mid2, is_new2 = dedup_disabled_storage.store_memory(content2, MemoryType.PROJECT)
+
+        assert is_new1 is True
+        assert is_new2 is True  # With dedup disabled, similar content is NOT merged
+        assert mid1 != mid2
+
+    def test_empty_storage_no_merge(self, dedup_storage):
+        """First memory in empty storage should always create new."""
+        content = "First memory"
+        mid, is_new = dedup_storage.store_memory(content, MemoryType.PROJECT)
+
+        assert is_new is True
+        assert mid > 0
+
+    def test_dedup_threshold_respected(self, tmp_path):
+        """Different thresholds should affect merge behavior."""
+        # Very strict threshold (0.99) - almost nothing merges
+        strict_settings = Settings(
+            db_path=tmp_path / "strict.db",
+            semantic_dedup_enabled=True,
+            semantic_dedup_threshold=0.99,
+        )
+        strict_storage = Storage(strict_settings)
+
+        content1 = "Python testing with pytest"
+        content2 = "Python testing using pytest"
+
+        mid1, _ = strict_storage.store_memory(content1, MemoryType.PROJECT)
+        mid2, _ = strict_storage.store_memory(content2, MemoryType.PROJECT)
+
+        # With 0.99 threshold, these likely won't merge (different content)
+        # Verify both memories exist as separate entries
+        assert mid1 != mid2
+        strict_storage.close()

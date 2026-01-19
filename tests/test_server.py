@@ -8,8 +8,15 @@ from memory_mcp.storage import MemoryType, Storage
 
 @pytest.fixture
 def storage(tmp_path):
-    """Create a storage instance with temp database."""
-    settings = Settings(db_path=tmp_path / "test.db", promotion_threshold=3)
+    """Create a storage instance with temp database.
+
+    Semantic dedup is disabled to keep test content independent.
+    """
+    settings = Settings(
+        db_path=tmp_path / "test.db",
+        promotion_threshold=3,
+        semantic_dedup_enabled=False,
+    )
     stor = Storage(settings)
     yield stor
     stor.close()
