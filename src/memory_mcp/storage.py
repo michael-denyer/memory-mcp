@@ -51,6 +51,37 @@ class RecallMode(str, Enum):
     EXPLORATORY = "exploratory"  # Low threshold, more results, diverse factors
 
 
+class TrustReason(str, Enum):
+    """Reasons for trust adjustments with default boost/penalty values."""
+
+    # Strengthening reasons (positive)
+    USED_CORRECTLY = "used_correctly"
+    EXPLICITLY_CONFIRMED = "explicitly_confirmed"
+    HIGH_SIMILARITY_HIT = "high_similarity_hit"
+    CROSS_VALIDATED = "cross_validated"
+
+    # Weakening reasons (negative)
+    OUTDATED = "outdated"
+    PARTIALLY_INCORRECT = "partially_incorrect"
+    FACTUALLY_WRONG = "factually_wrong"
+    SUPERSEDED = "superseded"
+    LOW_UTILITY = "low_utility"
+
+
+# Default boost/penalty amounts per reason
+TRUST_REASON_DEFAULTS: dict[TrustReason, float] = {
+    TrustReason.USED_CORRECTLY: 0.05,
+    TrustReason.EXPLICITLY_CONFIRMED: 0.15,
+    TrustReason.HIGH_SIMILARITY_HIT: 0.03,
+    TrustReason.CROSS_VALIDATED: 0.20,
+    TrustReason.OUTDATED: -0.10,
+    TrustReason.PARTIALLY_INCORRECT: -0.15,
+    TrustReason.FACTUALLY_WRONG: -0.30,
+    TrustReason.SUPERSEDED: -0.05,
+    TrustReason.LOW_UTILITY: -0.05,
+}
+
+
 @dataclass
 class RecallModeConfig:
     """Configuration for a recall mode preset."""
@@ -89,6 +120,21 @@ class Memory:
     recency_score: float | None = None  # 0-1 based on age with decay
     trust_score_decayed: float | None = None  # Trust with time decay applied
     composite_score: float | None = None  # Combined ranking score
+
+
+@dataclass
+class TrustEvent:
+    """Record of a trust score change for audit trail."""
+
+    id: int
+    memory_id: int
+    reason: TrustReason
+    old_trust: float
+    new_trust: float
+    delta: float  # new_trust - old_trust
+    similarity: float | None  # For confidence-weighted updates
+    note: str | None  # Optional human-readable note
+    created_at: datetime
 
 
 @dataclass
@@ -135,7 +181,7 @@ class HotCacheMetrics:
 
 
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 -- Schema version tracking
@@ -184,12 +230,27 @@ CREATE TABLE IF NOT EXISTS mined_patterns (
     last_seen TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Trust history (audit trail for trust changes)
+CREATE TABLE IF NOT EXISTS trust_history (
+    id INTEGER PRIMARY KEY,
+    memory_id INTEGER REFERENCES memories(id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    old_trust REAL NOT NULL,
+    new_trust REAL NOT NULL,
+    delta REAL NOT NULL,
+    similarity REAL,
+    note TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_memories_hash ON memories(content_hash);
 CREATE INDEX IF NOT EXISTS idx_memories_hot ON memories(is_hot);
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(memory_type);
 CREATE INDEX IF NOT EXISTS idx_output_log_timestamp ON output_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_mined_patterns_hash ON mined_patterns(pattern_hash);
+CREATE INDEX IF NOT EXISTS idx_trust_history_memory ON trust_history(memory_id);
+CREATE INDEX IF NOT EXISTS idx_trust_history_reason ON trust_history(reason);
 """
 
 
@@ -307,6 +368,8 @@ class Storage:
             self._migrate_v1_to_v2(conn)
         if from_version < 3:
             self._migrate_v2_to_v3(conn)
+        if from_version < 4:
+            self._migrate_v3_to_v4(conn)
 
     def _get_table_columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
         """Get set of column names for a table."""
@@ -347,6 +410,29 @@ class Storage:
             """,
             (self.settings.trust_score_manual, self.settings.trust_score_mined),
         )
+
+    def _migrate_v3_to_v4(self, conn: sqlite3.Connection) -> None:
+        """Add trust_history table for audit trail."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trust_history (
+                id INTEGER PRIMARY KEY,
+                memory_id INTEGER REFERENCES memories(id) ON DELETE CASCADE,
+                reason TEXT NOT NULL,
+                old_trust REAL NOT NULL,
+                new_trust REAL NOT NULL,
+                delta REAL NOT NULL,
+                similarity REAL,
+                note TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trust_history_memory ON trust_history(memory_id)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trust_history_reason ON trust_history(reason)")
+        log.info("Created trust_history table for audit trail")
 
     def _check_schema_version(self, conn: sqlite3.Connection) -> None:
         """Check schema version compatibility."""
@@ -686,7 +772,8 @@ class Storage:
         promotion_source = PromotionSource(promo_source_str) if promo_source_str else None
 
         is_pinned = bool(self._get_row_value(row, "is_pinned", False))
-        trust_score = self._get_row_value(row, "trust_score", 1.0) or 1.0
+        trust_score_val = self._get_row_value(row, "trust_score", 1.0)
+        trust_score = trust_score_val if trust_score_val is not None else 1.0
         source_log_id = self._get_row_value(row, "source_log_id")
         extracted_at_str = self._get_row_value(row, "extracted_at")
         extracted_at = datetime.fromisoformat(extracted_at_str) if extracted_at_str else None
@@ -754,6 +841,191 @@ class Storage:
                 """,
                 (memory_id,),
             )
+
+    def adjust_trust(
+        self,
+        memory_id: int,
+        reason: TrustReason,
+        delta: float | None = None,
+        similarity: float | None = None,
+        note: str | None = None,
+    ) -> float | None:
+        """Adjust trust score with reason tracking and audit history.
+
+        Args:
+            memory_id: ID of memory to adjust
+            reason: Why trust is being adjusted (from TrustReason enum)
+            delta: Trust change amount. If None, uses default for reason.
+            similarity: Optional similarity score for confidence-weighted updates.
+            note: Optional human-readable note for audit.
+
+        Returns:
+            New trust score, or None if memory not found.
+        """
+        if delta is None:
+            delta = TRUST_REASON_DEFAULTS.get(reason, 0.0)
+
+        # Confidence-weighted scaling: higher similarity = larger boost (0.5x to 1.0x)
+        if similarity is not None and delta > 0:
+            delta = delta * (0.5 + 0.5 * similarity)
+
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT trust_score FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if not row:
+                return None
+
+            old_trust = row["trust_score"] if row["trust_score"] is not None else 1.0
+            new_trust = max(0.0, min(1.0, old_trust + delta))
+
+            # Update memory
+            conn.execute(
+                """
+                UPDATE memories
+                SET trust_score = ?,
+                    last_accessed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (new_trust, memory_id),
+            )
+
+            # Record in history
+            conn.execute(
+                """
+                INSERT INTO trust_history
+                    (memory_id, reason, old_trust, new_trust, delta, similarity, note)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (memory_id, reason.value, old_trust, new_trust, delta, similarity, note),
+            )
+
+            log.info(
+                "Adjusted trust for memory id={}: {:.2f} -> {:.2f} (reason={}, delta={:.3f})",
+                memory_id,
+                old_trust,
+                new_trust,
+                reason.value,
+                delta,
+            )
+            return new_trust
+
+    def strengthen_trust(
+        self,
+        memory_id: int,
+        boost: float = 0.1,
+        reason: TrustReason = TrustReason.USED_CORRECTLY,
+        similarity: float | None = None,
+        note: str | None = None,
+    ) -> float | None:
+        """Strengthen trust score when memory is validated/confirmed useful.
+
+        Increases trust_score by boost amount, capped at 1.0.
+        Also updates last_accessed_at to refresh the decay timer.
+
+        Args:
+            memory_id: ID of memory to strengthen
+            boost: Amount to increase trust (default 0.1, so 10 validations = full trust)
+            reason: Why trust is being strengthened (for audit)
+            similarity: Optional similarity score for confidence weighting
+            note: Optional note for audit trail
+
+        Returns:
+            New trust score, or None if memory not found.
+        """
+        return self.adjust_trust(
+            memory_id,
+            reason=reason,
+            delta=boost,
+            similarity=similarity,
+            note=note,
+        )
+
+    def weaken_trust(
+        self,
+        memory_id: int,
+        penalty: float = 0.1,
+        reason: TrustReason = TrustReason.OUTDATED,
+        note: str | None = None,
+    ) -> float | None:
+        """Weaken trust score when memory is found incorrect/outdated.
+
+        Decreases trust_score by penalty amount, floored at 0.0.
+
+        Args:
+            memory_id: ID of memory to weaken
+            penalty: Amount to decrease trust (default 0.1)
+            reason: Why trust is being weakened (for audit)
+            note: Optional note for audit trail
+
+        Returns:
+            New trust score, or None if memory not found.
+        """
+        return self.adjust_trust(
+            memory_id,
+            reason=reason,
+            delta=-abs(penalty),  # Ensure negative
+            note=note,
+        )
+
+    def get_trust_history(self, memory_id: int | None = None, limit: int = 50) -> list[TrustEvent]:
+        """Get trust change history for audit/debugging.
+
+        Args:
+            memory_id: Optional filter by memory ID. If None, returns all.
+            limit: Maximum events to return.
+
+        Returns:
+            List of TrustEvent objects, most recent first.
+        """
+        with self._connection() as conn:
+            if memory_id is not None:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM trust_history
+                    WHERE memory_id = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (memory_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM trust_history
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+
+            return [
+                TrustEvent(
+                    id=row["id"],
+                    memory_id=row["memory_id"],
+                    reason=TrustReason(row["reason"]),
+                    old_trust=row["old_trust"],
+                    new_trust=row["new_trust"],
+                    delta=row["delta"],
+                    similarity=row["similarity"],
+                    note=row["note"],
+                    created_at=datetime.fromisoformat(row["created_at"]),
+                )
+                for row in rows
+            ]
+
+    def _get_trust_decay_halflife(self, memory_type: MemoryType | None) -> float:
+        """Get trust decay half-life for a specific memory type."""
+        if memory_type is None:
+            return self.settings.trust_decay_halflife_days
+
+        type_halflife_days = {
+            MemoryType.PROJECT: self.settings.trust_decay_project_days,
+            MemoryType.PATTERN: self.settings.trust_decay_pattern_days,
+            MemoryType.REFERENCE: self.settings.trust_decay_reference_days,
+            MemoryType.CONVERSATION: self.settings.trust_decay_conversation_days,
+        }
+        return type_halflife_days.get(memory_type, self.settings.trust_decay_halflife_days)
 
     def check_auto_promote(self, memory_id: int) -> bool:
         """Check if memory should be auto-promoted and do so if eligible.
@@ -828,19 +1100,38 @@ class Storage:
         days_old = (datetime.now() - created_at).total_seconds() / 86400
         return 2 ** (-days_old / halflife_days)
 
-    def _compute_trust_decay(self, base_trust: float, created_at: datetime) -> float:
+    def _compute_trust_decay(
+        self,
+        base_trust: float,
+        created_at: datetime,
+        last_accessed_at: datetime | None = None,
+        memory_type: MemoryType | None = None,
+    ) -> float:
         """Compute time-decayed trust score.
+
+        Trust decays based on time since last meaningful interaction:
+        - If recently accessed, decay is based on last_accessed_at (refresh on use)
+        - Otherwise, decay is based on created_at
+        - Decay rate varies by memory type (project decays slowest, conversation fastest)
+
+        This means memories that are actively used maintain their trust,
+        while unused memories slowly decay - aligning with Engram's principle
+        that frequently-used patterns should remain reliable.
 
         Args:
             base_trust: Initial trust (1.0 for manual, 0.7 for mined by default)
             created_at: When the memory was created
+            last_accessed_at: When the memory was last accessed (optional)
+            memory_type: Type of memory for per-type decay rate
 
         Returns:
-            Trust score with exponential decay applied based on age.
+            Trust score with exponential decay applied based on staleness.
         """
-        halflife_days = self.settings.trust_decay_halflife_days
-        days_old = (datetime.now() - created_at).total_seconds() / 86400
-        decay = 2 ** (-days_old / halflife_days)
+        halflife_days = self._get_trust_decay_halflife(memory_type)
+        reference_time = last_accessed_at if last_accessed_at else created_at
+        days_since_activity = (datetime.now() - reference_time).total_seconds() / 86400
+
+        decay = 2 ** (-days_since_activity / halflife_days)
         return base_trust * decay
 
     def _compute_access_score(self, access_count: int, max_access: int) -> float:
@@ -1032,12 +1323,21 @@ class Storage:
 
                 if similarity >= effective_threshold:
                     created_at = datetime.fromisoformat(row["created_at"])
+                    last_accessed_str = row["last_accessed_at"]
+                    last_accessed_at = (
+                        datetime.fromisoformat(last_accessed_str) if last_accessed_str else None
+                    )
                     recency_score = self._compute_recency_score(created_at)
                     access_score = self._compute_access_score(row["access_count"], max_access)
 
-                    # Compute trust with time decay
-                    base_trust = row["trust_score"] or 1.0
-                    trust_decayed = self._compute_trust_decay(base_trust, created_at)
+                    # Compute trust with time decay (refreshed by access, per-type rate)
+                    memory_type_enum = (
+                        MemoryType(row["memory_type"]) if row["memory_type"] else None
+                    )
+                    base_trust = row["trust_score"] if row["trust_score"] is not None else 1.0
+                    trust_decayed = self._compute_trust_decay(
+                        base_trust, created_at, last_accessed_at, memory_type_enum
+                    )
 
                     composite_score = self._compute_composite_score(
                         similarity,
@@ -1079,6 +1379,20 @@ class Storage:
         # Check for auto-promotion outside the transaction
         for memory_id in memory_ids_to_check:
             self.check_auto_promote(memory_id)
+
+        # Auto-strengthen trust for high-similarity matches (confidence-weighted)
+        if self.settings.trust_auto_strengthen_on_recall:
+            for memory in memories:
+                if (
+                    memory.similarity
+                    and memory.similarity >= self.settings.trust_high_similarity_threshold
+                ):
+                    # Confidence-weighted: similarity scales the boost
+                    self.adjust_trust(
+                        memory.id,
+                        reason=TrustReason.HIGH_SIMILARITY_HIT,
+                        similarity=memory.similarity,
+                    )
 
         # Determine confidence level based on top result's similarity
         if not memories:

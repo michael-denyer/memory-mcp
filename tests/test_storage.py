@@ -4,11 +4,13 @@ import pytest
 
 from memory_mcp.config import Settings
 from memory_mcp.storage import (
+    TRUST_REASON_DEFAULTS,
     HotCacheMetrics,
     MemorySource,
     MemoryType,
     PromotionSource,
     Storage,
+    TrustReason,
     ValidationError,
 )
 
@@ -435,4 +437,234 @@ class TestAutoDemotion:
         result = stor.maintenance()
         assert result["auto_demoted_count"] == 1
         assert memory_id in result["auto_demoted_ids"]
+        stor.close()
+
+
+# ========== Trust Granularity Tests ==========
+
+
+class TestTrustReason:
+    """Tests for contextual trust adjustments with reasons."""
+
+    def test_adjust_trust_with_reason(self, storage):
+        """adjust_trust() should record reason in history."""
+        # Use mined memory (starts at 0.7) so we can increase trust
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT, source=MemorySource.MINED)
+        original = storage.get_memory(mid)
+
+        new_trust = storage.adjust_trust(mid, reason=TrustReason.USED_CORRECTLY)
+        assert new_trust > original.trust_score
+
+        # Check history was recorded
+        history = storage.get_trust_history(mid)
+        assert len(history) == 1
+        assert history[0].reason == TrustReason.USED_CORRECTLY
+        assert history[0].old_trust == original.trust_score
+        assert abs(history[0].new_trust - new_trust) < 0.001
+
+    def test_adjust_trust_uses_reason_default(self, storage):
+        """adjust_trust() uses reason's default delta if not specified."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+        original = storage.get_memory(mid)
+
+        # EXPLICITLY_CONFIRMED has default boost of 0.15
+        storage.adjust_trust(mid, reason=TrustReason.EXPLICITLY_CONFIRMED)
+        updated = storage.get_memory(mid)
+
+        expected_boost = TRUST_REASON_DEFAULTS[TrustReason.EXPLICITLY_CONFIRMED]
+        # Manual memory starts at 1.0, so it caps at 1.0
+        assert updated.trust_score == min(1.0, original.trust_score + expected_boost)
+
+    def test_adjust_trust_custom_delta(self, storage):
+        """adjust_trust() can override default delta."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT, source=MemorySource.MINED)
+        original = storage.get_memory(mid)  # Mined starts at 0.7
+
+        custom_boost = 0.25
+        storage.adjust_trust(mid, reason=TrustReason.USED_CORRECTLY, delta=custom_boost)
+        updated = storage.get_memory(mid)
+
+        assert abs(updated.trust_score - (original.trust_score + custom_boost)) < 0.001
+
+    def test_adjust_trust_with_note(self, storage):
+        """adjust_trust() should store optional note."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+        note_text = "Verified against current codebase"
+
+        storage.adjust_trust(mid, reason=TrustReason.EXPLICITLY_CONFIRMED, note=note_text)
+
+        history = storage.get_trust_history(mid)
+        assert len(history) == 1
+        assert history[0].note == note_text
+
+    def test_weaken_trust_with_reason(self, storage):
+        """weaken_trust() should support reason parameter."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+
+        storage.weaken_trust(mid, reason=TrustReason.OUTDATED)
+
+        history = storage.get_trust_history(mid)
+        assert len(history) == 1
+        assert history[0].reason == TrustReason.OUTDATED
+        assert history[0].delta < 0  # Weakening should be negative
+
+    def test_strengthen_trust_with_reason(self, storage):
+        """strengthen_trust() should support reason parameter."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT, source=MemorySource.MINED)
+
+        storage.strengthen_trust(mid, reason=TrustReason.CROSS_VALIDATED)
+
+        history = storage.get_trust_history(mid)
+        assert len(history) == 1
+        assert history[0].reason == TrustReason.CROSS_VALIDATED
+        assert history[0].delta > 0  # Strengthening should be positive
+
+
+class TestConfidenceWeightedTrust:
+    """Tests for confidence-weighted trust updates."""
+
+    def test_similarity_scales_boost(self, storage):
+        """High similarity should scale the trust boost."""
+        # Create two memories
+        mid1, _ = storage.store_memory("Memory one", MemoryType.PROJECT, source=MemorySource.MINED)
+        mid2, _ = storage.store_memory("Memory two", MemoryType.PROJECT, source=MemorySource.MINED)
+
+        # Adjust with different similarities
+        storage.adjust_trust(mid1, reason=TrustReason.HIGH_SIMILARITY_HIT, similarity=0.95)
+        storage.adjust_trust(mid2, reason=TrustReason.HIGH_SIMILARITY_HIT, similarity=0.70)
+
+        history1 = storage.get_trust_history(mid1)
+        history2 = storage.get_trust_history(mid2)
+
+        # Higher similarity should result in larger boost
+        assert history1[0].delta > history2[0].delta
+        assert history1[0].similarity == 0.95
+        assert history2[0].similarity == 0.70
+
+    def test_similarity_recorded_in_history(self, storage):
+        """Similarity should be recorded in trust history."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+
+        storage.adjust_trust(mid, reason=TrustReason.HIGH_SIMILARITY_HIT, similarity=0.92)
+
+        history = storage.get_trust_history(mid)
+        assert len(history) == 1
+        assert history[0].similarity == 0.92
+
+
+class TestPerTypeTrustDecay:
+    """Tests for per-memory-type trust decay rates."""
+
+    def test_get_trust_decay_halflife(self, storage):
+        """_get_trust_decay_halflife returns different values per type."""
+        # Project memories should decay slowest (180 days default)
+        project_halflife = storage._get_trust_decay_halflife(MemoryType.PROJECT)
+        # Pattern memories decay faster (60 days default)
+        pattern_halflife = storage._get_trust_decay_halflife(MemoryType.PATTERN)
+        # Conversation memories decay fastest (30 days default)
+        conversation_halflife = storage._get_trust_decay_halflife(MemoryType.CONVERSATION)
+
+        assert project_halflife > pattern_halflife
+        assert pattern_halflife > conversation_halflife
+
+    def test_none_type_uses_default(self, storage):
+        """None memory type should use default halflife."""
+        default_halflife = storage._get_trust_decay_halflife(None)
+        assert default_halflife == storage.settings.trust_decay_halflife_days
+
+
+class TestTrustHistory:
+    """Tests for trust history audit trail."""
+
+    def test_get_trust_history_empty(self, storage):
+        """get_trust_history returns empty list for new memory."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+
+        history = storage.get_trust_history(mid)
+        assert history == []
+
+    def test_get_trust_history_multiple_events(self, storage):
+        """get_trust_history returns all events in order."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT, source=MemorySource.MINED)
+
+        # Make several adjustments
+        storage.adjust_trust(mid, reason=TrustReason.USED_CORRECTLY)
+        storage.adjust_trust(mid, reason=TrustReason.EXPLICITLY_CONFIRMED)
+        storage.adjust_trust(mid, reason=TrustReason.OUTDATED)
+
+        history = storage.get_trust_history(mid)
+        assert len(history) == 3
+
+        # Should be ordered by most recent first (using id DESC)
+        assert history[0].reason == TrustReason.OUTDATED
+        assert history[1].reason == TrustReason.EXPLICITLY_CONFIRMED
+        assert history[2].reason == TrustReason.USED_CORRECTLY
+
+    def test_get_trust_history_limit(self, storage):
+        """get_trust_history respects limit parameter."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT, source=MemorySource.MINED)
+
+        # Make 5 adjustments
+        for _ in range(5):
+            storage.adjust_trust(mid, reason=TrustReason.USED_CORRECTLY)
+
+        history = storage.get_trust_history(mid, limit=3)
+        assert len(history) == 3
+
+    def test_trust_history_table_created(self, storage):
+        """trust_history table should exist in schema."""
+        with storage._connection() as conn:
+            result = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='trust_history'"
+            ).fetchone()
+            assert result is not None
+
+
+class TestAutoTrustBoostOnRecall:
+    """Tests for automatic trust boost on high-similarity recall."""
+
+    def test_high_similarity_recall_boosts_trust(self, tmp_path):
+        """Recall with high similarity should auto-boost trust."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            trust_auto_strengthen_on_recall=True,
+            trust_high_similarity_threshold=0.80,  # Lower threshold for test
+        )
+        stor = Storage(settings)
+
+        # Create memory that should match well
+        mid, _ = stor.store_memory(
+            "PostgreSQL database configuration",
+            MemoryType.PROJECT,
+            source=MemorySource.MINED,
+        )
+
+        # Recall with very similar query - should trigger auto-boost
+        result = stor.recall("PostgreSQL database settings", threshold=0.5)
+
+        # If similarity is high enough, trust should have increased
+        if result.memories and result.memories[0].similarity >= 0.80:
+            history = stor.get_trust_history(mid)
+            # Should have a HIGH_SIMILARITY_HIT event
+            high_sim_events = [h for h in history if h.reason == TrustReason.HIGH_SIMILARITY_HIT]
+            assert len(high_sim_events) >= 1
+
+        stor.close()
+
+    def test_auto_trust_boost_disabled(self, tmp_path):
+        """Auto-trust boost should respect config setting."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            trust_auto_strengthen_on_recall=False,
+        )
+        stor = Storage(settings)
+
+        mid, _ = stor.store_memory("PostgreSQL database configuration", MemoryType.PROJECT)
+
+        # Recall shouldn't boost trust when disabled
+        stor.recall("PostgreSQL database", threshold=0.5)
+
+        history = stor.get_trust_history(mid)
+        assert len(history) == 0  # No trust changes
+
         stor.close()

@@ -255,7 +255,7 @@ class TestSchemaVersioning:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(db_path=Path(tmpdir) / "new.db")
             storage = Storage(settings)
-            assert storage.get_schema_version() == 3  # Updated to v3
+            assert storage.get_schema_version() == 4  # Updated to v4 (trust_history)
             storage.close()
 
     def test_wal_mode_enabled(self):
@@ -732,6 +732,107 @@ class TestTrustScoring:
             assert "extracted_at" in columns
 
             storage.close()
+
+
+class TestTrustStrengthening:
+    """Tests for trust strengthening/weakening system (Engram-inspired)."""
+
+    def test_strengthen_trust_increases_score(self, storage):
+        """strengthen_trust() should increase the trust score."""
+        # Use mined memory which starts with lower trust (0.7)
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT, source=MemorySource.MINED)
+        original = storage.get_memory(mid)
+        original_trust = original.trust_score  # 0.7
+
+        new_trust = storage.strengthen_trust(mid, boost=0.1)
+        assert abs(new_trust - (original_trust + 0.1)) < 0.001
+
+        # Verify persisted
+        updated = storage.get_memory(mid)
+        assert abs(updated.trust_score - new_trust) < 0.001
+
+    def test_strengthen_trust_caps_at_one(self, storage):
+        """strengthen_trust() should cap trust at 1.0."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+
+        # Boost multiple times (starts at 1.0 for manual)
+        for _ in range(15):
+            storage.strengthen_trust(mid, boost=0.1)
+
+        updated = storage.get_memory(mid)
+        assert updated.trust_score == 1.0
+
+    def test_strengthen_trust_refreshes_last_accessed(self, storage):
+        """strengthen_trust() should update last_accessed_at."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+
+        # First recall to set initial last_accessed_at
+        storage.recall("Test memory", threshold=0.0)
+
+        original = storage.get_memory(mid)
+        # last_accessed_at should now be set
+        assert original.last_accessed_at is not None
+
+        import time
+
+        time.sleep(0.05)  # Small delay to ensure timestamp difference
+
+        storage.strengthen_trust(mid, boost=0.05)
+
+        updated = storage.get_memory(mid)
+        # After strengthen_trust, last_accessed_at should be updated
+        assert updated.last_accessed_at is not None
+        assert updated.last_accessed_at >= original.last_accessed_at
+
+    def test_strengthen_trust_nonexistent_returns_none(self, storage):
+        """strengthen_trust() should return None for nonexistent memory."""
+        result = storage.strengthen_trust(99999, boost=0.1)
+        assert result is None
+
+    def test_weaken_trust_decreases_score(self, storage):
+        """weaken_trust() should decrease the trust score."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+        original = storage.get_memory(mid)
+        original_trust = original.trust_score  # 1.0 for manual
+
+        new_trust = storage.weaken_trust(mid, penalty=0.2)
+        assert abs(new_trust - (original_trust - 0.2)) < 0.001
+
+        # Verify persisted
+        updated = storage.get_memory(mid)
+        assert abs(updated.trust_score - new_trust) < 0.001
+
+    def test_weaken_trust_floors_at_zero(self, storage):
+        """weaken_trust() should floor trust at 0.0."""
+        # Use mined memory which starts at 0.7
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT, source=MemorySource.MINED)
+
+        # Weaken with a large penalty to definitely hit zero
+        storage.weaken_trust(mid, penalty=1.0)
+
+        updated = storage.get_memory(mid)
+        assert updated.trust_score == 0.0
+
+    def test_weaken_trust_nonexistent_returns_none(self, storage):
+        """weaken_trust() should return None for nonexistent memory."""
+        result = storage.weaken_trust(99999, penalty=0.1)
+        assert result is None
+
+    def test_trust_decay_uses_last_accessed(self, storage):
+        """Trust decay should use last_accessed_at when available."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+
+        # Strengthen to refresh last_accessed_at
+        storage.strengthen_trust(mid, boost=0.0)  # Just refresh timestamp
+
+        # The memory should have minimal decay since it was just accessed
+        result = storage.recall("Test memory", threshold=0.0)
+        assert len(result.memories) == 1
+
+        mem = result.memories[0]
+        # Trust should be close to base since recently accessed
+        assert mem.trust_score_decayed is not None
+        assert mem.trust_score_decayed > 0.9  # Minimal decay
 
 
 class TestRecallModes:

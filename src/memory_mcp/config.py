@@ -84,10 +84,38 @@ class Settings(BaseSettings):
     )
     trust_score_mined: float = Field(default=0.7, description="Trust score for mined memories")
     trust_decay_halflife_days: float = Field(
-        default=90.0, description="Half-life in days for trust decay"
+        default=90.0, description="Default half-life in days for trust decay"
     )
     recall_trust_weight: float = Field(
         default=0.0, description="Weight for trust score in recall ranking (0 to disable)"
+    )
+
+    # Per-memory-type trust decay rates (in days)
+    # Project facts decay slowest (architecture rarely changes)
+    # Patterns decay faster (code evolves)
+    # Conversation facts decay fastest (context-dependent)
+    trust_decay_project_days: float = Field(
+        default=180.0, description="Trust decay half-life for project memories"
+    )
+    trust_decay_pattern_days: float = Field(
+        default=60.0, description="Trust decay half-life for pattern memories"
+    )
+    trust_decay_reference_days: float = Field(
+        default=120.0, description="Trust decay half-life for reference memories"
+    )
+    trust_decay_conversation_days: float = Field(
+        default=30.0, description="Trust decay half-life for conversation memories"
+    )
+
+    # Confidence-weighted trust updates
+    trust_auto_strengthen_on_recall: bool = Field(
+        default=True, description="Auto-strengthen trust on high-similarity recall"
+    )
+    trust_high_similarity_threshold: float = Field(
+        default=0.90, description="Similarity threshold for auto trust boost"
+    )
+    trust_high_similarity_boost: float = Field(
+        default=0.03, description="Trust boost for high-similarity recall"
     )
 
     # Input limits
