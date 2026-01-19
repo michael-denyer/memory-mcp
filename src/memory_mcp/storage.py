@@ -1,5 +1,6 @@
 """SQLite storage with sqlite-vec for vector search."""
 
+import json
 import os
 import sqlite3
 import threading
@@ -89,6 +90,20 @@ class PatternStatus(str, Enum):
     APPROVED = "approved"  # Approved for promotion
     REJECTED = "rejected"  # Rejected (won't be promoted)
     PROMOTED = "promoted"  # Already promoted to memory
+
+
+class AuditOperation(str, Enum):
+    """Destructive operations tracked in audit log."""
+
+    DELETE_MEMORY = "delete_memory"
+    DEMOTE_MEMORY = "demote_memory"
+    DEMOTE_STALE = "demote_stale"
+    DELETE_PATTERN = "delete_pattern"
+    REJECT_PATTERN = "reject_pattern"
+    EXPIRE_PATTERNS = "expire_patterns"
+    CLEANUP_MEMORIES = "cleanup_memories"
+    MAINTENANCE = "maintenance"
+    UNLINK_MEMORIES = "unlink_memories"
 
 
 # Default boost/penalty amounts per reason
@@ -290,8 +305,20 @@ class SemanticMergeResult:
     content_updated: bool  # True if content was updated (longer/richer)
 
 
+@dataclass
+class AuditEntry:
+    """An entry in the audit log for a destructive operation."""
+
+    id: int
+    operation: str
+    target_type: str | None
+    target_id: int | None
+    details: str | None
+    timestamp: str
+
+
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 -- Schema version tracking
@@ -380,6 +407,16 @@ CREATE TABLE IF NOT EXISTS metadata (
     value TEXT NOT NULL
 );
 
+-- Audit log for destructive operations
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY,
+    operation TEXT NOT NULL,
+    target_type TEXT,
+    target_id INTEGER,
+    details TEXT,
+    timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_memories_hash ON memories(content_hash);
 CREATE INDEX IF NOT EXISTS idx_memories_hot ON memories(is_hot);
@@ -393,6 +430,8 @@ CREATE INDEX IF NOT EXISTS idx_relationships_to ON memory_relationships(to_memor
 CREATE INDEX IF NOT EXISTS idx_relationships_type ON memory_relationships(relation_type);
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_path);
 CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(last_activity_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_log_operation ON audit_log(operation);
 """
 
 
@@ -522,6 +561,8 @@ class Storage:
             self._migrate_v6_to_v7(conn)
         if from_version < 8:
             self._migrate_v7_to_v8(conn)
+        if from_version < 9:
+            self._migrate_v8_to_v9(conn)
 
     def _get_table_columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
         """Get set of column names for a table."""
@@ -681,6 +722,24 @@ class Storage:
         )
         log.info("Enhanced mined_patterns table with status, provenance, and scoring")
 
+    def _migrate_v8_to_v9(self, conn: sqlite3.Connection) -> None:
+        """Add audit_log table for destructive operation tracking."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY,
+                operation TEXT NOT NULL,
+                target_type TEXT,
+                target_id INTEGER,
+                details TEXT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_operation ON audit_log(operation)")
+        log.info("Created audit_log table for destructive operation tracking")
+
     def _check_schema_version(self, conn: sqlite3.Connection) -> None:
         """Check schema version compatibility."""
         # Check if schema_version table exists
@@ -762,6 +821,102 @@ class Storage:
             ).fetchone()
             return result[0] if result else 0
 
+    # ========== Audit Logging ==========
+
+    def _record_audit(
+        self,
+        conn: sqlite3.Connection,
+        operation: AuditOperation,
+        target_type: str | None = None,
+        target_id: int | None = None,
+        details: str | None = None,
+    ) -> None:
+        """Record a destructive operation in the audit log.
+
+        Args:
+            conn: Active database connection (should be in transaction).
+            operation: The type of destructive operation.
+            target_type: Type of target (memory, pattern, etc).
+            target_id: ID of the affected target.
+            details: JSON string with additional details (before/after state).
+        """
+        conn.execute(
+            """
+            INSERT INTO audit_log (operation, target_type, target_id, details)
+            VALUES (?, ?, ?, ?)
+            """,
+            (operation.value, target_type, target_id, details),
+        )
+
+    def audit_history(
+        self,
+        limit: int = 50,
+        operation: AuditOperation | None = None,
+        target_type: str | None = None,
+    ) -> list[AuditEntry]:
+        """Get recent audit log entries.
+
+        Args:
+            limit: Maximum entries to return (default 50, max 500).
+            operation: Filter by operation type.
+            target_type: Filter by target type (memory, pattern, etc).
+
+        Returns:
+            List of audit entries, most recent first.
+        """
+        limit = min(limit, 500)
+
+        with self._connection() as conn:
+            query = (
+                "SELECT id, operation, target_type, target_id, details, timestamp "
+                "FROM audit_log WHERE 1=1"
+            )
+            params: list = []
+
+            if operation:
+                query += " AND operation = ?"
+                params.append(operation.value)
+            if target_type:
+                query += " AND target_type = ?"
+                params.append(target_type)
+
+            query += " ORDER BY timestamp DESC LIMIT ?"
+            params.append(limit)
+
+            rows = conn.execute(query, params).fetchall()
+            return [
+                AuditEntry(
+                    id=row["id"],
+                    operation=row["operation"],
+                    target_type=row["target_type"],
+                    target_id=row["target_id"],
+                    details=row["details"],
+                    timestamp=row["timestamp"],
+                )
+                for row in rows
+            ]
+
+    def cleanup_old_audit_logs(self, retention_days: int = 30) -> int:
+        """Delete audit log entries older than retention period.
+
+        Args:
+            retention_days: Days to keep audit logs (default 30).
+
+        Returns:
+            Number of entries deleted.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM audit_log WHERE timestamp < datetime('now', ?)",
+                (f"-{retention_days} days",),
+            )
+            deleted = cursor.rowcount
+            if deleted > 0:
+                log.info(
+                    "Deleted {} old audit log entries (older than {} days)", deleted, retention_days
+                )
+            return deleted
+
     def vacuum(self) -> None:
         """Compact the database, reclaiming unused space."""
         with self._lock:
@@ -796,7 +951,7 @@ class Storage:
             memory_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
             vector_count = conn.execute("SELECT COUNT(*) FROM memory_vectors").fetchone()[0]
 
-        return {
+        result = {
             "size_before_bytes": size_before,
             "size_after_bytes": size_after,
             "bytes_reclaimed": size_before - size_after,
@@ -806,6 +961,21 @@ class Storage:
             "auto_demoted_count": len(demoted_ids),
             "auto_demoted_ids": demoted_ids,
         }
+
+        # Record maintenance audit entry
+        with self.transaction() as conn:
+            self._record_audit(
+                conn,
+                AuditOperation.MAINTENANCE,
+                details=json.dumps(
+                    {
+                        "bytes_reclaimed": result["bytes_reclaimed"],
+                        "demoted_count": len(demoted_ids),
+                    }
+                ),
+            )
+
+        return result
 
     def _get_retention_days(self, memory_type: MemoryType) -> int:
         """Get retention days for a memory type (0 = never expire)."""
@@ -865,9 +1035,19 @@ class Storage:
                     retention_days,
                 )
 
+        # Record summary audit entry
+        total_deleted = sum(deleted_counts.values())
+        if total_deleted > 0:
+            with self.transaction() as conn:
+                self._record_audit(
+                    conn,
+                    AuditOperation.CLEANUP_MEMORIES,
+                    details=json.dumps({"deleted_by_type": deleted_counts, "total": total_deleted}),
+                )
+
         return {
             "deleted_by_type": deleted_counts,
-            "total_deleted": sum(deleted_counts.values()),
+            "total_deleted": total_deleted,
         }
 
     def cleanup_old_logs(self) -> int:
@@ -1388,11 +1568,22 @@ class Storage:
 
     def delete_memory(self, memory_id: int) -> bool:
         """Delete a memory."""
+        # Capture content summary for audit before deletion
+        memory = self.get_memory(memory_id)
+        content_preview = memory.content[:100] if memory else None
+
         with self.transaction() as conn:
             conn.execute("DELETE FROM memory_vectors WHERE rowid = ?", (memory_id,))
             cursor = conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
             deleted = cursor.rowcount > 0
             if deleted:
+                self._record_audit(
+                    conn,
+                    AuditOperation.DELETE_MEMORY,
+                    target_type="memory",
+                    target_id=memory_id,
+                    details=json.dumps({"content_preview": content_preview}),
+                )
                 log.info("Deleted memory id={}", memory_id)
             return deleted
 
@@ -2263,6 +2454,12 @@ class Storage:
             )
             demoted = cursor.rowcount > 0
             if demoted:
+                self._record_audit(
+                    conn,
+                    AuditOperation.DEMOTE_MEMORY,
+                    target_type="memory",
+                    target_id=memory_id,
+                )
                 log.info("Demoted memory id={} from hot cache", memory_id)
             return demoted
 
@@ -2303,6 +2500,21 @@ class Storage:
                     "Auto-demoted stale memory id={} (not accessed in {} days)",
                     memory_id,
                     self.settings.demotion_days,
+                )
+
+        # Record summary audit entry for batch demotion
+        if demoted_ids:
+            with self.transaction() as conn:
+                self._record_audit(
+                    conn,
+                    AuditOperation.DEMOTE_STALE,
+                    details=json.dumps(
+                        {
+                            "count": len(demoted_ids),
+                            "memory_ids": demoted_ids,
+                            "demotion_days": self.settings.demotion_days,
+                        }
+                    ),
                 )
 
         return demoted_ids
@@ -2619,7 +2831,15 @@ class Storage:
         """Delete a mined pattern (after promotion or rejection)."""
         with self.transaction() as conn:
             cursor = conn.execute("DELETE FROM mined_patterns WHERE id = ?", (pattern_id,))
-            return cursor.rowcount > 0
+            deleted = cursor.rowcount > 0
+            if deleted:
+                self._record_audit(
+                    conn,
+                    AuditOperation.DELETE_PATTERN,
+                    target_type="pattern",
+                    target_id=pattern_id,
+                )
+            return deleted
 
     def expire_stale_patterns(self, days: int = 30) -> int:
         """Expire pending patterns that haven't been seen in N days.
@@ -2642,6 +2862,11 @@ class Storage:
             )
             expired = cursor.rowcount
             if expired > 0:
+                self._record_audit(
+                    conn,
+                    AuditOperation.EXPIRE_PATTERNS,
+                    details=json.dumps({"count": expired, "days_inactive": days}),
+                )
                 log.info("Expired {} stale patterns (inactive for {} days)", expired, days)
             return expired
 
@@ -2753,6 +2978,19 @@ class Storage:
 
             count = cursor.rowcount
             if count > 0:
+                self._record_audit(
+                    conn,
+                    AuditOperation.UNLINK_MEMORIES,
+                    target_type="relationship",
+                    details=json.dumps(
+                        {
+                            "from_memory_id": from_memory_id,
+                            "to_memory_id": to_memory_id,
+                            "relation_type": relation_type.value if relation_type else None,
+                            "count_removed": count,
+                        }
+                    ),
+                )
                 log.info(
                     "Unlinked {} relationship(s): {} -> {}",
                     count,

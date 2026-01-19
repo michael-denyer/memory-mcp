@@ -258,7 +258,7 @@ class TestSchemaVersioning:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(db_path=Path(tmpdir) / "new.db")
             storage = Storage(settings)
-            assert storage.get_schema_version() == 8  # v8: mining quality
+            assert storage.get_schema_version() == 9  # v9: audit logging
             storage.close()
 
     def test_wal_mode_enabled(self):

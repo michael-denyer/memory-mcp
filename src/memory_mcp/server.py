@@ -1646,6 +1646,70 @@ def embedding_info() -> dict:
     }
 
 
+class AuditEntryResponse(BaseModel):
+    """Single audit log entry."""
+
+    id: int
+    operation: str
+    target_type: str | None
+    target_id: int | None
+    details: str | None
+    timestamp: str
+
+
+class AuditHistoryResponse(BaseModel):
+    """Audit history response."""
+
+    entries: list[AuditEntryResponse]
+    count: int
+
+
+@mcp.tool
+def audit_history(
+    limit: int = 50,
+    operation: str | None = None,
+) -> AuditHistoryResponse:
+    """Get recent audit log entries for destructive operations.
+
+    Shows history of operations like delete_memory, demote, maintenance,
+    unlink_memories, etc. Useful for understanding what changed and when.
+
+    Args:
+        limit: Maximum entries to return (default 50, max 500).
+        operation: Filter by operation type (e.g., "delete_memory", "demote_memory").
+                   Available types: delete_memory, demote_memory, demote_stale,
+                   delete_pattern, reject_pattern, expire_patterns, cleanup_memories,
+                   maintenance, unlink_memories.
+    """
+    from memory_mcp.storage import AuditOperation
+
+    # Convert string operation to enum if provided
+    op_enum = None
+    if operation:
+        try:
+            op_enum = AuditOperation(operation)
+        except ValueError:
+            valid_ops = [op.value for op in AuditOperation]
+            log.warning("Invalid operation '{}', valid options: {}", operation, valid_ops)
+
+    entries = storage.audit_history(limit=limit, operation=op_enum)
+
+    return AuditHistoryResponse(
+        entries=[
+            AuditEntryResponse(
+                id=e.id,
+                operation=e.operation,
+                target_type=e.target_type,
+                target_id=e.target_id,
+                details=e.details,
+                timestamp=e.timestamp,
+            )
+            for e in entries
+        ],
+        count=len(entries),
+    )
+
+
 # ========== Memory Relationships (Knowledge Graph) Tools ==========
 
 
