@@ -276,6 +276,73 @@ def bootstrap(
                 click.echo(f"  Warning: {err}", err=True)
 
 
+@cli.command("db-rebuild-vectors")
+@click.option(
+    "--batch-size",
+    default=100,
+    type=int,
+    help="Memories to embed per batch (default 100)",
+)
+@click.option(
+    "--clear-only",
+    is_flag=True,
+    help="Only clear vectors, don't re-embed",
+)
+@click.pass_context
+def db_rebuild_vectors(ctx: click.Context, batch_size: int, clear_only: bool) -> None:
+    """Rebuild all memory vectors with the current embedding model.
+
+    Use this to fix dimension mismatch errors or when switching models.
+    Memories are preserved - only the vector embeddings are rebuilt.
+
+    Examples:
+
+        # Rebuild all vectors
+        memory-mcp-cli db-rebuild-vectors
+
+        # Just clear vectors (faster, but recall won't work)
+        memory-mcp-cli db-rebuild-vectors --clear-only
+
+        # JSON output for scripting
+        memory-mcp-cli --json db-rebuild-vectors
+    """
+    use_json = ctx.obj["json"]
+    settings = get_settings()
+
+    storage = Storage(settings)
+    try:
+        if clear_only:
+            clear_result = storage.clear_vectors()
+            result = {
+                **clear_result,
+                "memories_total": 0,
+                "memories_embedded": 0,
+                "memories_failed": 0,
+            }
+            msg = f"Cleared {result['vectors_cleared']} vectors"
+        else:
+            result = storage.rebuild_vectors(batch_size=batch_size)
+            msg = (
+                f"Rebuilt {result['memories_embedded']}/{result['memories_total']} "
+                f"vectors with {result['new_model']} (dim={result['new_dimension']})"
+            )
+
+        if use_json:
+            click.echo(json.dumps({"success": True, **result}))
+        else:
+            click.echo(msg)
+            if result.get("memories_failed", 0) > 0:
+                click.echo(f"  Failed: {result['memories_failed']}", err=True)
+    except Exception as e:
+        if use_json:
+            click.echo(json.dumps({"success": False, "error": str(e)}))
+        else:
+            click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+    finally:
+        storage.close()
+
+
 def main() -> int:
     """Main CLI entry point."""
     try:

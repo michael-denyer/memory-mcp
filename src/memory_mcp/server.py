@@ -1708,6 +1708,63 @@ def audit_history(
     )
 
 
+# ========== Database Maintenance Tools ==========
+
+
+class VectorRebuildResponse(BaseModel):
+    """Response from vector rebuild operation."""
+
+    success: bool
+    vectors_cleared: int
+    memories_total: int
+    memories_embedded: int
+    memories_failed: int
+    new_dimension: int
+    new_model: str
+    message: str
+
+
+@mcp.tool
+def db_rebuild_vectors(
+    batch_size: Annotated[
+        int, Field(default=100, description="Memories to embed per batch (default 100)")
+    ] = 100,
+) -> VectorRebuildResponse | dict:
+    """Rebuild all memory vectors with the current embedding model.
+
+    Use this when:
+    - Switching to a different embedding model
+    - Fixing dimension mismatch errors
+    - Recovering from corrupted vector data
+
+    This operation:
+    1. Clears all existing vectors (memories are preserved)
+    2. Re-embeds every memory with the current model
+    3. Updates stored model info
+
+    Warning: This can take time for large databases. Progress is logged.
+    """
+    try:
+        result = storage.rebuild_vectors(batch_size=batch_size)
+
+        return VectorRebuildResponse(
+            success=True,
+            vectors_cleared=result["vectors_cleared"],
+            memories_total=result["memories_total"],
+            memories_embedded=result["memories_embedded"],
+            memories_failed=result["memories_failed"],
+            new_dimension=result["new_dimension"],
+            new_model=result["new_model"],
+            message=(
+                f"Rebuilt {result['memories_embedded']}/{result['memories_total']} "
+                f"memory vectors with {result['new_model']} (dim={result['new_dimension']})"
+            ),
+        )
+    except Exception as e:
+        log.error("Vector rebuild failed: {}", e)
+        return error_response(f"Vector rebuild failed: {e}")
+
+
 # ========== Memory Relationships (Knowledge Graph) Tools ==========
 
 

@@ -2001,3 +2001,111 @@ class TestSemanticDeduplication:
         # Verify both memories exist as separate entries
         assert mid1 != mid2
         strict_storage.close()
+
+
+# ========== Vector Rebuild Tests ==========
+
+
+class TestVectorRebuild:
+    """Tests for vector clearing and rebuilding functionality."""
+
+    @pytest.fixture
+    def storage(self, tmp_path):
+        """Create a storage instance with temp database."""
+        settings = Settings(db_path=tmp_path / "test.db", semantic_dedup_enabled=False)
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    def test_clear_vectors_removes_all(self, storage):
+        """clear_vectors should remove all vectors but keep memories."""
+        # Create some memories
+        mid1, _ = storage.store_memory("Memory one", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory two", MemoryType.PROJECT)
+
+        # Verify vectors exist
+        with storage._connection() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM memory_vectors").fetchone()[0]
+            assert count == 2
+
+        # Clear vectors
+        result = storage.clear_vectors()
+
+        assert result["vectors_cleared"] == 2
+        assert result["new_dimension"] == storage.settings.embedding_dim
+
+        # Verify vectors are gone but memories remain
+        with storage._connection() as conn:
+            vector_count = conn.execute("SELECT COUNT(*) FROM memory_vectors").fetchone()[0]
+            memory_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+            assert vector_count == 0
+            assert memory_count == 2
+
+    def test_rebuild_vectors_reembeds_all(self, storage):
+        """rebuild_vectors should re-embed all memories."""
+        # Create some memories
+        mid1, _ = storage.store_memory("Memory one", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory two", MemoryType.PROJECT)
+        mid3, _ = storage.store_memory("Memory three", MemoryType.PROJECT)
+
+        # Rebuild
+        result = storage.rebuild_vectors()
+
+        assert result["vectors_cleared"] == 3
+        assert result["memories_total"] == 3
+        assert result["memories_embedded"] == 3
+        assert result["memories_failed"] == 0
+
+        # Verify vectors were recreated
+        with storage._connection() as conn:
+            count = conn.execute("SELECT COUNT(*) FROM memory_vectors").fetchone()[0]
+            assert count == 3
+
+    def test_rebuild_vectors_batch_size(self, storage):
+        """rebuild_vectors should process memories in batches."""
+        # Create several memories
+        for i in range(5):
+            storage.store_memory(f"Memory number {i}", MemoryType.PROJECT)
+
+        # Rebuild with small batch size
+        result = storage.rebuild_vectors(batch_size=2)
+
+        assert result["memories_total"] == 5
+        assert result["memories_embedded"] == 5
+
+    def test_rebuild_preserves_recall(self, storage):
+        """After rebuild, recall should still work."""
+        # Create a memory
+        mid, _ = storage.store_memory("Python testing framework pytest", MemoryType.PROJECT)
+
+        # Verify recall works before
+        result1 = storage.recall("pytest", threshold=0.1)
+        assert len(result1.memories) >= 1
+
+        # Rebuild
+        storage.rebuild_vectors()
+
+        # Verify recall still works after
+        result2 = storage.recall("pytest", threshold=0.1)
+        assert len(result2.memories) >= 1
+
+    def test_clear_vectors_empty_database(self, tmp_path):
+        """clear_vectors should work on empty database."""
+        settings = Settings(db_path=tmp_path / "empty.db")
+        stor = Storage(settings)
+
+        result = stor.clear_vectors()
+
+        assert result["vectors_cleared"] == 0
+        stor.close()
+
+    def test_rebuild_vectors_empty_database(self, tmp_path):
+        """rebuild_vectors should work on empty database."""
+        settings = Settings(db_path=tmp_path / "empty.db")
+        stor = Storage(settings)
+
+        result = stor.rebuild_vectors()
+
+        assert result["memories_total"] == 0
+        assert result["memories_embedded"] == 0
+        stor.close()

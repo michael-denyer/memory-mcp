@@ -783,10 +783,13 @@ class Storage:
 
                 if count > 0:
                     raise EmbeddingDimensionError(
-                        f"Embedding dimension mismatch: database has vectors with different "
-                        f"dimension than configured ({expected_dim}). "
-                        f"Delete the database or set MEMORY_MCP_EMBEDDING_DIM to match. "
-                        f"Database: {self.db_path}"
+                        f"Embedding dimension mismatch: database has {count} vectors with "
+                        f"different dimension than configured ({expected_dim}).\n\n"
+                        f"To fix this, use one of these options:\n"
+                        f"  1. CLI: memory-mcp-cli db-rebuild-vectors\n"
+                        f"  2. MCP tool: db_rebuild_vectors()\n"
+                        f"  3. Set MEMORY_MCP_EMBEDDING_DIM to match existing vectors\n"
+                        f"  4. Delete the database: {self.db_path}"
                     )
                 else:
                     log.warning(
@@ -1131,6 +1134,106 @@ class Storage:
             "current_dimension": current_dim,
             "model_changed": not model_match,
             "dimension_changed": not dim_match,
+        }
+
+    def clear_vectors(self) -> dict:
+        """Clear all vectors from the database.
+
+        Drops and recreates the vector table with current dimension.
+        Memories are preserved but will have no vectors until rebuild.
+
+        Returns:
+            Stats about vectors cleared.
+        """
+        with self.transaction() as conn:
+            # Count existing vectors
+            count = conn.execute("SELECT COUNT(*) FROM memory_vectors").fetchone()[0]
+
+            # Drop and recreate with current dimension
+            # Use same schema as original (implicit rowid) for JOIN compatibility
+            conn.execute("DROP TABLE IF EXISTS memory_vectors")
+            dim = self.settings.embedding_dim
+            conn.execute(
+                f"""
+                CREATE VIRTUAL TABLE memory_vectors USING vec0(
+                    embedding FLOAT[{dim}]
+                )
+                """
+            )
+
+            # Update stored model info
+            model = self.settings.embedding_model
+            self.set_embedding_model_info(model, dim)
+
+            log.info("Cleared {} vectors, recreated table with dimension {}", count, dim)
+
+            return {
+                "vectors_cleared": count,
+                "new_dimension": dim,
+                "new_model": model,
+            }
+
+    def rebuild_vectors(self, batch_size: int = 100) -> dict:
+        """Rebuild all vectors by re-embedding memories.
+
+        Clears existing vectors and re-embeds all memories with the current
+        embedding model. This is useful when changing embedding models or
+        fixing dimension mismatches.
+
+        Args:
+            batch_size: Number of memories to embed per batch.
+
+        Returns:
+            Stats about the rebuild operation.
+        """
+        # First clear existing vectors
+        clear_result = self.clear_vectors()
+
+        # Get all memories that need embedding
+        with self.transaction() as conn:
+            memories = conn.execute("SELECT id, content FROM memories").fetchall()
+
+        total = len(memories)
+        embedded = 0
+        errors = 0
+
+        # Process in batches
+        for i in range(0, total, batch_size):
+            batch = memories[i : i + batch_size]
+            memory_ids = [m[0] for m in batch]
+            contents = [m[1] for m in batch]
+
+            try:
+                embeddings = self._embedding_engine.embed_batch(contents)
+
+                with self.transaction() as conn:
+                    for memory_id, embedding in zip(memory_ids, embeddings):
+                        conn.execute(
+                            "INSERT INTO memory_vectors (rowid, embedding) VALUES (?, ?)",
+                            (memory_id, embedding.tobytes()),
+                        )
+                embedded += len(batch)
+            except Exception as e:
+                log.error("Failed to embed batch starting at {}: {}", i, e)
+                errors += len(batch)
+
+            if (i + batch_size) % 500 == 0 or i + batch_size >= total:
+                log.info("Rebuild progress: {}/{} memories", min(i + batch_size, total), total)
+
+        log.info(
+            "Vector rebuild complete: {} embedded, {} errors out of {} total",
+            embedded,
+            errors,
+            total,
+        )
+
+        return {
+            "vectors_cleared": clear_result["vectors_cleared"],
+            "memories_total": total,
+            "memories_embedded": embedded,
+            "memories_failed": errors,
+            "new_dimension": clear_result["new_dimension"],
+            "new_model": clear_result["new_model"],
         }
 
     def run_full_cleanup(self) -> dict:
