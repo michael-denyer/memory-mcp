@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from memory_mcp.config import get_settings
 from memory_mcp.logging import get_logger
 from memory_mcp.storage import Memory, MemorySource, MemoryType, RecallMode, Storage
+from memory_mcp.text_parsing import parse_content_into_chunks
 
 log = get_logger("server")
 
@@ -125,6 +126,20 @@ def parse_memory_type(memory_type: str) -> MemoryType | None:
 def invalid_memory_type_error() -> dict:
     """Return error for invalid memory type."""
     return error_response(f"Invalid memory_type. Use: {[t.value for t in MemoryType]}")
+
+
+def build_ranking_factors(mode: RecallMode | None, prefix: str = "") -> str:
+    """Build ranking factors explanation string for recall responses."""
+    mode_config = storage.get_recall_mode_config(mode or RecallMode.BALANCED)
+    sim_w = int(mode_config.similarity_weight * 100)
+    rec_w = int(mode_config.recency_weight * 100)
+    acc_w = int(mode_config.access_weight * 100)
+    mode_name = mode.value if mode else "balanced"
+    base = (
+        f"Mode: {mode_name} | "
+        f"Ranked by: similarity ({sim_w}%) + recency ({rec_w}%) + access ({acc_w}%)"
+    )
+    return f"{prefix} | {base}" if prefix else base
 
 
 @mcp.tool
@@ -265,23 +280,13 @@ def recall(
         memory_types=memory_types,
     )
 
-    # Build ranking explanation based on effective mode
-    mode_config = storage.get_recall_mode_config(result.mode or RecallMode.BALANCED)
-    sim_w = int(mode_config.similarity_weight * 100)
-    rec_w = int(mode_config.recency_weight * 100)
-    acc_w = int(mode_config.access_weight * 100)
-    ranking_factors = (
-        f"Mode: {result.mode.value if result.mode else 'balanced'} | "
-        f"Ranked by: similarity ({sim_w}%) + recency ({rec_w}%) + access ({acc_w}%)"
-    )
-
     return RecallResponse(
         memories=[memory_to_response(m) for m in result.memories],
         confidence=result.confidence,
         gated_count=result.gated_count,
         mode=result.mode.value if result.mode else "balanced",
         guidance=result.guidance or "",
-        ranking_factors=ranking_factors,
+        ranking_factors=build_ranking_factors(result.mode),
     )
 
 
@@ -318,22 +323,13 @@ def recall_with_fallback(
         min_results=min_results,
     )
 
-    mode_config = storage.get_recall_mode_config(result.mode or RecallMode.BALANCED)
-    sim_w = int(mode_config.similarity_weight * 100)
-    rec_w = int(mode_config.recency_weight * 100)
-    acc_w = int(mode_config.access_weight * 100)
-    ranking_factors = (
-        f"Fallback search | Mode: {result.mode.value if result.mode else 'balanced'} | "
-        f"Ranked by: similarity ({sim_w}%) + recency ({rec_w}%) + access ({acc_w}%)"
-    )
-
     return RecallResponse(
         memories=[memory_to_response(m) for m in result.memories],
         confidence=result.confidence,
         gated_count=result.gated_count,
         mode=result.mode.value if result.mode else "balanced",
         guidance=result.guidance or "",
-        ranking_factors=ranking_factors,
+        ranking_factors=build_ranking_factors(result.mode, prefix="Fallback search"),
     )
 
 
@@ -595,6 +591,97 @@ def run_mining(
         result["patterns_found"],
     )
     return {"success": True, **result}
+
+
+# ========== Seeding Tools ==========
+
+
+class SeedResult(BaseModel):
+    """Result from seeding operation."""
+
+    memories_created: int
+    memories_skipped: int
+    errors: list[str]
+
+
+@mcp.tool
+def seed_from_text(
+    content: Annotated[str, Field(description="Text content to parse and seed memories from")],
+    memory_type: Annotated[
+        str, Field(description="Memory type for all extracted items")
+    ] = "project",
+    promote_to_hot: Annotated[bool, Field(description="Promote all to hot cache")] = False,
+) -> SeedResult:
+    """Seed memories from text content.
+
+    Parses the content into individual memories (one per paragraph or list item)
+    and stores them. Useful for initial setup or bulk import.
+
+    Content is split on:
+    - Double newlines (paragraphs)
+    - Lines starting with '- ' or '* ' (list items)
+    - Lines starting with numbers like '1. ' (numbered lists)
+    """
+    mem_type = parse_memory_type(memory_type)
+    if mem_type is None:
+        return SeedResult(memories_created=0, memories_skipped=0, errors=["Invalid memory_type"])
+
+    chunks = parse_content_into_chunks(content)
+    created, skipped, errors = 0, 0, []
+
+    for chunk in chunks:
+        if len(chunk) > settings.max_content_length:
+            errors.append(f"Chunk too long ({len(chunk)} chars), skipped")
+            continue
+
+        memory_id, is_new = storage.store_memory(
+            content=chunk,
+            memory_type=mem_type,
+            source=MemorySource.MANUAL,
+        )
+        if is_new:
+            created += 1
+            if promote_to_hot:
+                storage.promote_to_hot(memory_id)
+        else:
+            skipped += 1
+
+    log.info("seed_from_text: created={} skipped={} errors={}", created, skipped, len(errors))
+    return SeedResult(memories_created=created, memories_skipped=skipped, errors=errors)
+
+
+@mcp.tool
+def seed_from_file(
+    file_path: Annotated[str, Field(description="Path to file to import")],
+    memory_type: Annotated[str, Field(description="Memory type for content")] = "project",
+    promote_to_hot: Annotated[bool, Field(description="Promote to hot cache")] = False,
+) -> SeedResult:
+    """Seed memories from a file.
+
+    Reads the file and extracts memories based on content structure.
+    Supports markdown files (splits on headers and lists) and plain text.
+
+    Common use: Import from project CLAUDE.md or documentation files.
+    """
+    from pathlib import Path
+
+    path = Path(file_path).expanduser()
+    if not path.exists():
+        return SeedResult(
+            memories_created=0, memories_skipped=0, errors=[f"File not found: {file_path}"]
+        )
+
+    if not path.is_file():
+        return SeedResult(
+            memories_created=0, memories_skipped=0, errors=[f"Not a file: {file_path}"]
+        )
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as e:
+        return SeedResult(memories_created=0, memories_skipped=0, errors=[f"Read error: {e}"])
+
+    return seed_from_text(content=content, memory_type=memory_type, promote_to_hot=promote_to_hot)
 
 
 # ========== Maintenance Tools ==========

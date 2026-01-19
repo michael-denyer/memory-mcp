@@ -119,6 +119,13 @@ Restart Claude Code, then verify with `/mcp` - you should see the memory server'
 | `approve_candidate(pattern_id)` | Approve and promote pattern |
 | `reject_candidate(pattern_id)` | Reject pattern |
 
+### Seeding (Cold Start)
+
+| Tool | Description |
+|------|-------------|
+| `seed_from_text(content, type, promote)` | Parse text and create memories |
+| `seed_from_file(path, type, promote)` | Import from file (e.g., CLAUDE.md) |
+
 ### Maintenance
 
 | Tool | Description |
@@ -239,6 +246,12 @@ uv run memory-mcp-cli run-mining --hours 24
 
 # Output as JSON
 uv run memory-mcp-cli --json log-output -c "Content here"
+
+# Seed memories from a file (cold start)
+uv run memory-mcp-cli seed ~/project/CLAUDE.md
+
+# Seed with specific type and promote to hot cache
+uv run memory-mcp-cli seed notes.md -t project --promote
 ```
 
 ## Configuration
@@ -360,6 +373,12 @@ You: "Promote that to hot cache"
 Claude: [calls promote(1)]
 → Memory #1 now in hot cache - zero latency access
 ```
+
+### Detailed Workflows
+
+- [Project Onboarding](docs/examples/project-onboarding.md) - Store and retrieve project facts
+- [Cross-Session Continuity](docs/examples/cross-session-continuity.md) - Preserve decisions across sessions
+- [Pattern Mining](docs/examples/pattern-mining.md) - Auto-extract frequently-used patterns
 
 ## License
 

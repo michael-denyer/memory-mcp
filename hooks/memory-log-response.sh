@@ -27,11 +27,8 @@
 
 set -e
 
-# Read hook input from stdin
-HOOK_INPUT=$(cat)
-
-# Extract transcript path from hook input
-TRANSCRIPT_PATH=$(echo "$HOOK_INPUT" | jq -r '.transcript_path // empty')
+# Extract transcript path from hook input (stdin)
+TRANSCRIPT_PATH=$(jq -r '.transcript_path // empty')
 
 if [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
     # No transcript available, exit silently
@@ -64,6 +61,3 @@ fi
 # Use uv run to ensure we're using the right environment
 cd "$MEMORY_MCP_DIR"
 echo "$LAST_RESPONSE" | uv run memory-mcp-cli log-output 2>/dev/null || true
-
-# Exit successfully (don't block Claude)
-exit 0

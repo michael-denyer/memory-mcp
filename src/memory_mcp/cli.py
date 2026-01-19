@@ -6,9 +6,11 @@ These commands can be called from shell scripts and Claude Code hooks.
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from memory_mcp.config import get_settings
-from memory_mcp.storage import Storage
+from memory_mcp.storage import MemorySource, MemoryType, Storage
+from memory_mcp.text_parsing import parse_content_into_chunks
 
 
 def log_output_cmd(args: argparse.Namespace) -> int:
@@ -21,7 +23,7 @@ def log_output_cmd(args: argparse.Namespace) -> int:
 
     # Read content from file or stdin
     if args.file:
-        with open(args.file) as f:
+        with open(args.file, encoding="utf-8") as f:
             content = f.read()
     elif args.content:
         content = args.content
@@ -74,6 +76,68 @@ def run_mining_cmd(args: argparse.Namespace) -> int:
         storage.close()
 
 
+def seed_cmd(args: argparse.Namespace) -> int:
+    """Seed memories from a file."""
+    path = Path(args.file).expanduser()
+    if not path.exists():
+        print(f"File not found: {args.file}", file=sys.stderr)
+        return 1
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as e:
+        print(f"Read error: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        mem_type = MemoryType(args.type)
+    except ValueError:
+        print(f"Invalid type: {args.type}", file=sys.stderr)
+        return 1
+
+    settings = get_settings()
+    chunks = parse_content_into_chunks(content)
+    created, skipped, errors = 0, 0, []
+
+    storage = Storage(settings)
+    try:
+        for chunk in chunks:
+            if len(chunk) > settings.max_content_length:
+                errors.append(f"Chunk too long ({len(chunk)} chars)")
+                continue
+
+            memory_id, is_new = storage.store_memory(
+                content=chunk,
+                memory_type=mem_type,
+                source=MemorySource.MANUAL,
+            )
+            if is_new:
+                created += 1
+                if args.promote:
+                    storage.promote_to_hot(memory_id)
+            else:
+                skipped += 1
+    finally:
+        storage.close()
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "memories_created": created,
+                    "memories_skipped": skipped,
+                    "errors": errors,
+                }
+            )
+        )
+    else:
+        print(f"Created {created} memories, skipped {skipped} duplicates")
+        if errors:
+            print(f"Errors: {len(errors)}")
+
+    return 0
+
+
 def main() -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -113,6 +177,28 @@ def main() -> int:
         help="Hours of logs to process (default: 24)",
     )
     mining_parser.set_defaults(func=run_mining_cmd)
+
+    # seed command
+    seed_parser = subparsers.add_parser(
+        "seed",
+        help="Seed memories from a file (e.g., CLAUDE.md)",
+    )
+    seed_parser.add_argument(
+        "file",
+        help="File to import memories from",
+    )
+    seed_parser.add_argument(
+        "-t",
+        "--type",
+        default="project",
+        help="Memory type (project, pattern, reference, conversation)",
+    )
+    seed_parser.add_argument(
+        "--promote",
+        action="store_true",
+        help="Promote all seeded memories to hot cache",
+    )
+    seed_parser.set_defaults(func=seed_cmd)
 
     args = parser.parse_args()
     return args.func(args)
