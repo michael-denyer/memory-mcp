@@ -82,6 +82,15 @@ class RelationType(str, Enum):
     ELABORATES = "elaborates"  # Provides more detail
 
 
+class PatternStatus(str, Enum):
+    """Status of mined patterns in the approval workflow."""
+
+    PENDING = "pending"  # Awaiting review
+    APPROVED = "approved"  # Approved for promotion
+    REJECTED = "rejected"  # Rejected (won't be promoted)
+    PROMOTED = "promoted"  # Already promoted to memory
+
+
 # Default boost/penalty amounts per reason
 TRUST_REASON_DEFAULTS: dict[TrustReason, float] = {
     TrustReason.USED_CORRECTLY: 0.05,
@@ -193,6 +202,10 @@ class MinedPattern:
     occurrence_count: int
     first_seen: datetime
     last_seen: datetime
+    status: PatternStatus = PatternStatus.PENDING
+    source_log_id: int | None = None  # Originating output_log ID
+    confidence: float = 0.5  # Extraction confidence (0-1)
+    score: float = 0.0  # Computed promotion score
 
 
 @dataclass
@@ -278,7 +291,7 @@ class SemanticMergeResult:
 
 
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 -- Schema version tracking
@@ -500,6 +513,8 @@ class Storage:
             self._migrate_v5_to_v6(conn)
         if from_version < 7:
             self._migrate_v6_to_v7(conn)
+        if from_version < 8:
+            self._migrate_v7_to_v8(conn)
 
     def _get_table_columns(self, conn: sqlite3.Connection, table: str) -> set[str]:
         """Get set of column names for a table."""
@@ -641,6 +656,24 @@ class Storage:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sequences_last ON access_sequences(last_seen)")
         log.info("Created access_sequences table for predictive cache")
+
+    def _migrate_v7_to_v8(self, conn: sqlite3.Connection) -> None:
+        """Enhance mined_patterns table for mining quality improvements."""
+        # Add status column for approval workflow
+        self._add_column_if_missing(conn, "mined_patterns", "status", "TEXT DEFAULT 'pending'")
+        # Add source_log_id for provenance tracking
+        self._add_column_if_missing(
+            conn, "mined_patterns", "source_log_id", "INTEGER REFERENCES output_log(id)"
+        )
+        # Add confidence score from extraction
+        self._add_column_if_missing(conn, "mined_patterns", "confidence", "REAL DEFAULT 0.5")
+        # Add computed promotion score
+        self._add_column_if_missing(conn, "mined_patterns", "score", "REAL DEFAULT 0.0")
+        # Index for filtering by status
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_mined_patterns_status ON mined_patterns(status)"
+        )
+        log.info("Enhanced mined_patterns table with status, provenance, and scoring")
 
     def _check_schema_version(self, conn: sqlite3.Connection) -> None:
         """Check schema version compatibility."""
@@ -2194,8 +2227,23 @@ class Storage:
 
     # ========== Mined Patterns ==========
 
-    def upsert_mined_pattern(self, pattern: str, pattern_type: str) -> int:
+    def upsert_mined_pattern(
+        self,
+        pattern: str,
+        pattern_type: str,
+        source_log_id: int | None = None,
+        confidence: float = 0.5,
+    ) -> int:
         """Insert or update a mined pattern.
+
+        Args:
+            pattern: The extracted pattern content.
+            pattern_type: Type of pattern (import, fact, command, code).
+            source_log_id: ID of the output_log this pattern was extracted from.
+            confidence: Extraction confidence score (0-1).
+
+        Returns:
+            The pattern ID.
 
         Raises:
             ValidationError: If pattern is empty or exceeds max length.
@@ -2208,43 +2256,138 @@ class Storage:
         with self.transaction() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO mined_patterns (pattern, pattern_hash, pattern_type)
-                VALUES (?, ?, ?)
+                INSERT INTO mined_patterns
+                    (pattern, pattern_hash, pattern_type, source_log_id, confidence)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(pattern_hash) DO UPDATE SET
                     occurrence_count = occurrence_count + 1,
-                    last_seen = CURRENT_TIMESTAMP
+                    last_seen = CURRENT_TIMESTAMP,
+                    confidence = MAX(confidence, excluded.confidence)
                 RETURNING id
                 """,
-                (pattern, hash_val, pattern_type),
+                (pattern, hash_val, pattern_type, source_log_id, confidence),
             )
-            return cursor.fetchone()[0]
+            pattern_id = cursor.fetchone()[0]
 
-    def get_promotion_candidates(self, threshold: int | None = None) -> list[MinedPattern]:
-        """Get mined patterns ready for promotion."""
+            # Recalculate score on update
+            self._update_pattern_score(conn, pattern_id)
+
+            return pattern_id
+
+    def _update_pattern_score(self, conn: sqlite3.Connection, pattern_id: int) -> None:
+        """Recalculate and update the promotion score for a pattern."""
+        row = conn.execute(
+            """
+            SELECT occurrence_count, first_seen, last_seen, confidence
+            FROM mined_patterns WHERE id = ?
+            """,
+            (pattern_id,),
+        ).fetchone()
+
+        if not row:
+            return
+
+        # Score = frequency * recency_factor * confidence
+        # Recency: decay based on days since last seen
+        last_seen = datetime.fromisoformat(row["last_seen"])
+        days_since = (datetime.now() - last_seen).days
+        recency_factor = 0.5 ** (days_since / 7.0)  # Half-life of 7 days
+
+        frequency_score = min(row["occurrence_count"] / 10.0, 1.0)  # Cap at 10 occurrences
+        confidence = row["confidence"] or 0.5
+
+        score = frequency_score * recency_factor * confidence
+
+        conn.execute(
+            "UPDATE mined_patterns SET score = ? WHERE id = ?",
+            (score, pattern_id),
+        )
+
+    def _row_to_mined_pattern(self, row: sqlite3.Row) -> MinedPattern:
+        """Convert a database row to a MinedPattern."""
+        status = PatternStatus(row["status"]) if row["status"] else PatternStatus.PENDING
+        return MinedPattern(
+            id=row["id"],
+            pattern=row["pattern"],
+            pattern_hash=row["pattern_hash"],
+            pattern_type=row["pattern_type"],
+            occurrence_count=row["occurrence_count"],
+            first_seen=datetime.fromisoformat(row["first_seen"]),
+            last_seen=datetime.fromisoformat(row["last_seen"]),
+            status=status,
+            source_log_id=row["source_log_id"],
+            confidence=row["confidence"] or 0.5,
+            score=row["score"] or 0.0,
+        )
+
+    def get_promotion_candidates(
+        self,
+        threshold: int | None = None,
+        status: PatternStatus | None = None,
+    ) -> list[MinedPattern]:
+        """Get mined patterns ready for promotion.
+
+        Args:
+            threshold: Minimum occurrence count (defaults to settings.promotion_threshold).
+            status: Filter by status (defaults to PENDING or APPROVED).
+
+        Returns:
+            List of MinedPattern sorted by score descending.
+        """
         threshold = threshold or self.settings.promotion_threshold
+
+        # Build status filter: specific status or default to pending/approved
+        params: tuple[int, ...] | tuple[int, str]
+        if status:
+            status_filter = "status = ?"
+            params = (threshold, status.value)
+        else:
+            status_filter = "status IN ('pending', 'approved')"
+            params = (threshold,)
 
         with self._connection() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT * FROM mined_patterns
-                WHERE occurrence_count >= ?
-                ORDER BY occurrence_count DESC
+                WHERE occurrence_count >= ? AND {status_filter}
+                ORDER BY score DESC, occurrence_count DESC
                 """,
-                (threshold,),
+                params,
             ).fetchall()
 
-            return [
-                MinedPattern(
-                    id=row["id"],
-                    pattern=row["pattern"],
-                    pattern_hash=row["pattern_hash"],
-                    pattern_type=row["pattern_type"],
-                    occurrence_count=row["occurrence_count"],
-                    first_seen=datetime.fromisoformat(row["first_seen"]),
-                    last_seen=datetime.fromisoformat(row["last_seen"]),
-                )
-                for row in rows
-            ]
+            return [self._row_to_mined_pattern(row) for row in rows]
+
+    def get_mined_pattern(self, pattern_id: int) -> MinedPattern | None:
+        """Get a mined pattern by ID."""
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM mined_patterns WHERE id = ?", (pattern_id,)
+            ).fetchone()
+
+        if not row:
+            return None
+        return self._row_to_mined_pattern(row)
+
+    def update_pattern_status(
+        self,
+        pattern_id: int,
+        status: PatternStatus,
+    ) -> bool:
+        """Update the status of a mined pattern.
+
+        Args:
+            pattern_id: Pattern ID to update.
+            status: New status (pending, approved, rejected, promoted).
+
+        Returns:
+            True if updated, False if pattern not found.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE mined_patterns SET status = ? WHERE id = ?",
+                (status.value, pattern_id),
+            )
+            return cursor.rowcount > 0
 
     def mined_pattern_exists(self, pattern_hash: str) -> bool:
         """Check if a mined pattern exists by hash."""
@@ -2259,6 +2402,30 @@ class Storage:
         with self.transaction() as conn:
             cursor = conn.execute("DELETE FROM mined_patterns WHERE id = ?", (pattern_id,))
             return cursor.rowcount > 0
+
+    def expire_stale_patterns(self, days: int = 30) -> int:
+        """Expire pending patterns that haven't been seen in N days.
+
+        Args:
+            days: Number of days without activity before expiration.
+
+        Returns:
+            Number of patterns expired (marked as rejected).
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE mined_patterns
+                SET status = 'rejected'
+                WHERE status = 'pending'
+                  AND last_seen < datetime('now', ?)
+                """,
+                (f"-{days} days",),
+            )
+            expired = cursor.rowcount
+            if expired > 0:
+                log.info("Expired {} stale patterns (inactive for {} days)", expired, days)
+            return expired
 
     # ========== Memory Relationships (Knowledge Graph) ==========
 

@@ -893,7 +893,7 @@ class TestMemoryRelationships:
     def test_schema_version_is_7(self, storage):
         """Schema version should be 7 after migration."""
         version = storage.get_schema_version()
-        assert version == 7
+        assert version == 8
 
 
 # ========== Contradiction Detection Tests ==========
@@ -1584,7 +1584,7 @@ class TestPredictiveCache:
     def test_schema_version_is_7(self, predictive_storage):
         """Schema version should be 7 after migration."""
         version = predictive_storage.get_schema_version()
-        assert version == 7
+        assert version == 8
 
     def test_access_sequences_table_exists(self, predictive_storage):
         """access_sequences table should exist."""

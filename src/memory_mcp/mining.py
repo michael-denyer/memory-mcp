@@ -15,6 +15,7 @@ class PatternType(str, Enum):
     FACT = "fact"  # "This project uses X" statements
     COMMAND = "command"  # Shell commands
     CODE = "code"  # Code snippets
+    CODE_BLOCK = "code_block"  # Fenced code blocks from markdown
 
 
 # Common CLI tool prefixes for command extraction
@@ -40,6 +41,7 @@ class ExtractedPattern:
 
     pattern: str
     pattern_type: PatternType
+    confidence: float = 0.5  # Extraction confidence (0-1)
 
 
 # ========== Pattern Extractors ==========
@@ -138,6 +140,47 @@ def extract_code_patterns(text: str) -> list[ExtractedPattern]:
     return patterns
 
 
+def extract_code_blocks(text: str) -> list[ExtractedPattern]:
+    """Extract fenced code blocks from markdown.
+
+    Extracts code blocks like:
+    ```python
+    def example():
+        pass
+    ```
+    """
+    patterns = []
+
+    # Match fenced code blocks with optional language identifier
+    code_block_re = re.compile(
+        r"```(\w*)\n(.*?)```",
+        re.DOTALL,
+    )
+
+    for match in code_block_re.finditer(text):
+        language = match.group(1).lower() or None
+        code = match.group(2).strip()
+
+        # Skip very short or very long blocks
+        if len(code) < 20 or len(code) > 2000:
+            continue
+
+        # Skip blocks that are just error messages or output
+        if code.startswith("Error:") or code.startswith("Traceback"):
+            continue
+
+        # Higher confidence for blocks with language identifier
+        confidence = 0.7 if language else 0.5
+
+        # Include language in pattern for context
+        pattern_text = f"[{language}]\n{code}" if language else code
+        patterns.append(
+            ExtractedPattern(pattern_text, PatternType.CODE_BLOCK, confidence=confidence)
+        )
+
+    return patterns
+
+
 # ========== Main Mining Function ==========
 
 
@@ -146,22 +189,21 @@ PATTERN_EXTRACTORS = [
     extract_facts,
     extract_commands,
     extract_code_patterns,
+    extract_code_blocks,
 ]
 
 
 def extract_patterns(text: str) -> list[ExtractedPattern]:
-    """Extract all patterns from text."""
+    """Extract all patterns from text, deduplicated by pattern content."""
     all_patterns = [pattern for extractor in PATTERN_EXTRACTORS for pattern in extractor(text)]
 
-    # Deduplicate while preserving order
-    seen: set[str] = set()
-    unique = []
+    # Deduplicate while preserving order (first occurrence wins)
+    seen: dict[str, ExtractedPattern] = {}
     for p in all_patterns:
         if p.pattern not in seen:
-            seen.add(p.pattern)
-            unique.append(p)
+            seen[p.pattern] = p
 
-    return unique
+    return list(seen.values())
 
 
 def run_mining(storage: Storage, hours: int = 24) -> dict:
@@ -175,7 +217,7 @@ def run_mining(storage: Storage, hours: int = 24) -> dict:
     new_patterns = 0
     updated_patterns = 0
 
-    for _, content, _ in outputs:
+    for log_id, content, _ in outputs:
         patterns = extract_patterns(content)
         total_patterns += len(patterns)
 
@@ -188,7 +230,13 @@ def run_mining(storage: Storage, hours: int = 24) -> dict:
             else:
                 new_patterns += 1
 
-            storage.upsert_mined_pattern(pattern.pattern, pattern.pattern_type.value)
+            # Pass provenance and confidence to storage
+            storage.upsert_mined_pattern(
+                pattern.pattern,
+                pattern.pattern_type.value,
+                source_log_id=log_id,
+                confidence=pattern.confidence,
+            )
 
     return {
         "outputs_processed": len(outputs),
