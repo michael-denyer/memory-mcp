@@ -9,6 +9,7 @@ from memory_mcp.storage import (
     MemorySource,
     MemoryType,
     PromotionSource,
+    RelationType,
     Storage,
     TrustReason,
     ValidationError,
@@ -689,8 +690,6 @@ class TestMemoryRelationships:
         mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
         mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
 
-        from memory_mcp.storage import RelationType
-
         relation = storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
 
         assert relation is not None
@@ -702,8 +701,6 @@ class TestMemoryRelationships:
         """Can create different relationship types."""
         mid1, _ = storage.store_memory("Overview", MemoryType.PROJECT)
         mid2, _ = storage.store_memory("Details", MemoryType.PROJECT)
-
-        from memory_mcp.storage import RelationType
 
         # Create multiple relationship types
         r1 = storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
@@ -719,8 +716,6 @@ class TestMemoryRelationships:
         mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
         mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
 
-        from memory_mcp.storage import RelationType
-
         r1 = storage.link_memories(mid1, mid2, RelationType.DEPENDS_ON)
         r2 = storage.link_memories(mid1, mid2, RelationType.DEPENDS_ON)  # Duplicate
 
@@ -731,16 +726,12 @@ class TestMemoryRelationships:
         """link_memories returns None when memory doesn't exist."""
         mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
 
-        from memory_mcp.storage import RelationType
-
         relation = storage.link_memories(mid1, 99999, RelationType.RELATES_TO)
         assert relation is None
 
     def test_link_memories_self_reference(self, storage):
         """Cannot link a memory to itself."""
         mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
-
-        from memory_mcp.storage import RelationType
 
         relation = storage.link_memories(mid1, mid1, RelationType.RELATES_TO)
         assert relation is None
@@ -749,8 +740,6 @@ class TestMemoryRelationships:
         """unlink_memories removes specific relationship type."""
         mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
         mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
-
-        from memory_mcp.storage import RelationType
 
         storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
         storage.link_memories(mid1, mid2, RelationType.SUPERSEDES)
@@ -768,8 +757,6 @@ class TestMemoryRelationships:
         mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
         mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
 
-        from memory_mcp.storage import RelationType
-
         storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
         storage.link_memories(mid1, mid2, RelationType.SUPERSEDES)
 
@@ -784,8 +771,6 @@ class TestMemoryRelationships:
         mid1, _ = storage.store_memory("Source memory", MemoryType.PROJECT)
         mid2, _ = storage.store_memory("Target A", MemoryType.PROJECT)
         mid3, _ = storage.store_memory("Target B", MemoryType.PROJECT)
-
-        from memory_mcp.storage import RelationType
 
         storage.link_memories(mid1, mid2, RelationType.DEPENDS_ON)
         storage.link_memories(mid1, mid3, RelationType.RELATES_TO)
@@ -803,8 +788,6 @@ class TestMemoryRelationships:
         mid2, _ = storage.store_memory("Source A", MemoryType.PROJECT)
         mid3, _ = storage.store_memory("Source B", MemoryType.PROJECT)
 
-        from memory_mcp.storage import RelationType
-
         storage.link_memories(mid2, mid1, RelationType.RELATES_TO)
         storage.link_memories(mid3, mid1, RelationType.ELABORATES)
 
@@ -820,8 +803,6 @@ class TestMemoryRelationships:
         mid1, _ = storage.store_memory("Center memory", MemoryType.PROJECT)
         mid2, _ = storage.store_memory("Outgoing target", MemoryType.PROJECT)
         mid3, _ = storage.store_memory("Incoming source", MemoryType.PROJECT)
-
-        from memory_mcp.storage import RelationType
 
         storage.link_memories(mid1, mid2, RelationType.DEPENDS_ON)
         storage.link_memories(mid3, mid1, RelationType.ELABORATES)
@@ -839,8 +820,6 @@ class TestMemoryRelationships:
         mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
         mid3, _ = storage.store_memory("Memory C", MemoryType.PROJECT)
 
-        from memory_mcp.storage import RelationType
-
         storage.link_memories(mid1, mid2, RelationType.DEPENDS_ON)
         storage.link_memories(mid1, mid3, RelationType.RELATES_TO)
 
@@ -852,8 +831,6 @@ class TestMemoryRelationships:
         """get_relationship returns specific relationships between two memories."""
         mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
         mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
-
-        from memory_mcp.storage import RelationType
 
         storage.link_memories(mid1, mid2, RelationType.SUPERSEDES)
         storage.link_memories(mid1, mid2, RelationType.REFINES)
@@ -873,8 +850,6 @@ class TestMemoryRelationships:
         mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
         mid3, _ = storage.store_memory("Memory C", MemoryType.PROJECT)
 
-        from memory_mcp.storage import RelationType
-
         storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
         storage.link_memories(mid1, mid3, RelationType.RELATES_TO)
         storage.link_memories(mid2, mid3, RelationType.DEPENDS_ON)
@@ -889,8 +864,6 @@ class TestMemoryRelationships:
         """Deleting a memory removes its relationships."""
         mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
         mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
-
-        from memory_mcp.storage import RelationType
 
         storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
 
@@ -914,6 +887,185 @@ class TestMemoryRelationships:
         """Schema version should be 6 after migration."""
         version = storage.get_schema_version()
         assert version == 6
+
+
+# ========== Contradiction Detection Tests ==========
+
+
+class TestContradictionDetection:
+    """Tests for contradiction detection and resolution."""
+
+    @pytest.fixture
+    def storage(self, tmp_path):
+        """Create a storage instance with temp database."""
+        settings = Settings(db_path=tmp_path / "test.db")
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    def test_find_contradictions_returns_similar_memories(self, storage):
+        """find_contradictions returns semantically similar memories."""
+        # Store memories about the same topic with different info
+        mid1, _ = storage.store_memory(
+            "The project uses PostgreSQL 14 for the database.",
+            MemoryType.PROJECT,
+        )
+        mid2, _ = storage.store_memory(
+            "The project uses MySQL 8 for the database.",
+            MemoryType.PROJECT,
+        )
+        # Unrelated memory
+        storage.store_memory(
+            "We use pytest for testing.",
+            MemoryType.PROJECT,
+        )
+
+        contradictions = storage.find_contradictions(mid1, similarity_threshold=0.5)
+
+        # Should find the MySQL memory as potential contradiction
+        assert len(contradictions) >= 1
+        memory_ids = {c.memory_b.id for c in contradictions}
+        assert mid2 in memory_ids
+
+    def test_find_contradictions_respects_threshold(self, storage):
+        """Higher threshold returns fewer results."""
+        mid1, _ = storage.store_memory(
+            "The auth system uses JWT tokens.",
+            MemoryType.PROJECT,
+        )
+        storage.store_memory(
+            "Authentication uses session cookies.",
+            MemoryType.PROJECT,
+        )
+
+        # With very high threshold, may not find anything
+        high_threshold = storage.find_contradictions(mid1, similarity_threshold=0.99)
+        low_threshold = storage.find_contradictions(mid1, similarity_threshold=0.3)
+
+        assert len(low_threshold) >= len(high_threshold)
+
+    def test_find_contradictions_marks_existing_links(self, storage):
+        """Already-linked contradictions are flagged."""
+        mid1, _ = storage.store_memory(
+            "Deploy to production on Fridays.",
+            MemoryType.PROJECT,
+        )
+        mid2, _ = storage.store_memory(
+            "Never deploy to production on Fridays.",
+            MemoryType.PROJECT,
+        )
+
+        # Mark as contradiction
+        storage.mark_contradiction(mid1, mid2)
+
+        contradictions = storage.find_contradictions(mid1, similarity_threshold=0.3)
+
+        # The mid2 contradiction should be marked as already_linked
+        for c in contradictions:
+            if c.memory_b.id == mid2:
+                assert c.already_linked is True
+                break
+
+    def test_mark_contradiction_creates_relationship(self, storage):
+        """mark_contradiction creates a CONTRADICTS relationship."""
+        mid1, _ = storage.store_memory("Use tabs for indentation.", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Use spaces for indentation.", MemoryType.PROJECT)
+
+        relation = storage.mark_contradiction(mid1, mid2)
+
+        assert relation is not None
+        assert relation.relation_type == RelationType.CONTRADICTS
+        assert relation.from_memory_id == mid1
+        assert relation.to_memory_id == mid2
+
+    def test_get_all_contradictions(self, storage):
+        """get_all_contradictions returns marked contradictions."""
+        mid1, _ = storage.store_memory("API uses REST.", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("API uses GraphQL.", MemoryType.PROJECT)
+        mid3, _ = storage.store_memory("Use camelCase.", MemoryType.PROJECT)
+        mid4, _ = storage.store_memory("Use snake_case.", MemoryType.PROJECT)
+
+        storage.mark_contradiction(mid1, mid2)
+        storage.mark_contradiction(mid3, mid4)
+
+        contradictions = storage.get_all_contradictions()
+
+        assert len(contradictions) == 2
+        memory_pairs = {(m1.id, m2.id) for m1, m2, _ in contradictions}
+        assert (mid1, mid2) in memory_pairs
+        assert (mid3, mid4) in memory_pairs
+
+    def test_resolve_contradiction_supersedes(self, storage):
+        """resolve_contradiction with supersedes creates SUPERSEDES relationship."""
+        mid1, _ = storage.store_memory("v1: Use MongoDB.", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("v2: Use PostgreSQL.", MemoryType.PROJECT)
+
+        storage.mark_contradiction(mid1, mid2)
+
+        # Resolve: mid2 (PostgreSQL) supersedes mid1 (MongoDB)
+        result = storage.resolve_contradiction(mid1, mid2, keep_id=mid2, resolution="supersedes")
+
+        assert result is True
+
+        # Contradiction should be removed
+        contradictions = storage.get_all_contradictions()
+        assert len(contradictions) == 0
+
+        # SUPERSEDES relationship should exist
+        related = storage.get_related(mid2, RelationType.SUPERSEDES, direction="outgoing")
+        assert len(related) == 1
+        assert related[0][0].id == mid1
+
+    def test_resolve_contradiction_delete(self, storage):
+        """resolve_contradiction with delete removes the discarded memory."""
+        mid1, _ = storage.store_memory("Old decision.", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("New decision.", MemoryType.PROJECT)
+
+        storage.mark_contradiction(mid1, mid2)
+        result = storage.resolve_contradiction(mid1, mid2, keep_id=mid2, resolution="delete")
+
+        assert result is True
+
+        # mid1 should be deleted
+        assert storage.get_memory(mid1) is None
+        # mid2 should still exist
+        assert storage.get_memory(mid2) is not None
+
+    def test_resolve_contradiction_weaken(self, storage):
+        """resolve_contradiction with weaken reduces trust in discarded memory."""
+        mid1, _ = storage.store_memory("Less trusted info.", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("More trusted info.", MemoryType.PROJECT)
+
+        # Get initial trust
+        m1_before = storage.get_memory(mid1)
+        initial_trust = m1_before.trust_score
+
+        storage.mark_contradiction(mid1, mid2)
+        result = storage.resolve_contradiction(mid1, mid2, keep_id=mid2, resolution="weaken")
+
+        assert result is True
+
+        # mid1's trust should be reduced
+        m1_after = storage.get_memory(mid1)
+        assert m1_after.trust_score < initial_trust
+
+    def test_resolve_contradiction_invalid_keep_id(self, storage):
+        """resolve_contradiction fails if keep_id is not one of the memories."""
+        mid1, _ = storage.store_memory("Memory 1.", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory 2.", MemoryType.PROJECT)
+        mid3, _ = storage.store_memory("Memory 3.", MemoryType.PROJECT)
+
+        storage.mark_contradiction(mid1, mid2)
+
+        # Try to keep mid3 which is not in the contradiction
+        result = storage.resolve_contradiction(mid1, mid2, keep_id=mid3)
+
+        assert result is False
+
+    def test_contradiction_resolved_trust_reason_exists(self):
+        """CONTRADICTION_RESOLVED is a valid trust reason."""
+        assert TrustReason.CONTRADICTION_RESOLVED.value == "contradiction_resolved"
+        assert TrustReason.CONTRADICTION_RESOLVED in TRUST_REASON_DEFAULTS
 
 
 # ========== Session (Conversation Provenance) Tests ==========
