@@ -59,6 +59,8 @@ class RecallResponse(BaseModel):
     guidance: str
     # Scoring explanation
     ranking_factors: str
+    # Promotion feedback
+    promotion_suggestions: list[dict] | None = None
 
 
 class StatsResponse(BaseModel):
@@ -79,6 +81,16 @@ class HotCacheMetricsResponse(BaseModel):
     promotions: int
 
 
+class HotCacheEffectivenessResponse(BaseModel):
+    """Effectiveness metrics showing hot cache value."""
+
+    total_accesses: int  # Sum of access_count for hot items
+    estimated_tool_calls_saved: int  # Rough estimate based on hits
+    hit_rate_percent: float  # hits / (hits + misses) * 100
+    most_accessed_id: int | None  # Most frequently used hot item
+    least_accessed_id: int | None  # Candidate for demotion
+
+
 class HotCacheResponse(BaseModel):
     """Response for hot cache status."""
 
@@ -88,6 +100,7 @@ class HotCacheResponse(BaseModel):
     pinned_count: int
     avg_hot_score: float
     metrics: HotCacheMetricsResponse
+    effectiveness: HotCacheEffectivenessResponse
 
 
 def memory_to_response(m: Memory) -> MemoryResponse:
@@ -152,6 +165,38 @@ def build_ranking_factors(mode: RecallMode | None, prefix: str = "") -> str:
         f"Ranked by: similarity ({sim_w}%) + recency ({rec_w}%) + access ({acc_w}%)"
     )
     return f"{prefix} | {base}" if prefix else base
+
+
+def get_promotion_suggestions(memories: list[Memory], max_suggestions: int = 2) -> list[dict]:
+    """Generate promotion suggestions for frequently-accessed cold memories.
+
+    Suggests promoting memories that:
+    - Are NOT already in hot cache
+    - Have high access count (>= promotion_threshold)
+    - Were useful in this recall (high similarity)
+
+    Returns list of dicts with memory_id, access_count, and reason.
+    """
+    suggestions = []
+    threshold = settings.promotion_threshold
+
+    for m in memories:
+        if m.is_hot:
+            continue  # Already hot, skip
+
+        if m.access_count >= threshold:
+            suggestions.append(
+                {
+                    "memory_id": m.id,
+                    "access_count": m.access_count,
+                    "reason": f"Accessed {m.access_count}x - consider promoting to hot cache",
+                }
+            )
+
+        if len(suggestions) >= max_suggestions:
+            break
+
+    return suggestions
 
 
 @mcp.tool
@@ -292,6 +337,9 @@ def recall(
         memory_types=memory_types,
     )
 
+    # Generate promotion suggestions for frequently-accessed cold memories
+    suggestions = get_promotion_suggestions(result.memories) if result.memories else None
+
     return RecallResponse(
         memories=[memory_to_response(m) for m in result.memories],
         confidence=result.confidence,
@@ -299,6 +347,7 @@ def recall(
         mode=result.mode.value if result.mode else "balanced",
         guidance=result.guidance or "",
         ranking_factors=build_ranking_factors(result.mode),
+        promotion_suggestions=suggestions if suggestions else None,
     )
 
 
@@ -335,6 +384,9 @@ def recall_with_fallback(
         min_results=min_results,
     )
 
+    # Generate promotion suggestions for frequently-accessed cold memories
+    suggestions = get_promotion_suggestions(result.memories) if result.memories else None
+
     return RecallResponse(
         memories=[memory_to_response(m) for m in result.memories],
         confidence=result.confidence,
@@ -342,6 +394,7 @@ def recall_with_fallback(
         mode=result.mode.value if result.mode else "balanced",
         guidance=result.guidance or "",
         ranking_factors=build_ranking_factors(result.mode, prefix="Fallback search"),
+        promotion_suggestions=suggestions if suggestions else None,
     )
 
 
@@ -401,11 +454,23 @@ def hot_cache_status() -> HotCacheResponse:
     - metrics.misses: Times hot cache resource was empty
     - metrics.evictions: Items removed to make space for new ones
     - metrics.promotions: Items added to hot cache
+    - effectiveness: Value metrics (hit rate, tool calls saved, most/least used)
     - avg_hot_score: Average hot score of items (for LRU ranking)
     """
     stats = storage.get_hot_cache_stats()
     hot_memories = storage.get_hot_memories()
     metrics = storage.get_hot_cache_metrics()
+
+    # Compute effectiveness metrics
+    total_accesses = sum(m.access_count for m in hot_memories)
+    total_reads = metrics.hits + metrics.misses
+    hit_rate = (metrics.hits / total_reads * 100) if total_reads > 0 else 0.0
+
+    # Most and least accessed items (for feedback)
+    most_accessed = max(hot_memories, key=lambda m: m.access_count) if hot_memories else None
+    # Least accessed non-pinned item (candidate for demotion)
+    unpinned = [m for m in hot_memories if not m.is_pinned]
+    least_accessed = min(unpinned, key=lambda m: m.access_count) if unpinned else None
 
     return HotCacheResponse(
         items=[memory_to_response(m) for m in hot_memories],
@@ -418,6 +483,13 @@ def hot_cache_status() -> HotCacheResponse:
             misses=metrics.misses,
             evictions=metrics.evictions,
             promotions=metrics.promotions,
+        ),
+        effectiveness=HotCacheEffectivenessResponse(
+            total_accesses=total_accesses,
+            estimated_tool_calls_saved=metrics.hits,  # Each hit = 1 recall tool call saved
+            hit_rate_percent=round(hit_rate, 1),
+            most_accessed_id=most_accessed.id if most_accessed else None,
+            least_accessed_id=least_accessed.id if least_accessed else None,
         ),
     )
 
