@@ -24,12 +24,8 @@ class Settings(BaseSettings):
 
     # Hot cache
     hot_cache_max_items: int = Field(default=20, description="Maximum items in hot cache")
-    promotion_threshold: int = Field(
-        default=3, description="Access count to promote to hot cache"
-    )
-    demotion_days: int = Field(
-        default=14, description="Days without access before demotion"
-    )
+    promotion_threshold: int = Field(default=3, description="Access count to promote to hot cache")
+    demotion_days: int = Field(default=14, description="Days without access before demotion")
 
     # Hot cache scoring weights (for LRU eviction)
     hot_score_access_weight: float = Field(
@@ -73,9 +69,7 @@ class Settings(BaseSettings):
     trust_score_manual: float = Field(
         default=1.0, description="Trust score for manually added memories"
     )
-    trust_score_mined: float = Field(
-        default=0.7, description="Trust score for mined memories"
-    )
+    trust_score_mined: float = Field(default=0.7, description="Trust score for mined memories")
     trust_decay_halflife_days: float = Field(
         default=90.0, description="Half-life in days for trust decay"
     )
@@ -89,6 +83,37 @@ class Settings(BaseSettings):
     )
     max_recall_limit: int = Field(default=100, description="Maximum results per recall")
     max_tags: int = Field(default=20, description="Maximum tags per memory")
+
+    # Recall mode presets
+    # Precision mode: high threshold, few results, prioritize similarity
+    precision_threshold: float = Field(
+        default=0.8, description="Threshold for precision recall mode"
+    )
+    precision_limit: int = Field(default=3, description="Limit for precision recall mode")
+    precision_similarity_weight: float = Field(
+        default=0.85, description="Similarity weight for precision mode"
+    )
+    precision_recency_weight: float = Field(
+        default=0.1, description="Recency weight for precision mode"
+    )
+    precision_access_weight: float = Field(
+        default=0.05, description="Access weight for precision mode"
+    )
+
+    # Exploratory mode: low threshold, more results, balance factors
+    exploratory_threshold: float = Field(
+        default=0.5, description="Threshold for exploratory recall mode"
+    )
+    exploratory_limit: int = Field(default=10, description="Limit for exploratory recall mode")
+    exploratory_similarity_weight: float = Field(
+        default=0.5, description="Similarity weight for exploratory mode"
+    )
+    exploratory_recency_weight: float = Field(
+        default=0.3, description="Recency weight for exploratory mode"
+    )
+    exploratory_access_weight: float = Field(
+        default=0.2, description="Access weight for exploratory mode"
+    )
 
     model_config = {"env_prefix": "MEMORY_MCP_"}
 

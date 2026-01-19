@@ -43,6 +43,25 @@ class PromotionSource(str, Enum):
     MINED_APPROVED = "mined_approved"  # Approved from mining candidates
 
 
+class RecallMode(str, Enum):
+    """Recall mode presets with different threshold/weight configurations."""
+
+    PRECISION = "precision"  # High threshold, few results, prioritize similarity
+    BALANCED = "balanced"  # Default balanced mode
+    EXPLORATORY = "exploratory"  # Low threshold, more results, diverse factors
+
+
+@dataclass
+class RecallModeConfig:
+    """Configuration for a recall mode preset."""
+
+    threshold: float
+    limit: int
+    similarity_weight: float
+    recency_weight: float
+    access_weight: float
+
+
 @dataclass
 class Memory:
     """A stored memory."""
@@ -92,6 +111,8 @@ class RecallResult:
     memories: list[Memory]
     confidence: str  # "high", "medium", "low"
     gated_count: int  # How many results filtered by threshold
+    mode: RecallMode | None = None  # Mode used for this recall
+    guidance: str | None = None  # Hallucination prevention guidance
 
 
 # Current schema version - increment when making breaking changes
@@ -152,6 +173,7 @@ CREATE INDEX IF NOT EXISTS idx_output_log_timestamp ON output_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_mined_patterns_hash ON mined_patterns(pattern_hash);
 """
 
+
 def get_vector_schema(dim: int) -> str:
     """Generate vector schema with correct dimension."""
     return f"""
@@ -163,11 +185,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_vectors USING vec0(
 
 class SchemaVersionError(Exception):
     """Raised when database schema is incompatible."""
+
     pass
 
 
 class EmbeddingDimensionError(Exception):
     """Raised when embedding dimension doesn't match database."""
+
     pass
 
 
@@ -338,9 +362,7 @@ class Storage:
             # Check if dimension in schema matches
             if f"FLOAT[{expected_dim}]" not in schema_sql.upper():
                 # Check if there are any existing vectors
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM memory_vectors"
-                ).fetchone()[0]
+                count = conn.execute("SELECT COUNT(*) FROM memory_vectors").fetchone()[0]
 
                 if count > 0:
                     raise EmbeddingDimensionError(
@@ -495,9 +517,7 @@ class Storage:
             else:
                 # Insert new memory with trust and provenance
                 embedding = self._embedding_engine.embed(content)
-                extracted_at = (
-                    datetime.now().isoformat() if source == MemorySource.MINED else None
-                )
+                extracted_at = datetime.now().isoformat() if source == MemorySource.MINED else None
                 cursor = conn.execute(
                     """
                     INSERT INTO memories (
@@ -542,9 +562,7 @@ class Storage:
 
                 return memory_id, True
 
-    def _compute_hot_score(
-        self, access_count: int, last_accessed_at: datetime | None
-    ) -> float:
+    def _compute_hot_score(self, access_count: int, last_accessed_at: datetime | None) -> float:
         """Compute hot cache score for LRU ranking.
 
         Score = (access_count * access_weight) + (recency_boost * recency_weight)
@@ -625,9 +643,7 @@ class Storage:
     def get_memory(self, memory_id: int) -> Memory | None:
         """Get a memory by ID."""
         with self._connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM memories WHERE id = ?", (memory_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
             if not row:
                 return None
             return self._row_to_memory(row, conn)
@@ -640,7 +656,7 @@ class Storage:
             ).fetchone()
             if not row:
                 return None
-            # Re-fetch with full data using get_memory (which acquires lock again, RLock allows this)
+            # Re-fetch with full data using get_memory (RLock allows nested calls)
             return self.get_memory(row["id"])
 
     def delete_memory(self, memory_id: int) -> bool:
@@ -667,6 +683,33 @@ class Storage:
             )
 
     # ========== Vector Search ==========
+
+    def get_recall_mode_config(self, mode: RecallMode) -> RecallModeConfig:
+        """Get configuration for a recall mode preset."""
+        if mode == RecallMode.PRECISION:
+            return RecallModeConfig(
+                threshold=self.settings.precision_threshold,
+                limit=self.settings.precision_limit,
+                similarity_weight=self.settings.precision_similarity_weight,
+                recency_weight=self.settings.precision_recency_weight,
+                access_weight=self.settings.precision_access_weight,
+            )
+        elif mode == RecallMode.EXPLORATORY:
+            return RecallModeConfig(
+                threshold=self.settings.exploratory_threshold,
+                limit=self.settings.exploratory_limit,
+                similarity_weight=self.settings.exploratory_similarity_weight,
+                recency_weight=self.settings.exploratory_recency_weight,
+                access_weight=self.settings.exploratory_access_weight,
+            )
+        else:  # BALANCED (default)
+            return RecallModeConfig(
+                threshold=self.settings.default_confidence_threshold,
+                limit=self.settings.default_recall_limit,
+                similarity_weight=self.settings.recall_similarity_weight,
+                recency_weight=self.settings.recall_recency_weight,
+                access_weight=self.settings.recall_access_weight,
+            )
 
     def _compute_recency_score(self, created_at: datetime) -> float:
         """Compute recency score (0-1) with exponential decay.
@@ -698,21 +741,84 @@ class Storage:
             return 0.0
         return min(1.0, access_count / max_access)
 
+    def _generate_recall_guidance(
+        self,
+        confidence: str,
+        result_count: int,
+        gated_count: int,
+        mode: RecallMode,
+    ) -> str:
+        """Generate hallucination prevention guidance based on recall results.
+
+        Provides explicit instructions on how to use (or not use) the results.
+        """
+        if confidence == "high" and result_count > 0:
+            return (
+                "HIGH CONFIDENCE: Use these memories directly. "
+                "The top result closely matches your query."
+            )
+        elif confidence == "medium" and result_count > 0:
+            return (
+                "MEDIUM CONFIDENCE: Verify these memories apply to current context. "
+                "Results are relevant but may need validation."
+            )
+        elif result_count == 0 and gated_count > 0:
+            # Had results but all were below threshold
+            return (
+                f"NO CONFIDENT MATCH: {gated_count} memories were found but filtered "
+                "due to low similarity. Reason from first principles or try a "
+                "different query. Do NOT guess or hallucinate information."
+            )
+        elif result_count == 0:
+            # No results at all
+            suggestions = []
+            if mode == RecallMode.PRECISION:
+                suggestions.append("try 'exploratory' mode for broader search")
+            suggestions.append("try rephrasing your query")
+            suggestions.append("store relevant information with 'remember' first")
+
+            return (
+                "NO MATCH FOUND: No relevant memories exist for this query. "
+                f"Suggestions: {'; '.join(suggestions)}. "
+                "Do NOT fabricate or guess information."
+            )
+        else:
+            # Low confidence with some results
+            return (
+                "LOW CONFIDENCE: Results have weak similarity to your query. "
+                "Use with caution and verify independently. Consider that the "
+                "information you need may not be stored yet."
+            )
+
     def _compute_composite_score(
         self,
         similarity: float,
         recency_score: float,
         access_score: float,
         trust_score: float = 1.0,
+        weights: RecallModeConfig | None = None,
     ) -> float:
         """Compute weighted composite score for ranking.
 
         Combines semantic similarity with recency, access frequency, and trust.
         Trust weight is optional (default 0) for backwards compatibility.
+
+        Args:
+            similarity: Semantic similarity score (0-1)
+            recency_score: Time-decayed recency score (0-1)
+            access_score: Normalized access count (0-1)
+            trust_score: Trust score with decay (0-1)
+            weights: Optional custom weights from recall mode preset
         """
-        sim_weight = self.settings.recall_similarity_weight
-        rec_weight = self.settings.recall_recency_weight
-        acc_weight = self.settings.recall_access_weight
+        if weights:
+            sim_weight = weights.similarity_weight
+            rec_weight = weights.recency_weight
+            acc_weight = weights.access_weight
+        else:
+            sim_weight = self.settings.recall_similarity_weight
+            rec_weight = self.settings.recall_recency_weight
+            acc_weight = self.settings.recall_access_weight
+
         trust_weight = self.settings.recall_trust_weight
 
         return (
@@ -727,46 +833,84 @@ class Storage:
         query: str,
         limit: int | None = None,
         threshold: float | None = None,
+        mode: RecallMode | None = None,
+        memory_types: list[MemoryType] | None = None,
     ) -> RecallResult:
         """Semantic search with confidence gating and composite ranking.
 
+        Args:
+            query: Search query for semantic similarity
+            limit: Maximum results (overrides mode preset if set)
+            threshold: Minimum similarity (overrides mode preset if set)
+            mode: Recall mode preset (precision, balanced, exploratory)
+            memory_types: Filter to specific memory types
+
         Results are ranked by composite score combining:
-        - Semantic similarity (default 70%)
-        - Recency with exponential decay (default 20%)
-        - Access frequency (default 10%)
-        - Trust score with decay (optional, default 0%)
+        - Semantic similarity (weight varies by mode)
+        - Recency with exponential decay
+        - Access frequency
+        - Trust score with decay (optional)
         """
-        # Use 'is None' to allow explicit 0 values
-        if limit is None:
-            limit = self.settings.default_recall_limit
-        if threshold is None:
-            threshold = self.settings.default_confidence_threshold
+        # Get mode config (or default balanced)
+        mode_config = self.get_recall_mode_config(mode or RecallMode.BALANCED)
+
+        # Allow explicit overrides
+        effective_limit = limit if limit is not None else mode_config.limit
+        effective_threshold = threshold if threshold is not None else mode_config.threshold
 
         query_embedding = self._embedding_engine.embed(query)
 
         with self._connection() as conn:
-            # Vector similarity search - fetch extra for filtering and re-ranking
-            rows = conn.execute(
+            # Build query with optional type filter
+            if memory_types:
+                type_placeholders = ",".join("?" * len(memory_types))
+                type_values = [t.value for t in memory_types]
+                query_sql = f"""
+                    SELECT
+                        m.id,
+                        m.content,
+                        m.content_hash,
+                        m.memory_type,
+                        m.source,
+                        m.is_hot,
+                        m.access_count,
+                        m.last_accessed_at,
+                        m.created_at,
+                        m.trust_score,
+                        vec_distance_cosine(v.embedding, ?) as distance
+                    FROM memory_vectors v
+                    JOIN memories m ON m.id = v.rowid
+                    WHERE m.memory_type IN ({type_placeholders})
+                    ORDER BY distance ASC
+                    LIMIT ?
                 """
-                SELECT
-                    m.id,
-                    m.content,
-                    m.content_hash,
-                    m.memory_type,
-                    m.source,
-                    m.is_hot,
-                    m.access_count,
-                    m.last_accessed_at,
-                    m.created_at,
-                    m.trust_score,
-                    vec_distance_cosine(v.embedding, ?) as distance
-                FROM memory_vectors v
-                JOIN memories m ON m.id = v.rowid
-                ORDER BY distance ASC
-                LIMIT ?
-                """,
-                (query_embedding.tobytes(), limit * 3),  # Fetch more for re-ranking
-            ).fetchall()
+                params = (
+                    query_embedding.tobytes(),
+                    *type_values,
+                    effective_limit * 3,
+                )
+            else:
+                query_sql = """
+                    SELECT
+                        m.id,
+                        m.content,
+                        m.content_hash,
+                        m.memory_type,
+                        m.source,
+                        m.is_hot,
+                        m.access_count,
+                        m.last_accessed_at,
+                        m.created_at,
+                        m.trust_score,
+                        vec_distance_cosine(v.embedding, ?) as distance
+                    FROM memory_vectors v
+                    JOIN memories m ON m.id = v.rowid
+                    ORDER BY distance ASC
+                    LIMIT ?
+                """
+                params = (query_embedding.tobytes(), effective_limit * 3)
+
+            rows = conn.execute(query_sql, params).fetchall()
 
             # Find max access count for normalization
             max_access = max((row["access_count"] for row in rows), default=1)
@@ -778,19 +922,21 @@ class Storage:
             for row in rows:
                 similarity = 1 - row["distance"]  # cosine distance to similarity
 
-                if similarity >= threshold:
+                if similarity >= effective_threshold:
                     created_at = datetime.fromisoformat(row["created_at"])
                     recency_score = self._compute_recency_score(created_at)
-                    access_score = self._compute_access_score(
-                        row["access_count"], max_access
-                    )
+                    access_score = self._compute_access_score(row["access_count"], max_access)
 
                     # Compute trust with time decay
                     base_trust = row["trust_score"] or 1.0
                     trust_decayed = self._compute_trust_decay(base_trust, created_at)
 
                     composite_score = self._compute_composite_score(
-                        similarity, recency_score, access_score, trust_decayed
+                        similarity,
+                        recency_score,
+                        access_score,
+                        trust_decayed,
+                        weights=mode_config,
                     )
 
                     memory = self._row_to_memory(row, conn, similarity=similarity)
@@ -805,7 +951,7 @@ class Storage:
             candidates.sort(key=lambda m: m.composite_score or 0, reverse=True)
 
             # Take top results and update access counts
-            memories = candidates[:limit]
+            memories = candidates[:effective_limit]
             for memory in memories:
                 conn.execute(
                     """
@@ -829,9 +975,16 @@ class Storage:
         else:
             confidence = "medium"
 
+        # Generate hallucination prevention guidance
+        effective_mode = mode or RecallMode.BALANCED
+        guidance = self._generate_recall_guidance(
+            confidence, len(memories), gated_count, effective_mode
+        )
+
         log.debug(
-            "Recall query='{}' returned {} results (confidence={}, gated={})",
+            "Recall query='{}' mode={} returned {} results (confidence={}, gated={})",
             query[:50],
+            effective_mode.value,
             len(memories),
             confidence,
             gated_count,
@@ -841,11 +994,74 @@ class Storage:
             memories=memories,
             confidence=confidence,
             gated_count=gated_count,
+            mode=effective_mode,
+            guidance=guidance,
         )
 
     def _get_memories_by_ids(self, ids: list[int]) -> list[Memory]:
         """Fetch multiple memories by ID, filtering out None results."""
         return [m for mid in ids if (m := self.get_memory(mid)) is not None]
+
+    def recall_with_fallback(
+        self,
+        query: str,
+        fallback_types: list[list[MemoryType]] | None = None,
+        mode: RecallMode | None = None,
+        min_results: int = 1,
+    ) -> RecallResult:
+        """Recall with multi-query fallback through different memory type filters.
+
+        Tries each type filter in sequence until min_results are found or
+        all fallbacks exhausted. Default fallback order:
+        1. patterns only (code snippets)
+        2. project facts
+        3. all types (no filter)
+
+        Args:
+            query: Search query
+            fallback_types: List of type filters to try in order
+            mode: Recall mode preset
+            min_results: Minimum results needed before stopping fallback
+
+        Returns:
+            RecallResult from first successful search, or last attempt
+        """
+        if fallback_types is None:
+            # Default fallback: patterns -> project -> all
+            fallback_types = [
+                [MemoryType.PATTERN],
+                [MemoryType.PROJECT],
+                None,  # All types
+            ]
+
+        best_result: RecallResult | None = None
+
+        for type_filter in fallback_types:
+            result = self.recall(
+                query=query,
+                mode=mode,
+                memory_types=type_filter,
+            )
+
+            # Track best result (most memories found)
+            if best_result is None or len(result.memories) > len(best_result.memories):
+                best_result = result
+
+            # Stop if we have enough high-quality results
+            if len(result.memories) >= min_results and result.confidence != "low":
+                log.debug(
+                    "Fallback succeeded with type_filter={} ({} results)",
+                    [t.value for t in type_filter] if type_filter else "all",
+                    len(result.memories),
+                )
+                return result
+
+        # Return best result found (or empty)
+        log.debug(
+            "Fallback exhausted, returning best result ({} memories)",
+            len(best_result.memories) if best_result else 0,
+        )
+        return best_result or RecallResult(memories=[], confidence="low", gated_count=0)
 
     def recall_by_tag(self, tag: str, limit: int | None = None) -> list[Memory]:
         """Get memories by tag."""
@@ -872,9 +1088,7 @@ class Storage:
         """Get all memories in hot cache, ordered by hot_score descending."""
         memories = []
         with self._connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM memories WHERE is_hot = 1"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM memories WHERE is_hot = 1").fetchall()
             for row in rows:
                 memories.append(self._row_to_memory(row, conn))
 
@@ -936,15 +1150,11 @@ class Storage:
             if existing["is_hot"]:
                 # Already hot, just update pinned status if requested
                 if pin:
-                    conn.execute(
-                        "UPDATE memories SET is_pinned = 1 WHERE id = ?", (memory_id,)
-                    )
+                    conn.execute("UPDATE memories SET is_pinned = 1 WHERE id = ?", (memory_id,))
                 return True
 
             # Check hot cache limit
-            hot_count = conn.execute(
-                "SELECT COUNT(*) FROM memories WHERE is_hot = 1"
-            ).fetchone()[0]
+            hot_count = conn.execute("SELECT COUNT(*) FROM memories WHERE is_hot = 1").fetchone()[0]
 
             if hot_count >= self.settings.hot_cache_max_items:
                 # Find lowest-scoring non-pinned memory to evict
@@ -985,7 +1195,9 @@ class Storage:
         """Remove a memory from hot cache (ignores pinned status)."""
         with self.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE memories SET is_hot = 0, is_pinned = 0, promotion_source = NULL WHERE id = ?",
+                """UPDATE memories
+                   SET is_hot = 0, is_pinned = 0, promotion_source = NULL
+                   WHERE id = ?""",
                 (memory_id,),
             )
             demoted = cursor.rowcount > 0
@@ -1077,9 +1289,7 @@ class Storage:
     def log_output(self, content: str) -> int:
         """Log an output for pattern mining."""
         with self.transaction() as conn:
-            cursor = conn.execute(
-                "INSERT INTO output_log (content) VALUES (?)", (content,)
-            )
+            cursor = conn.execute("INSERT INTO output_log (content) VALUES (?)", (content,))
 
             # Cleanup old logs
             conn.execute(
@@ -1110,9 +1320,7 @@ class Storage:
 
     # ========== Mined Patterns ==========
 
-    def upsert_mined_pattern(
-        self, pattern: str, pattern_type: str
-    ) -> int:
+    def upsert_mined_pattern(self, pattern: str, pattern_type: str) -> int:
         """Insert or update a mined pattern."""
         hash_val = content_hash(pattern)
 
@@ -1168,7 +1376,5 @@ class Storage:
     def delete_mined_pattern(self, pattern_id: int) -> bool:
         """Delete a mined pattern (after promotion or rejection)."""
         with self.transaction() as conn:
-            cursor = conn.execute(
-                "DELETE FROM mined_patterns WHERE id = ?", (pattern_id,)
-            )
+            cursor = conn.execute("DELETE FROM mined_patterns WHERE id = ?", (pattern_id,))
             return cursor.rowcount > 0

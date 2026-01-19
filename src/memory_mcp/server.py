@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from memory_mcp.config import get_settings
 from memory_mcp.logging import get_logger
-from memory_mcp.storage import Memory, MemorySource, MemoryType, PromotionSource, RecallResult, Storage
+from memory_mcp.storage import Memory, MemorySource, MemoryType, RecallMode, Storage
 
 log = get_logger("server")
 
@@ -54,7 +54,8 @@ class RecallResponse(BaseModel):
     memories: list[MemoryResponse]
     confidence: str
     gated_count: int
-    hint: str
+    mode: str
+    guidance: str
     # Scoring explanation
     ranking_factors: str
 
@@ -132,12 +133,13 @@ def remember(
     memory_type: Annotated[
         str,
         Field(
-            description="Type: 'project' (project facts), 'pattern' (code patterns), 'reference' (docs), 'conversation' (discussion facts)"
+            description=(
+                "Type: 'project' (project facts), 'pattern' (code patterns), "
+                "'reference' (docs), 'conversation' (discussion facts)"
+            )
         ),
     ] = "project",
-    tags: Annotated[
-        list[str] | None, Field(description="Tags for categorization")
-    ] = None,
+    tags: Annotated[list[str] | None, Field(description="Tags for categorization")] = None,
 ) -> dict:
     """Store a new memory. Returns the memory ID."""
     log.debug("remember() called: type={} tags={}", memory_type, tags)
@@ -151,9 +153,7 @@ def remember(
     # Validate tags
     tag_list = tags or []
     if len(tag_list) > settings.max_tags:
-        return error_response(
-            f"Too many tags ({len(tag_list)}). Max: {settings.max_tags}"
-        )
+        return error_response(f"Too many tags ({len(tag_list)}). Max: {settings.max_tags}")
 
     mem_type = parse_memory_type(memory_type)
     if mem_type is None:
@@ -176,48 +176,102 @@ def remember(
         )
 
 
+def parse_recall_mode(mode: str | None) -> RecallMode | None:
+    """Parse recall mode string, returning None if invalid."""
+    if mode is None:
+        return None
+    try:
+        return RecallMode(mode)
+    except ValueError:
+        return None
+
+
 @mcp.tool
 def recall(
     query: Annotated[str, Field(description="Search query for semantic similarity")],
-    limit: Annotated[int, Field(description="Maximum results to return (1-100)")] = 5,
+    mode: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Recall mode: 'precision' (high threshold, few results), "
+                "'balanced' (default), 'exploratory' (low threshold, more results)"
+            )
+        ),
+    ] = None,
+    limit: Annotated[int | None, Field(description="Max results (overrides mode default)")] = None,
     threshold: Annotated[
-        float, Field(description="Minimum similarity (0.0-1.0) to include results")
+        float | None, Field(description="Min similarity (overrides mode default)")
+    ] = None,
+    memory_type: Annotated[
+        str | None, Field(description="Filter by type: project, pattern, reference")
     ] = None,
 ) -> RecallResponse:
     """Semantic search with confidence gating and composite ranking.
 
-    Results are ranked by composite score combining:
-    - Semantic similarity (70% weight)
-    - Recency with exponential decay (20% weight)
-    - Access frequency (10% weight)
+    Modes:
+    - 'precision': High threshold (0.8), few results (3), prioritizes similarity
+    - 'balanced': Default settings, good for general use
+    - 'exploratory': Low threshold (0.5), more results (10), diverse ranking
 
-    Returns memories above threshold with confidence level:
-    - 'high': Top result > 0.85 similarity - use confidently
-    - 'medium': Results above threshold - use but verify
-    - 'low': No results passed threshold - reason from scratch
+    Returns memories with confidence level and hallucination-prevention guidance.
     """
-    # Validate and clamp inputs
-    if not limit:
-        limit = settings.default_recall_limit
-    limit = max(1, min(settings.max_recall_limit, limit))
+    # Parse mode
+    recall_mode = parse_recall_mode(mode)
+    if mode is not None and recall_mode is None:
+        valid = [m.value for m in RecallMode]
+        return RecallResponse(
+            memories=[],
+            confidence="low",
+            gated_count=0,
+            mode="error",
+            guidance=f"Invalid mode '{mode}'. Use: {valid}",
+            ranking_factors="N/A",
+        )
 
+    # Parse memory type filter
+    memory_types = None
+    if memory_type:
+        mem_type = parse_memory_type(memory_type)
+        if mem_type is None:
+            return RecallResponse(
+                memories=[],
+                confidence="low",
+                gated_count=0,
+                mode="error",
+                guidance=f"Invalid memory_type. Use: {[t.value for t in MemoryType]}",
+                ranking_factors="N/A",
+            )
+        memory_types = [mem_type]
+
+    # Validate and clamp explicit overrides
+    if limit is not None:
+        limit = max(1, min(settings.max_recall_limit, limit))
     if threshold is not None:
         threshold = max(0.0, min(1.0, threshold))
 
-    log.debug("recall() called: query='{}' limit={} threshold={}", query[:50], limit, threshold)
-    result = storage.recall(query=query, limit=limit, threshold=threshold)
+    log.debug(
+        "recall() called: query='{}' mode={} limit={} threshold={}",
+        query[:50],
+        mode,
+        limit,
+        threshold,
+    )
 
-    hints = {
-        "high": "High confidence match - use this information directly",
-        "medium": "Medium confidence - verify this applies to current context",
-        "low": "No confident matches found - reason from scratch or try different query",
-    }
+    result = storage.recall(
+        query=query,
+        limit=limit,
+        threshold=threshold,
+        mode=recall_mode,
+        memory_types=memory_types,
+    )
 
-    # Build ranking explanation
-    sim_w = int(settings.recall_similarity_weight * 100)
-    rec_w = int(settings.recall_recency_weight * 100)
-    acc_w = int(settings.recall_access_weight * 100)
+    # Build ranking explanation based on effective mode
+    mode_config = storage.get_recall_mode_config(result.mode or RecallMode.BALANCED)
+    sim_w = int(mode_config.similarity_weight * 100)
+    rec_w = int(mode_config.recency_weight * 100)
+    acc_w = int(mode_config.access_weight * 100)
     ranking_factors = (
+        f"Mode: {result.mode.value if result.mode else 'balanced'} | "
         f"Ranked by: similarity ({sim_w}%) + recency ({rec_w}%) + access ({acc_w}%)"
     )
 
@@ -225,7 +279,60 @@ def recall(
         memories=[memory_to_response(m) for m in result.memories],
         confidence=result.confidence,
         gated_count=result.gated_count,
-        hint=hints[result.confidence],
+        mode=result.mode.value if result.mode else "balanced",
+        guidance=result.guidance or "",
+        ranking_factors=ranking_factors,
+    )
+
+
+@mcp.tool
+def recall_with_fallback(
+    query: Annotated[str, Field(description="Search query for semantic similarity")],
+    mode: Annotated[
+        str | None,
+        Field(description="Recall mode: 'precision', 'balanced', 'exploratory'"),
+    ] = None,
+    min_results: Annotated[
+        int, Field(description="Minimum results before trying next fallback")
+    ] = 1,
+) -> RecallResponse:
+    """Recall with automatic fallback through memory types.
+
+    Tries searching in order: patterns -> project facts -> all types.
+    Stops when min_results are found with medium+ confidence.
+
+    Use this when you're unsure which memory type contains the answer.
+    """
+    recall_mode = parse_recall_mode(mode)
+
+    log.debug(
+        "recall_with_fallback() called: query='{}' mode={} min={}",
+        query[:50],
+        mode,
+        min_results,
+    )
+
+    result = storage.recall_with_fallback(
+        query=query,
+        mode=recall_mode,
+        min_results=min_results,
+    )
+
+    mode_config = storage.get_recall_mode_config(result.mode or RecallMode.BALANCED)
+    sim_w = int(mode_config.similarity_weight * 100)
+    rec_w = int(mode_config.recency_weight * 100)
+    acc_w = int(mode_config.access_weight * 100)
+    ranking_factors = (
+        f"Fallback search | Mode: {result.mode.value if result.mode else 'balanced'} | "
+        f"Ranked by: similarity ({sim_w}%) + recency ({rec_w}%) + access ({acc_w}%)"
+    )
+
+    return RecallResponse(
+        memories=[memory_to_response(m) for m in result.memories],
+        confidence=result.confidence,
+        gated_count=result.gated_count,
+        mode=result.mode.value if result.mode else "balanced",
+        guidance=result.guidance or "",
         ranking_factors=ranking_factors,
     )
 
@@ -319,9 +426,7 @@ def pin(
     """
     if storage.pin_memory(memory_id):
         return success_response(f"Memory #{memory_id} pinned (won't be auto-evicted)")
-    return error_response(
-        f"Failed to pin memory #{memory_id} (not in hot cache or not found)"
-    )
+    return error_response(f"Failed to pin memory #{memory_id} (not in hot cache or not found)")
 
 
 @mcp.tool
@@ -484,8 +589,11 @@ def run_mining(
     from memory_mcp.mining import run_mining as _run_mining
 
     result = _run_mining(storage, hours=hours)
-    log.info("Mining complete: {} outputs processed, {} patterns found",
-             result["outputs_processed"], result["patterns_found"])
+    log.info(
+        "Mining complete: {} outputs processed, {} patterns found",
+        result["outputs_processed"],
+        result["patterns_found"],
+    )
     return {"success": True, **result}
 
 

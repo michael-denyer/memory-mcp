@@ -12,12 +12,11 @@ from loguru import logger
 logger.remove()
 
 # Add stderr handler with sensible format for MCP
-logger.add(
-    sys.stderr,
-    format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
-    level="INFO",
-    colorize=True,
+LOG_FORMAT = (
+    "<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | "
+    "<cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>"
 )
+logger.add(sys.stderr, format=LOG_FORMAT, level="INFO", colorize=True)
 
 
 def get_logger(name: str) -> "logger":

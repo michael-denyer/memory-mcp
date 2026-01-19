@@ -212,9 +212,7 @@ class CachedEmbeddingProvider(BaseEmbeddingProvider):
         # Batch compute uncached
         if uncached_texts:
             new_embeddings = self._provider.embed_batch(uncached_texts)
-            for idx, text, embedding in zip(
-                uncached_indices, uncached_texts, new_embeddings
-            ):
+            for idx, text, embedding in zip(uncached_indices, uncached_texts, new_embeddings):
                 key = self._cache_key(text)
                 self._evict_if_needed()
                 self._cache[key] = embedding

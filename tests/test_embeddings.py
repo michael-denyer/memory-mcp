@@ -214,9 +214,7 @@ class TestSentenceTransformerProvider:
     @pytest.fixture
     def provider(self):
         """Create a real SentenceTransformer provider."""
-        return SentenceTransformerProvider(
-            "sentence-transformers/all-MiniLM-L6-v2", 384
-        )
+        return SentenceTransformerProvider("sentence-transformers/all-MiniLM-L6-v2", 384)
 
     def test_lazy_loading(self, provider):
         """Model should not load until first use."""

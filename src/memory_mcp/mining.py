@@ -19,8 +19,18 @@ class PatternType(str, Enum):
 
 # Common CLI tool prefixes for command extraction
 COMMAND_PREFIXES = (
-    "npm", "yarn", "pnpm", "uv", "pip", "python",
-    "node", "git", "docker", "make", "cargo", "go",
+    "npm",
+    "yarn",
+    "pnpm",
+    "uv",
+    "pip",
+    "python",
+    "node",
+    "git",
+    "docker",
+    "make",
+    "cargo",
+    "go",
 )
 
 
@@ -141,11 +151,7 @@ PATTERN_EXTRACTORS = [
 
 def extract_patterns(text: str) -> list[ExtractedPattern]:
     """Extract all patterns from text."""
-    all_patterns = [
-        pattern
-        for extractor in PATTERN_EXTRACTORS
-        for pattern in extractor(text)
-    ]
+    all_patterns = [pattern for extractor in PATTERN_EXTRACTORS for pattern in extractor(text)]
 
     # Deduplicate while preserving order
     seen: set[str] = set()

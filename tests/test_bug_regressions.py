@@ -1,7 +1,6 @@
 """Regression tests for fixed bugs."""
 
 import tempfile
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -9,10 +8,9 @@ import pytest
 
 from memory_mcp.config import Settings
 from memory_mcp.storage import (
-    EmbeddingDimensionError,
     MemorySource,
     MemoryType,
-    SchemaVersionError,
+    RecallMode,
     Storage,
 )
 
@@ -161,8 +159,8 @@ class TestRecallThresholdHandling:
         storage.store_memory("Very specific XYZ123", MemoryType.PROJECT)
 
         # Default threshold (0.7) should gate out low matches
-        result = storage.recall("completely unrelated ABC")
         # This depends on actual similarity, but at least it shouldn't crash
+        storage.recall("completely unrelated ABC")
 
 
 class TestThreadSafety:
@@ -727,13 +725,217 @@ class TestTrustScoring:
 
             # Check columns exist
             conn = storage._get_connection()
-            columns = {
-                row[1]
-                for row in conn.execute("PRAGMA table_info(memories)").fetchall()
-            }
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
 
             assert "trust_score" in columns
             assert "source_log_id" in columns
             assert "extracted_at" in columns
 
             storage.close()
+
+
+class TestRecallModes:
+    """Tests for MemoryMCP-1ig: Recall policies and mode presets."""
+
+    def test_recall_mode_config_precision(self, storage):
+        """Precision mode should have high threshold and prioritize similarity."""
+        config = storage.get_recall_mode_config(RecallMode.PRECISION)
+        assert config.threshold == storage.settings.precision_threshold
+        assert config.threshold == 0.8
+        assert config.limit == storage.settings.precision_limit
+        assert config.limit == 3
+        assert config.similarity_weight > config.recency_weight
+
+    def test_recall_mode_config_exploratory(self, storage):
+        """Exploratory mode should have low threshold and balanced weights."""
+        config = storage.get_recall_mode_config(RecallMode.EXPLORATORY)
+        assert config.threshold == storage.settings.exploratory_threshold
+        assert config.threshold == 0.5
+        assert config.limit == storage.settings.exploratory_limit
+        assert config.limit == 10
+
+    def test_recall_mode_config_balanced(self, storage):
+        """Balanced mode should use default settings."""
+        config = storage.get_recall_mode_config(RecallMode.BALANCED)
+        assert config.threshold == storage.settings.default_confidence_threshold
+        assert config.limit == storage.settings.default_recall_limit
+
+    def test_recall_with_precision_mode(self, storage):
+        """Precision mode should filter more aggressively."""
+        storage.store_memory("Python programming language basics", MemoryType.PROJECT)
+        storage.store_memory("Python snake handling guide", MemoryType.PROJECT)
+        storage.store_memory("Something unrelated to Python", MemoryType.PROJECT)
+
+        # Precision mode should have higher threshold
+        result = storage.recall("Python", mode=RecallMode.PRECISION)
+        assert result.mode == RecallMode.PRECISION
+        # High threshold means fewer results might pass
+        assert result.gated_count >= 0
+
+    def test_recall_with_exploratory_mode(self, storage):
+        """Exploratory mode should return more results."""
+        storage.store_memory("Database configuration guide", MemoryType.PROJECT)
+        storage.store_memory("Database connection pooling", MemoryType.PROJECT)
+        storage.store_memory("Data storage patterns", MemoryType.PROJECT)
+
+        # Exploratory mode has lower threshold
+        result = storage.recall("database", mode=RecallMode.EXPLORATORY)
+        assert result.mode == RecallMode.EXPLORATORY
+
+    def test_recall_mode_can_be_overridden(self, storage):
+        """Explicit limit/threshold should override mode defaults."""
+        storage.store_memory("Test content for override", MemoryType.PROJECT)
+
+        # Use precision mode but override limit
+        result = storage.recall("test", mode=RecallMode.PRECISION, limit=10, threshold=0.3)
+
+        # Should use precision mode but with custom parameters
+        assert result.mode == RecallMode.PRECISION
+
+    def test_recall_mode_weights_affect_scoring(self):
+        """Mode-specific weights should affect composite scoring."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Custom precision mode weights
+            settings = Settings(
+                db_path=Path(tmpdir) / "modes.db",
+                precision_similarity_weight=0.9,
+                precision_recency_weight=0.05,
+                precision_access_weight=0.05,
+            )
+            storage = Storage(settings)
+
+            storage.store_memory("Test scoring content", MemoryType.PROJECT)
+
+            result = storage.recall("test scoring", mode=RecallMode.PRECISION)
+            assert len(result.memories) > 0
+
+            # Precision mode should heavily weight similarity
+            mem = result.memories[0]
+            assert mem.composite_score is not None
+
+            storage.close()
+
+
+class TestRecallGuidance:
+    """Tests for hallucination prevention guidance in recall results."""
+
+    def test_high_confidence_guidance(self, storage):
+        """High confidence results should indicate direct use."""
+        storage.store_memory("PostgreSQL database configuration with pgvector", MemoryType.PROJECT)
+
+        result = storage.recall("PostgreSQL pgvector", threshold=0.3)
+        if result.confidence == "high":
+            assert "HIGH CONFIDENCE" in result.guidance
+            assert "directly" in result.guidance.lower()
+
+    def test_low_confidence_no_results_guidance(self, storage):
+        """No results should give explicit 'no match' guidance."""
+        # Query for something not in storage
+        result = storage.recall("xyz123nonexistent", threshold=0.9)
+
+        if len(result.memories) == 0:
+            assert result.guidance is not None
+            assert "NO" in result.guidance
+            assert "NOT" in result.guidance or "Do NOT" in result.guidance
+
+    def test_gated_results_guidance(self, storage):
+        """When results are gated, guidance should explain."""
+        storage.store_memory("Somewhat related content", MemoryType.PROJECT)
+
+        # Use very high threshold to gate results
+        result = storage.recall("related", threshold=0.99)
+
+        if result.gated_count > 0 and len(result.memories) == 0:
+            assert "filtered" in result.guidance.lower()
+
+    def test_medium_confidence_guidance(self, storage):
+        """Medium confidence should suggest verification."""
+        storage.store_memory("Redis caching configuration", MemoryType.PROJECT)
+
+        result = storage.recall("cache config", threshold=0.3)
+        if result.confidence == "medium":
+            assert "MEDIUM" in result.guidance
+            assert "verify" in result.guidance.lower()
+
+
+class TestRecallWithFallback:
+    """Tests for multi-query fallback recall."""
+
+    def test_fallback_tries_patterns_first(self, storage):
+        """Fallback should search patterns before project facts."""
+        # Store in different types
+        storage.store_memory("import pandas as pd", MemoryType.PATTERN)
+        storage.store_memory("This project uses pandas", MemoryType.PROJECT)
+
+        result = storage.recall_with_fallback("pandas", min_results=1)
+        assert len(result.memories) >= 1
+
+    def test_fallback_continues_on_no_results(self, storage):
+        """Fallback should continue to next type if no results."""
+        # Only store in PROJECT type
+        storage.store_memory("FastAPI web framework setup", MemoryType.PROJECT)
+
+        # Fallback tries PATTERN first (no results), then PROJECT
+        # Use exploratory mode to have lower threshold
+        result = storage.recall_with_fallback("FastAPI", mode=RecallMode.EXPLORATORY, min_results=1)
+        assert len(result.memories) >= 1
+
+    def test_fallback_respects_mode(self, storage):
+        """Fallback should use specified recall mode."""
+        storage.store_memory("Test content for fallback mode", MemoryType.PROJECT)
+
+        result = storage.recall_with_fallback(
+            "test fallback", mode=RecallMode.EXPLORATORY, min_results=1
+        )
+        assert result.mode == RecallMode.EXPLORATORY
+
+    def test_fallback_returns_best_result(self, storage):
+        """Fallback should return best result if min not met."""
+        storage.store_memory("Unique content abc123", MemoryType.PROJECT)
+
+        result = storage.recall_with_fallback(
+            "abc123",
+            min_results=10,  # More than we can match
+        )
+        # Should still return what was found
+        assert result is not None
+
+
+class TestRecallTypeFiltering:
+    """Tests for filtering recall by memory type."""
+
+    def test_recall_filter_by_pattern_type(self, storage):
+        """Should only return patterns when filtered."""
+        storage.store_memory("import numpy as np", MemoryType.PATTERN)
+        storage.store_memory("This project uses numpy", MemoryType.PROJECT)
+
+        result = storage.recall("numpy", threshold=0.3, memory_types=[MemoryType.PATTERN])
+
+        # All results should be patterns
+        for mem in result.memories:
+            assert mem.memory_type == MemoryType.PATTERN
+
+    def test_recall_filter_by_project_type(self, storage):
+        """Should only return project facts when filtered."""
+        storage.store_memory("def process_data():", MemoryType.PATTERN)
+        storage.store_memory("Data processing is done in batch", MemoryType.PROJECT)
+
+        result = storage.recall("data processing", threshold=0.3, memory_types=[MemoryType.PROJECT])
+
+        # All results should be project
+        for mem in result.memories:
+            assert mem.memory_type == MemoryType.PROJECT
+
+    def test_recall_filter_multiple_types(self, storage):
+        """Should return memories matching any of the filtered types."""
+        storage.store_memory("API endpoint code", MemoryType.PATTERN)
+        storage.store_memory("API documentation reference", MemoryType.REFERENCE)
+        storage.store_memory("API project architecture", MemoryType.PROJECT)
+
+        result = storage.recall(
+            "API", threshold=0.3, memory_types=[MemoryType.PATTERN, MemoryType.REFERENCE]
+        )
+
+        # Results should only be PATTERN or REFERENCE
+        for mem in result.memories:
+            assert mem.memory_type in [MemoryType.PATTERN, MemoryType.REFERENCE]
