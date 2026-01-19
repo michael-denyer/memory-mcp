@@ -5,6 +5,7 @@ Currently implemented: SentenceTransformerProvider (default).
 """
 
 import hashlib
+import re
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import Protocol, runtime_checkable
@@ -81,6 +82,74 @@ class BaseEmbeddingProvider(ABC):
         Since embeddings are normalized, dot product = cosine similarity.
         """
         return float(np.dot(embedding1, embedding2))
+
+
+# ========== Mock Provider (for tests) ==========
+
+
+class MockEmbeddingProvider(BaseEmbeddingProvider):
+    """Fast mock embedding provider for testing.
+
+    Generates deterministic embeddings that preserve word-level similarity.
+    Each word gets a consistent random vector, and text embeddings are
+    the normalized sum of word vectors. This means texts with shared words
+    will have higher cosine similarity.
+
+    No model loading, instant results, reproducible across runs.
+    """
+
+    def __init__(self, dimension: int = 384):
+        self._dimension = dimension
+        self._word_vectors: dict[str, np.ndarray] = {}
+
+    @property
+    def dimension(self) -> int:
+        return self._dimension
+
+    @property
+    def name(self) -> str:
+        return "mock"
+
+    def _get_word_vector(self, word: str) -> np.ndarray:
+        """Get or create a consistent random vector for a word."""
+        word_lower = word.lower()
+        if word_lower not in self._word_vectors:
+            # Use word hash to seed random generator for reproducibility
+            word_hash = hashlib.md5(word_lower.encode()).digest()
+            seed = int.from_bytes(word_hash[:4], "little")
+            rng = np.random.Generator(np.random.PCG64(seed))
+            self._word_vectors[word_lower] = rng.standard_normal(self._dimension).astype(np.float32)
+        return self._word_vectors[word_lower]
+
+    def embed(self, text: str) -> np.ndarray:
+        """Generate deterministic embedding from word vectors.
+
+        Texts with shared words will have higher similarity.
+        """
+        # Tokenize: split on non-alphanumeric, keep words 2+ chars
+        words = [w for w in re.split(r"[^a-zA-Z0-9]+", text) if len(w) >= 2]
+
+        if not words:
+            # Fallback for empty/punctuation-only text
+            text_hash = hashlib.md5(text.encode()).digest()
+            seed = int.from_bytes(text_hash[:4], "little")
+            rng = np.random.Generator(np.random.PCG64(seed))
+            embedding = rng.standard_normal(self._dimension).astype(np.float32)
+        else:
+            # Sum word vectors
+            embedding = np.zeros(self._dimension, dtype=np.float32)
+            for word in words:
+                embedding += self._get_word_vector(word)
+
+        # Normalize
+        norm = np.linalg.norm(embedding)
+        if norm > 0:
+            embedding /= norm
+        return embedding
+
+    def embed_batch(self, texts: list[str]) -> list[np.ndarray]:
+        """Generate embeddings for multiple texts."""
+        return [self.embed(text) for text in texts]
 
 
 # ========== Sentence Transformers Provider ==========

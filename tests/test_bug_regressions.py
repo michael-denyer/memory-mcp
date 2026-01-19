@@ -867,7 +867,8 @@ class TestRecallWithFallback:
         storage.store_memory("import pandas as pd", MemoryType.PATTERN)
         storage.store_memory("This project uses pandas", MemoryType.PROJECT)
 
-        result = storage.recall_with_fallback("pandas", min_results=1)
+        # Use exploratory mode for lower threshold with mock embeddings
+        result = storage.recall_with_fallback("pandas", min_results=1, mode=RecallMode.EXPLORATORY)
         assert len(result.memories) >= 1
 
     def test_fallback_continues_on_no_results(self, storage):

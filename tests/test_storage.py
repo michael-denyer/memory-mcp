@@ -49,8 +49,8 @@ def test_recall_semantic_search(storage):
         tags=["auth"],
     )
 
-    # Search with low threshold
-    result = storage.recall("database setup", threshold=0.3)
+    # Search with low threshold (0.2 to accommodate mock embeddings)
+    result = storage.recall("database setup", threshold=0.2)
     assert len(result.memories) > 0
     assert "database" in result.memories[0].tags
 
