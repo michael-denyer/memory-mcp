@@ -1972,6 +1972,12 @@ class Storage:
         for memory_id in memory_ids_to_check:
             self.check_auto_promote(memory_id)
 
+        # Record access sequences for predictive cache (if enabled)
+        if self.settings.predictive_cache_enabled and len(memories) >= 2:
+            memory_ids = [m.id for m in memories]
+            for i in range(len(memory_ids) - 1):
+                self.record_access_sequence(memory_ids[i], memory_ids[i + 1])
+
         # Auto-strengthen trust for high-similarity matches (confidence-weighted)
         if self.settings.trust_auto_strengthen_on_recall:
             for memory in memories:

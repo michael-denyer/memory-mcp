@@ -1806,6 +1806,43 @@ class TestPredictiveCache:
             ).fetchone()
             assert result is not None
 
+    def test_recall_records_access_sequences_when_enabled(self, predictive_storage):
+        """recall() records access sequences for predictive cache when enabled."""
+        # Store memories with distinct content
+        mid1, _ = predictive_storage.store_memory(
+            "First memory about authentication", MemoryType.PROJECT
+        )
+        mid2, _ = predictive_storage.store_memory(
+            "Second memory about authentication tokens", MemoryType.PROJECT
+        )
+        mid3, _ = predictive_storage.store_memory(
+            "Third memory about authentication JWT", MemoryType.PROJECT
+        )
+
+        # Do a recall that returns multiple results
+        result = predictive_storage.recall("authentication", limit=3, threshold=0.0)
+
+        # Should have at least 2 results to record sequences
+        if len(result.memories) >= 2:
+            # Check that access sequences were recorded
+            first_id = result.memories[0].id
+            patterns = predictive_storage.get_access_patterns(first_id)
+            assert len(patterns) >= 1, "Access sequences should be recorded during recall"
+
+    def test_recall_no_sequences_when_disabled(self, non_predictive_storage):
+        """recall() does not record access sequences when predictive cache is disabled."""
+        mid1, _ = non_predictive_storage.store_memory("Memory about testing", MemoryType.PROJECT)
+        mid2, _ = non_predictive_storage.store_memory(
+            "Memory about testing frameworks", MemoryType.PROJECT
+        )
+
+        result = non_predictive_storage.recall("testing", limit=2, threshold=0.0)
+
+        if len(result.memories) >= 2:
+            first_id = result.memories[0].id
+            patterns = non_predictive_storage.get_access_patterns(first_id)
+            assert len(patterns) == 0, "No sequences when predictive cache disabled"
+
 
 class TestSemanticDeduplication:
     """Tests for semantic deduplication on store."""
