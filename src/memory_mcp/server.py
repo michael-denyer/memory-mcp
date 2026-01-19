@@ -18,6 +18,7 @@ from memory_mcp.logging import (
     update_hot_cache_stats,
 )
 from memory_mcp.storage import (
+    AuditOperation,
     Memory,
     MemoryRelation,
     MemorySource,
@@ -1678,12 +1679,9 @@ def audit_history(
         limit: Maximum entries to return (default 50, max 500).
         operation: Filter by operation type (e.g., "delete_memory", "demote_memory").
                    Available types: delete_memory, demote_memory, demote_stale,
-                   delete_pattern, reject_pattern, expire_patterns, cleanup_memories,
-                   maintenance, unlink_memories.
+                   delete_pattern, expire_patterns, cleanup_memories, maintenance,
+                   unlink_memories.
     """
-    from memory_mcp.storage import AuditOperation
-
-    # Convert string operation to enum if provided
     op_enum = None
     if operation:
         try:

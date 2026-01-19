@@ -99,7 +99,6 @@ class AuditOperation(str, Enum):
     DEMOTE_MEMORY = "demote_memory"
     DEMOTE_STALE = "demote_stale"
     DELETE_PATTERN = "delete_pattern"
-    REJECT_PATTERN = "reject_pattern"
     EXPIRE_PATTERNS = "expire_patterns"
     CLEANUP_MEMORIES = "cleanup_memories"
     MAINTENANCE = "maintenance"
