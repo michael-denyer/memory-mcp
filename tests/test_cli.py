@@ -77,7 +77,7 @@ class TestRunMiningCommand:
 
         assert result == 0
         captured = capsys.readouterr()
-        assert "Processed" in captured.out
+        assert "Mining Results" in captured.out or "Outputs processed" in captured.out
 
     def test_run_mining_json_format(self, temp_db, capsys):
         """Should output JSON when --json flag is used."""

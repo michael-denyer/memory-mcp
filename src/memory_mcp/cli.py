@@ -8,10 +8,14 @@ import sys
 from pathlib import Path
 
 import click
+from rich.console import Console
+from rich.table import Table
 
 from memory_mcp.config import find_bootstrap_files, get_settings
 from memory_mcp.storage import MemorySource, MemoryType, Storage
 from memory_mcp.text_parsing import parse_content_into_chunks
+
+console = Console()
 
 
 @click.group()
@@ -86,8 +90,11 @@ def run_mining(ctx: click.Context, hours: int) -> None:
         if use_json:
             click.echo(json.dumps(result))
         else:
-            click.echo(f"Processed {result['outputs_processed']} outputs")
-            click.echo(f"Found {result['patterns_found']} patterns")
+            console.print("[bold]Mining Results[/bold]")
+            console.print(f"  Outputs processed: [cyan]{result['outputs_processed']}[/cyan]")
+            console.print(f"  Patterns found: [cyan]{result['patterns_found']}[/cyan]")
+            console.print(f"  New patterns: [green]{result['new_patterns']}[/green]")
+            console.print(f"  Updated patterns: [yellow]{result['updated_patterns']}[/yellow]")
     finally:
         storage.close()
 
@@ -152,9 +159,11 @@ def seed(ctx: click.Context, file: str, memory_type: str, promote: bool) -> None
             )
         )
     else:
-        click.echo(f"Created {created} memories, skipped {skipped} duplicates")
+        console.print("[bold]Seed Results[/bold]")
+        console.print(f"  Created: [green]{created}[/green] memories")
+        console.print(f"  Skipped: [yellow]{skipped}[/yellow] duplicates")
         if errors:
-            click.echo(f"Errors: {len(errors)}")
+            console.print(f"  [red]Errors: {len(errors)}[/red]")
 
 
 @cli.command("bootstrap")
@@ -269,11 +278,19 @@ def bootstrap(
     if use_json:
         click.echo(json.dumps(result))
     else:
-        click.echo(result["message"])
+        console.print("[bold]Bootstrap Results[/bold]")
+        console.print(f"  Files processed: [cyan]{result.get('files_processed', 0)}[/cyan]")
+        console.print(f"  Memories created: [green]{result.get('memories_created', 0)}[/green]")
+        console.print(f"  Memories skipped: [yellow]{result.get('memories_skipped', 0)}[/yellow]")
+        if promote:
+            console.print(
+                f"  Hot cache promoted: [magenta]{result.get('hot_cache_promoted', 0)}[/magenta]"
+            )
         errors = result.get("errors")
-        if isinstance(errors, list):
+        if isinstance(errors, list) and errors:
+            console.print(f"  [red]Warnings: {len(errors)}[/red]")
             for err in errors:
-                click.echo(f"  Warning: {err}", err=True)
+                console.print(f"    [dim]{err}[/dim]")
 
 
 @cli.command("db-rebuild-vectors")
@@ -319,26 +336,108 @@ def db_rebuild_vectors(ctx: click.Context, batch_size: int, clear_only: bool) ->
                 "memories_embedded": 0,
                 "memories_failed": 0,
             }
-            msg = f"Cleared {result['vectors_cleared']} vectors"
         else:
             result = storage.rebuild_vectors(batch_size=batch_size)
-            msg = (
-                f"Rebuilt {result['memories_embedded']}/{result['memories_total']} "
-                f"vectors with {result['new_model']} (dim={result['new_dimension']})"
-            )
 
         if use_json:
             click.echo(json.dumps({"success": True, **result}))
         else:
-            click.echo(msg)
-            if result.get("memories_failed", 0) > 0:
-                click.echo(f"  Failed: {result['memories_failed']}", err=True)
+            console.print("[bold]Vector Rebuild Results[/bold]")
+            console.print(f"  Vectors cleared: [yellow]{result['vectors_cleared']}[/yellow]")
+            if not clear_only:
+                console.print(
+                    f"  Memories embedded: [green]{result['memories_embedded']}[/green]"
+                    f"/{result['memories_total']}"
+                )
+                if result.get("memories_failed", 0) > 0:
+                    console.print(f"  [red]Failed: {result['memories_failed']}[/red]")
+            console.print(f"  New model: [cyan]{result['new_model']}[/cyan]")
+            console.print(f"  New dimension: [cyan]{result['new_dimension']}[/cyan]")
     except Exception as e:
         if use_json:
             click.echo(json.dumps({"success": False, "error": str(e)}))
         else:
-            click.echo(f"Error: {e}", err=True)
+            console.print(f"[red]Error: {e}[/red]")
         raise SystemExit(1)
+    finally:
+        storage.close()
+
+
+@cli.command("status")
+@click.pass_context
+def status(ctx: click.Context) -> None:
+    """Show memory system status with hot cache contents."""
+    use_json = ctx.obj["json"]
+    settings = get_settings()
+
+    storage = Storage(settings)
+    try:
+        stats = storage.get_hot_cache_stats()
+        hot_memories = storage.get_hot_memories()
+        metrics = storage.get_hot_cache_metrics()
+
+        if use_json:
+            click.echo(
+                json.dumps(
+                    {
+                        "hot_cache": stats,
+                        "metrics": metrics.to_dict(),
+                        "hot_memories": [
+                            {"id": m.id, "content": m.content[:100], "type": m.memory_type.value}
+                            for m in hot_memories
+                        ],
+                    }
+                )
+            )
+            return
+
+        # Hot cache status
+        console.print("\n[bold cyan]Memory MCP Status[/bold cyan]")
+        console.print(f"Database: {settings.db_path}")
+
+        # Stats table
+        stats_table = Table(show_header=False, box=None)
+        stats_table.add_column("Metric", style="dim")
+        stats_table.add_column("Value", style="bold")
+
+        stats_table.add_row("Hot cache", f"{stats['current_count']}/{stats['max_items']} items")
+        stats_table.add_row("Cache hits", str(metrics.hits))
+        stats_table.add_row("Cache misses", str(metrics.misses))
+        stats_table.add_row("Promotions", str(metrics.promotions))
+        stats_table.add_row("Evictions", str(metrics.evictions))
+
+        total_requests = metrics.hits + metrics.misses
+        if total_requests > 0:
+            hit_rate = metrics.hits / total_requests * 100
+            stats_table.add_row("Hit rate", f"{hit_rate:.1f}%")
+
+        console.print(stats_table)
+
+        # Hot memories table
+        if hot_memories:
+            console.print("\n[bold]Hot Cache Contents:[/bold]")
+            mem_table = Table(show_header=True, header_style="bold magenta")
+            mem_table.add_column("ID", style="dim", width=6)
+            mem_table.add_column("Type", width=12)
+            mem_table.add_column("Content", width=60)
+            mem_table.add_column("Pinned", width=6)
+
+            max_display = 10
+            for mem in hot_memories[:max_display]:
+                content_preview = mem.content[:57] + "..." if len(mem.content) > 60 else mem.content
+                content_preview = content_preview.replace("\n", " ")
+                pinned_marker = "[pin]" if mem.is_pinned else ""
+                mem_table.add_row(
+                    str(mem.id), mem.memory_type.value, content_preview, pinned_marker
+                )
+
+            console.print(mem_table)
+
+            if len(hot_memories) > max_display:
+                console.print(f"  ... and {len(hot_memories) - max_display} more")
+        else:
+            console.print("\n[dim]Hot cache is empty[/dim]")
+
     finally:
         storage.close()
 

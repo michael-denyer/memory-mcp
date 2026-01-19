@@ -25,6 +25,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "loguru>=0.7",
     "click>=8.0",
+    "rich>=13.0",
 ]
 
 [project.scripts]
