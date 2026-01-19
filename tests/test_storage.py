@@ -1,22 +1,23 @@
 """Tests for storage module."""
 
-import tempfile
-from pathlib import Path
-
 import pytest
 
 from memory_mcp.config import Settings
-from memory_mcp.storage import MemorySource, MemoryType, Storage
+from memory_mcp.storage import (
+    MemorySource,
+    MemoryType,
+    Storage,
+    ValidationError,
+)
 
 
 @pytest.fixture
-def storage():
+def storage(tmp_path):
     """Create a storage instance with temp database."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        settings = Settings(db_path=Path(tmpdir) / "test.db")
-        storage = Storage(settings)
-        yield storage
-        storage.close()
+    settings = Settings(db_path=tmp_path / "test.db")
+    stor = Storage(settings)
+    yield stor
+    stor.close()
 
 
 def test_store_and_get_memory(storage):
@@ -109,3 +110,73 @@ def test_mined_patterns(storage):
     candidates = storage.get_promotion_candidates(threshold=2)
     assert len(candidates) == 1
     assert candidates[0].occurrence_count == 2
+
+
+# ========== Validation Tests (Defense-in-Depth) ==========
+
+
+class TestStorageValidation:
+    """Tests for storage layer input validation."""
+
+    def test_store_memory_empty_content_raises(self, storage):
+        """Empty content should raise ValidationError."""
+        with pytest.raises(ValidationError, match="cannot be empty"):
+            storage.store_memory("", MemoryType.PROJECT)
+
+        with pytest.raises(ValidationError, match="cannot be empty"):
+            storage.store_memory("   ", MemoryType.PROJECT)
+
+    def test_store_memory_content_too_long_raises(self, tmp_path):
+        """Content exceeding max length should raise ValidationError."""
+        settings = Settings(db_path=tmp_path / "test.db", max_content_length=100)
+        stor = Storage(settings)
+        with pytest.raises(ValidationError, match="too long"):
+            stor.store_memory("x" * 101, MemoryType.PROJECT)
+        stor.close()
+
+    def test_store_memory_too_many_tags_raises(self, tmp_path):
+        """Too many tags should raise ValidationError."""
+        settings = Settings(db_path=tmp_path / "test.db", max_tags=3)
+        stor = Storage(settings)
+        with pytest.raises(ValidationError, match="Too many tags"):
+            stor.store_memory("content", MemoryType.PROJECT, tags=["a", "b", "c", "d"])
+        stor.close()
+
+    def test_store_memory_tags_normalized(self, storage):
+        """Tags should be stripped and empty tags filtered."""
+        memory_id, _ = storage.store_memory(
+            "content", MemoryType.PROJECT, tags=["  valid  ", "", "  ", "good"]
+        )
+        memory = storage.get_memory(memory_id)
+        assert set(memory.tags) == {"valid", "good"}
+
+    def test_log_output_empty_content_raises(self, storage):
+        """Empty output content should raise ValidationError."""
+        with pytest.raises(ValidationError, match="cannot be empty"):
+            storage.log_output("")
+
+    def test_log_output_content_too_long_raises(self, tmp_path):
+        """Output content exceeding max length should raise ValidationError."""
+        settings = Settings(db_path=tmp_path / "test.db", max_content_length=50)
+        stor = Storage(settings)
+        with pytest.raises(ValidationError, match="too long"):
+            stor.log_output("x" * 51)
+        stor.close()
+
+    def test_upsert_mined_pattern_empty_raises(self, storage):
+        """Empty pattern should raise ValidationError."""
+        with pytest.raises(ValidationError, match="cannot be empty"):
+            storage.upsert_mined_pattern("", "import")
+
+    def test_upsert_mined_pattern_too_long_raises(self, tmp_path):
+        """Pattern exceeding max length should raise ValidationError."""
+        settings = Settings(db_path=tmp_path / "test.db", max_content_length=50)
+        stor = Storage(settings)
+        with pytest.raises(ValidationError, match="too long"):
+            stor.upsert_mined_pattern("x" * 51, "import")
+        stor.close()
+
+    def test_validation_error_is_value_error(self, storage):
+        """ValidationError is a ValueError subclass for compatibility."""
+        with pytest.raises(ValueError):
+            storage.store_memory("", MemoryType.PROJECT)

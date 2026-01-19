@@ -195,6 +195,12 @@ class EmbeddingDimensionError(Exception):
     pass
 
 
+class ValidationError(ValueError):
+    """Raised when input validation fails."""
+
+    pass
+
+
 class Storage:
     """SQLite storage manager with thread-safe connection handling."""
 
@@ -442,6 +448,39 @@ class Storage:
 
     # ========== Memory CRUD ==========
 
+    def _validate_content(self, content: str, field_name: str = "content") -> None:
+        """Validate content length against settings.
+
+        Raises:
+            ValidationError: If content is empty or exceeds max length.
+        """
+        if not content or not content.strip():
+            raise ValidationError(f"{field_name} cannot be empty")
+        if len(content) > self.settings.max_content_length:
+            raise ValidationError(
+                f"{field_name} too long: {len(content)} chars "
+                f"(max: {self.settings.max_content_length})"
+            )
+
+    def _validate_tags(self, tags: list[str] | None) -> list[str]:
+        """Validate and normalize tags.
+
+        Returns:
+            Normalized tag list (stripped, non-empty).
+
+        Raises:
+            ValidationError: If too many tags provided.
+        """
+        if not tags:
+            return []
+        # Strip whitespace and filter empty
+        normalized = [t.strip() for t in tags if t and t.strip()]
+        if len(normalized) > self.settings.max_tags:
+            raise ValidationError(
+                f"Too many tags: {len(normalized)} (max: {self.settings.max_tags})"
+            )
+        return normalized
+
     def store_memory(
         self,
         content: str,
@@ -465,13 +504,19 @@ class Storage:
             Tuple of (memory_id, is_new) where is_new indicates if a new
             memory was created (False means existing memory was updated).
 
+        Raises:
+            ValidationError: If content too long or too many tags.
+
         On duplicate content:
             - Increments access_count and updates last_accessed_at
             - Merges new tags with existing tags
             - Does NOT change memory_type or source (first write wins)
         """
+        # Defense-in-depth validation
+        self._validate_content(content)
+        tags = self._validate_tags(tags)
+
         hash_val = content_hash(content)
-        tags = tags or []
 
         # Trust score based on source type
         trust_scores = {
@@ -1287,7 +1332,14 @@ class Storage:
     # ========== Output Logging ==========
 
     def log_output(self, content: str) -> int:
-        """Log an output for pattern mining."""
+        """Log an output for pattern mining.
+
+        Raises:
+            ValidationError: If content is empty or exceeds max length.
+        """
+        # Defense-in-depth validation
+        self._validate_content(content, "output content")
+
         with self.transaction() as conn:
             cursor = conn.execute("INSERT INTO output_log (content) VALUES (?)", (content,))
 
@@ -1321,7 +1373,14 @@ class Storage:
     # ========== Mined Patterns ==========
 
     def upsert_mined_pattern(self, pattern: str, pattern_type: str) -> int:
-        """Insert or update a mined pattern."""
+        """Insert or update a mined pattern.
+
+        Raises:
+            ValidationError: If pattern is empty or exceeds max length.
+        """
+        # Defense-in-depth validation
+        self._validate_content(pattern, "pattern")
+
         hash_val = content_hash(pattern)
 
         with self.transaction() as conn:
