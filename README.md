@@ -119,6 +119,13 @@ Restart Claude Code, then verify with `/mcp` - you should see the memory server'
 | `approve_candidate(pattern_id)` | Approve and promote pattern |
 | `reject_candidate(pattern_id)` | Reject pattern |
 
+### Maintenance
+
+| Tool | Description |
+|------|-------------|
+| `db_info()` | Get database info (path, size, schema version) |
+| `db_maintenance()` | Run vacuum and analyze, reclaim space |
+
 ## Memory Types
 
 - `project` - Project-specific facts (architecture, conventions)
@@ -190,6 +197,7 @@ Environment variables (prefix `MEMORY_MCP_`):
 |----------|---------|-------------|
 | `MAX_CONTENT_LENGTH` | `100000` | Max characters per memory/log |
 | `MAX_RECALL_LIMIT` | `100` | Max results per recall query |
+| `MAX_TAGS` | `20` | Max tags per memory |
 
 ## Data Persistence
 

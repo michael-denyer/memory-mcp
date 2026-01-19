@@ -125,6 +125,13 @@ def remember(
             f"Content too long ({len(content)} chars). Max: {settings.max_content_length}"
         )
 
+    # Validate tags
+    tag_list = tags or []
+    if len(tag_list) > settings.max_tags:
+        return error_response(
+            f"Too many tags ({len(tag_list)}). Max: {settings.max_tags}"
+        )
+
     mem_type = parse_memory_type(memory_type)
     if mem_type is None:
         return invalid_memory_type_error()
@@ -133,7 +140,7 @@ def remember(
         content=content,
         memory_type=mem_type,
         source=MemorySource.MANUAL,
-        tags=tags or [],
+        tags=tag_list,
     )
 
     return success_response(f"Stored as memory #{memory_id}", memory_id=memory_id)
@@ -155,7 +162,10 @@ def recall(
     - 'low': No results passed threshold - reason from scratch
     """
     # Validate and clamp inputs
-    limit = max(1, min(settings.max_recall_limit, limit)) if limit else settings.default_recall_limit
+    if not limit:
+        limit = settings.default_recall_limit
+    limit = max(1, min(settings.max_recall_limit, limit))
+
     if threshold is not None:
         threshold = max(0.0, min(1.0, threshold))
 
@@ -400,6 +410,54 @@ def run_mining(
     log.info("Mining complete: {} outputs processed, {} patterns found",
              result["outputs_processed"], result["patterns_found"])
     return {"success": True, **result}
+
+
+# ========== Maintenance Tools ==========
+
+
+class MaintenanceResponse(BaseModel):
+    """Response for maintenance operation."""
+
+    size_before_bytes: int
+    size_after_bytes: int
+    bytes_reclaimed: int
+    memory_count: int
+    vector_count: int
+    schema_version: int
+
+
+@mcp.tool
+def db_maintenance() -> MaintenanceResponse:
+    """Run database maintenance (vacuum and analyze).
+
+    Compacts the database to reclaim unused space and updates
+    query planner statistics for better performance.
+    """
+    log.info("db_maintenance() called")
+    result = storage.maintenance()
+    log.info(
+        "Maintenance complete: {} bytes reclaimed, {} memories",
+        result["bytes_reclaimed"],
+        result["memory_count"],
+    )
+    return MaintenanceResponse(**result)
+
+
+@mcp.tool
+def db_info() -> dict:
+    """Get database information including schema version and size."""
+    import os
+
+    db_size = os.path.getsize(storage.db_path) if storage.db_path.exists() else 0
+    stats = storage.get_stats()
+
+    return {
+        "db_path": str(storage.db_path),
+        "db_size_bytes": db_size,
+        "db_size_mb": round(db_size / (1024 * 1024), 2),
+        "schema_version": storage.get_schema_version(),
+        **stats,
+    }
 
 
 # ========== Entry Point ==========

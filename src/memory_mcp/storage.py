@@ -1,5 +1,6 @@
 """SQLite storage with sqlite-vec for vector search."""
 
+import os
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -73,7 +74,16 @@ class RecallResult:
     gated_count: int  # How many results filtered by threshold
 
 
+# Current schema version - increment when making breaking changes
+SCHEMA_VERSION = 1
+
 SCHEMA = """
+-- Schema version tracking
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- All memories (hot + cold)
 CREATE TABLE IF NOT EXISTS memories (
     id INTEGER PRIMARY KEY,
@@ -129,6 +139,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_vectors USING vec0(
 """
 
 
+class SchemaVersionError(Exception):
+    """Raised when database schema is incompatible."""
+    pass
+
+
+class EmbeddingDimensionError(Exception):
+    """Raised when embedding dimension doesn't match database."""
+    pass
+
+
 class Storage:
     """SQLite storage manager with thread-safe connection handling."""
 
@@ -147,12 +167,22 @@ class Storage:
         """Get or create database connection. Must be called with lock held."""
         if self._conn is None:
             ensure_data_dir(self.settings)
-            self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+            self._conn = sqlite3.connect(
+                str(self.db_path),
+                check_same_thread=False,
+                timeout=30.0,  # Wait up to 30s for locks
+            )
             self._conn.row_factory = sqlite3.Row
+
+            # Enable WAL mode for better concurrency
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=30000")  # 30s busy timeout
+
             # Load sqlite-vec extension
             self._conn.enable_load_extension(True)
             sqlite_vec.load(self._conn)
             self._conn.enable_load_extension(False)
+
             # Initialize schema
             self._init_schema()
         return self._conn
@@ -164,35 +194,90 @@ class Storage:
             yield self._get_connection()
 
     def _init_schema(self) -> None:
-        """Initialize database schema."""
+        """Initialize database schema with version tracking."""
         conn = self._conn
         if conn is None:
             return
+
+        # Check existing schema version before applying migrations
+        self._check_schema_version(conn)
+
+        # Apply schema
         conn.executescript(SCHEMA)
-        # Use embedding dimension from settings
         conn.execute(get_vector_schema(self.settings.embedding_dim))
+
+        # Record schema version if not present
+        existing_version = conn.execute(
+            "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
+        ).fetchone()
+        if not existing_version:
+            conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?)",
+                (SCHEMA_VERSION,),
+            )
+
         conn.commit()
 
-        # Validate vector dimension matches settings
+        # Validate embedding dimension (fail fast, not just warn)
         self._validate_vector_dimension(conn)
-        log.debug("Database schema initialized")
+        log.debug("Database schema initialized (version={})", SCHEMA_VERSION)
+
+    def _check_schema_version(self, conn: sqlite3.Connection) -> None:
+        """Check schema version compatibility."""
+        # Check if schema_version table exists
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
+        ).fetchone()
+
+        if not table_exists:
+            # New database or pre-versioning database
+            # Check if other tables exist (pre-versioning database)
+            memories_exist = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories'"
+            ).fetchone()
+            if memories_exist:
+                log.info("Upgrading pre-versioning database to version {}", SCHEMA_VERSION)
+            return
+
+        # Get current version
+        current_version = conn.execute(
+            "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
+        ).fetchone()
+
+        if current_version and current_version[0] > SCHEMA_VERSION:
+            raise SchemaVersionError(
+                f"Database schema version {current_version[0]} is newer than "
+                f"supported version {SCHEMA_VERSION}. Please upgrade memory-mcp."
+            )
 
     def _validate_vector_dimension(self, conn: sqlite3.Connection) -> None:
-        """Check that existing vector table matches configured dimension."""
+        """Check that existing vector table matches configured dimension. Fails fast on mismatch."""
         result = conn.execute(
             "SELECT sql FROM sqlite_master WHERE name = 'memory_vectors'"
         ).fetchone()
         if result and result[0]:
             schema_sql = result[0]
             expected_dim = self.settings.embedding_dim
+
             # Check if dimension in schema matches
             if f"FLOAT[{expected_dim}]" not in schema_sql.upper():
-                log.warning(
-                    "Vector table dimension mismatch! Schema: {}, expected: {}. "
-                    "Consider recreating the database or migrating.",
-                    schema_sql,
-                    expected_dim,
-                )
+                # Check if there are any existing vectors
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM memory_vectors"
+                ).fetchone()[0]
+
+                if count > 0:
+                    raise EmbeddingDimensionError(
+                        f"Embedding dimension mismatch: database has vectors with different "
+                        f"dimension than configured ({expected_dim}). "
+                        f"Delete the database or set MEMORY_MCP_EMBEDDING_DIM to match. "
+                        f"Database: {self.db_path}"
+                    )
+                else:
+                    log.warning(
+                        "Vector table dimension mismatch but no data. Consider recreating: {}",
+                        self.db_path,
+                    )
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -211,6 +296,51 @@ class Storage:
         if self._conn:
             self._conn.close()
             self._conn = None
+
+    def get_schema_version(self) -> int:
+        """Get current database schema version."""
+        with self._connection() as conn:
+            result = conn.execute(
+                "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
+            ).fetchone()
+            return result[0] if result else 0
+
+    def vacuum(self) -> None:
+        """Compact the database, reclaiming unused space."""
+        with self._lock:
+            conn = self._get_connection()
+            conn.execute("VACUUM")
+            log.info("Database vacuumed")
+
+    def analyze(self) -> None:
+        """Update query planner statistics for better performance."""
+        with self._lock:
+            conn = self._get_connection()
+            conn.execute("ANALYZE")
+            log.info("Database analyzed")
+
+    def maintenance(self) -> dict:
+        """Run full maintenance: vacuum and analyze. Returns stats."""
+        with self._connection() as conn:
+            # Get size before
+            size_before = os.path.getsize(self.db_path) if self.db_path.exists() else 0
+
+        self.vacuum()
+        self.analyze()
+
+        with self._connection() as conn:
+            size_after = os.path.getsize(self.db_path) if self.db_path.exists() else 0
+            memory_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+            vector_count = conn.execute("SELECT COUNT(*) FROM memory_vectors").fetchone()[0]
+
+        return {
+            "size_before_bytes": size_before,
+            "size_after_bytes": size_after,
+            "bytes_reclaimed": size_before - size_after,
+            "memory_count": memory_count,
+            "vector_count": vector_count,
+            "schema_version": self.get_schema_version(),
+        }
 
     # ========== Memory CRUD ==========
 
@@ -290,6 +420,7 @@ class Storage:
                 )
             ]
 
+        last_accessed = row["last_accessed_at"]
         return Memory(
             id=row["id"],
             content=row["content"],
@@ -299,11 +430,7 @@ class Storage:
             is_hot=bool(row["is_hot"]),
             tags=tags,
             access_count=row["access_count"],
-            last_accessed_at=(
-                datetime.fromisoformat(row["last_accessed_at"])
-                if row["last_accessed_at"]
-                else None
-            ),
+            last_accessed_at=datetime.fromisoformat(last_accessed) if last_accessed else None,
             created_at=datetime.fromisoformat(row["created_at"]),
             similarity=similarity,
         )

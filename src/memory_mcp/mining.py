@@ -17,6 +17,13 @@ class PatternType(str, Enum):
     CODE = "code"  # Code snippets
 
 
+# Common CLI tool prefixes for command extraction
+COMMAND_PREFIXES = (
+    "npm", "yarn", "pnpm", "uv", "pip", "python",
+    "node", "git", "docker", "make", "cargo", "go",
+)
+
+
 @dataclass
 class ExtractedPattern:
     """A pattern extracted from output."""
@@ -84,28 +91,15 @@ def extract_commands(text: str) -> list[ExtractedPattern]:
 
     for match in command_re.findall(text):
         cmd = next((m for m in match if m), None)
-        if cmd:
-            normalized = cmd.strip()
-            # Filter for likely commands
-            if any(
-                normalized.startswith(prefix)
-                for prefix in [
-                    "npm",
-                    "yarn",
-                    "pnpm",
-                    "uv",
-                    "pip",
-                    "python",
-                    "node",
-                    "git",
-                    "docker",
-                    "make",
-                    "cargo",
-                    "go",
-                ]
-            ):
-                if 5 < len(normalized) < 200:
-                    patterns.append(ExtractedPattern(normalized, PatternType.COMMAND))
+        if not cmd:
+            continue
+
+        normalized = cmd.strip()
+        is_known_command = normalized.startswith(COMMAND_PREFIXES)
+        has_valid_length = 5 < len(normalized) < 200
+
+        if is_known_command and has_valid_length:
+            patterns.append(ExtractedPattern(normalized, PatternType.COMMAND))
 
     return patterns
 
@@ -137,17 +131,24 @@ def extract_code_patterns(text: str) -> list[ExtractedPattern]:
 # ========== Main Mining Function ==========
 
 
+PATTERN_EXTRACTORS = [
+    extract_imports,
+    extract_facts,
+    extract_commands,
+    extract_code_patterns,
+]
+
+
 def extract_patterns(text: str) -> list[ExtractedPattern]:
     """Extract all patterns from text."""
-    all_patterns = []
+    all_patterns = [
+        pattern
+        for extractor in PATTERN_EXTRACTORS
+        for pattern in extractor(text)
+    ]
 
-    all_patterns.extend(extract_imports(text))
-    all_patterns.extend(extract_facts(text))
-    all_patterns.extend(extract_commands(text))
-    all_patterns.extend(extract_code_patterns(text))
-
-    # Deduplicate
-    seen = set()
+    # Deduplicate while preserving order
+    seen: set[str] = set()
     unique = []
     for p in all_patterns:
         if p.pattern not in seen:

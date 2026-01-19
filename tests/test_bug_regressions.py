@@ -8,7 +8,13 @@ from pathlib import Path
 import pytest
 
 from memory_mcp.config import Settings
-from memory_mcp.storage import MemorySource, MemoryType, Storage
+from memory_mcp.storage import (
+    EmbeddingDimensionError,
+    MemorySource,
+    MemoryType,
+    SchemaVersionError,
+    Storage,
+)
 
 
 @pytest.fixture
@@ -177,3 +183,57 @@ class TestHotCachePromotion:
         mem = storage.get_memory(mid)
         assert mem is not None  # Still exists
         assert not mem.is_hot  # But not hot
+
+
+class TestSchemaVersioning:
+    """Tests for schema versioning and migration."""
+
+    def test_schema_version_recorded(self, storage):
+        """Schema version should be recorded in database."""
+        version = storage.get_schema_version()
+        assert version >= 1
+
+    def test_new_database_gets_version(self):
+        """New database should have schema version set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings = Settings(db_path=Path(tmpdir) / "new.db")
+            storage = Storage(settings)
+            assert storage.get_schema_version() == 1
+            storage.close()
+
+    def test_wal_mode_enabled(self):
+        """WAL mode should be enabled for better concurrency."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings = Settings(db_path=Path(tmpdir) / "wal.db")
+            storage = Storage(settings)
+
+            conn = storage._get_connection()
+            result = conn.execute("PRAGMA journal_mode").fetchone()
+            assert result[0].lower() == "wal"
+
+            storage.close()
+
+
+class TestMaintenanceOperations:
+    """Tests for maintenance operations."""
+
+    def test_vacuum_runs_without_error(self, storage):
+        """Vacuum should run without error."""
+        storage.store_memory("Test content", MemoryType.PROJECT)
+        storage.vacuum()  # Should not raise
+
+    def test_analyze_runs_without_error(self, storage):
+        """Analyze should run without error."""
+        storage.store_memory("Test content", MemoryType.PROJECT)
+        storage.analyze()  # Should not raise
+
+    def test_maintenance_returns_stats(self, storage):
+        """Maintenance should return useful statistics."""
+        storage.store_memory("Test content", MemoryType.PROJECT)
+        result = storage.maintenance()
+
+        assert "size_before_bytes" in result
+        assert "size_after_bytes" in result
+        assert "memory_count" in result
+        assert result["memory_count"] == 1
+        assert "schema_version" in result

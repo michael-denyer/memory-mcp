@@ -49,6 +49,7 @@ class Settings(BaseSettings):
         default=100_000, description="Maximum content length for memories/logs"
     )
     max_recall_limit: int = Field(default=100, description="Maximum results per recall")
+    max_tags: int = Field(default=20, description="Maximum tags per memory")
 
     model_config = {"env_prefix": "MEMORY_MCP_"}
 
