@@ -7,6 +7,7 @@ from memory_mcp.storage import (
     HotCacheMetrics,
     MemorySource,
     MemoryType,
+    PromotionSource,
     Storage,
     ValidationError,
 )
@@ -256,3 +257,182 @@ class TestHotCacheMetrics:
         metrics = HotCacheMetrics(hits=5, misses=2, evictions=1, promotions=3)
         d = metrics.to_dict()
         assert d == {"hits": 5, "misses": 2, "evictions": 1, "promotions": 3}
+
+
+# ========== Auto-Promotion Tests ==========
+
+
+class TestAutoPromotion:
+    """Tests for automatic promotion on access threshold."""
+
+    def test_auto_promote_disabled(self, tmp_path):
+        """Auto-promotion should not happen when disabled."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_promote=False,
+            promotion_threshold=2,
+        )
+        stor = Storage(settings)
+
+        # Create memory and access it enough times
+        memory_id, _ = stor.store_memory("Test content", MemoryType.PROJECT)
+        for _ in range(5):
+            stor.update_access(memory_id)
+
+        # Should not auto-promote
+        result = stor.check_auto_promote(memory_id)
+        assert result is False
+        assert not stor.get_memory(memory_id).is_hot
+        stor.close()
+
+    def test_auto_promote_on_threshold(self, tmp_path):
+        """Memory should auto-promote when access count reaches threshold."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_promote=True,
+            promotion_threshold=3,
+        )
+        stor = Storage(settings)
+
+        memory_id, _ = stor.store_memory("Test content", MemoryType.PROJECT)
+
+        # Access count is 0, should not promote
+        assert stor.check_auto_promote(memory_id) is False
+
+        # Access twice (still below threshold)
+        stor.update_access(memory_id)
+        stor.update_access(memory_id)
+        assert stor.get_memory(memory_id).access_count == 2
+        assert stor.check_auto_promote(memory_id) is False
+
+        # Third access reaches threshold
+        stor.update_access(memory_id)
+        assert stor.get_memory(memory_id).access_count == 3
+        assert stor.check_auto_promote(memory_id) is True
+
+        # Verify promoted with correct source
+        memory = stor.get_memory(memory_id)
+        assert memory.is_hot is True
+        assert memory.promotion_source == PromotionSource.AUTO_THRESHOLD
+        stor.close()
+
+    def test_auto_promote_already_hot(self, tmp_path):
+        """Already hot memory should not be re-promoted."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_promote=True,
+            promotion_threshold=2,
+        )
+        stor = Storage(settings)
+
+        memory_id, _ = stor.store_memory("Test content", MemoryType.PROJECT)
+        stor.promote_to_hot(memory_id)  # Manually promote first
+
+        for _ in range(5):
+            stor.update_access(memory_id)
+
+        # Should return False (already hot)
+        assert stor.check_auto_promote(memory_id) is False
+        stor.close()
+
+    def test_auto_promote_during_recall(self, tmp_path):
+        """Recall should trigger auto-promotion when threshold reached."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_promote=True,
+            promotion_threshold=3,
+        )
+        stor = Storage(settings)
+
+        # Store a memory
+        memory_id, _ = stor.store_memory("PostgreSQL database configuration", MemoryType.PROJECT)
+
+        # Recall it multiple times (each recall increments access_count)
+        for i in range(3):
+            result = stor.recall("PostgreSQL database", threshold=0.2)
+            # Should find our memory
+            assert len(result.memories) > 0
+
+        # After 3 recalls, should be auto-promoted
+        memory = stor.get_memory(memory_id)
+        assert memory.is_hot is True
+        assert memory.promotion_source == PromotionSource.AUTO_THRESHOLD
+        stor.close()
+
+
+# ========== Auto-Demotion Tests ==========
+
+
+class TestAutoDemotion:
+    """Tests for automatic demotion of stale hot memories."""
+
+    def test_auto_demote_disabled(self, tmp_path):
+        """Auto-demotion should not happen when disabled."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_demote=False,
+            demotion_days=1,
+        )
+        stor = Storage(settings)
+
+        memory_id, _ = stor.store_memory("Test content", MemoryType.PROJECT)
+        stor.promote_to_hot(memory_id)
+
+        # Even with stale settings, should not demote
+        demoted = stor.demote_stale_hot_memories()
+        assert demoted == []
+        assert stor.get_memory(memory_id).is_hot is True
+        stor.close()
+
+    def test_auto_demote_skips_pinned(self, tmp_path):
+        """Pinned memories should not be auto-demoted."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_demote=True,
+            demotion_days=0,  # Demote immediately
+        )
+        stor = Storage(settings)
+
+        memory_id, _ = stor.store_memory("Test content", MemoryType.PROJECT)
+        stor.promote_to_hot(memory_id, pin=True)
+
+        # Pinned memory should not be demoted
+        demoted = stor.demote_stale_hot_memories()
+        assert demoted == []
+        assert stor.get_memory(memory_id).is_hot is True
+        stor.close()
+
+    def test_auto_demote_stale_memory(self, tmp_path):
+        """Stale hot memory should be demoted."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_demote=True,
+            demotion_days=0,  # Demote immediately if no recent access
+        )
+        stor = Storage(settings)
+
+        memory_id, _ = stor.store_memory("Test content", MemoryType.PROJECT)
+        stor.promote_to_hot(memory_id)
+
+        # Memory has NULL last_accessed_at, should be considered stale
+        demoted = stor.demote_stale_hot_memories()
+        assert memory_id in demoted
+        assert stor.get_memory(memory_id).is_hot is False
+        stor.close()
+
+    def test_maintenance_includes_auto_demote(self, tmp_path):
+        """Maintenance should run auto-demotion."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_demote=True,
+            demotion_days=0,
+        )
+        stor = Storage(settings)
+
+        memory_id, _ = stor.store_memory("Test content", MemoryType.PROJECT)
+        stor.promote_to_hot(memory_id)
+
+        result = stor.maintenance()
+        assert result["auto_demoted_count"] == 1
+        assert memory_id in result["auto_demoted_ids"]
+        stor.close()

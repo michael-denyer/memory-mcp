@@ -444,10 +444,16 @@ class Storage:
             log.info("Database analyzed")
 
     def maintenance(self) -> dict:
-        """Run full maintenance: vacuum and analyze. Returns stats."""
+        """Run full maintenance: vacuum, analyze, and auto-demote stale hot memories.
+
+        Returns stats including demoted count.
+        """
         with self._connection() as conn:
             # Get size before
             size_before = os.path.getsize(self.db_path) if self.db_path.exists() else 0
+
+        # Auto-demote stale hot memories (if enabled)
+        demoted_ids = self.demote_stale_hot_memories()
 
         self.vacuum()
         self.analyze()
@@ -464,6 +470,8 @@ class Storage:
             "memory_count": memory_count,
             "vector_count": vector_count,
             "schema_version": self.get_schema_version(),
+            "auto_demoted_count": len(demoted_ids),
+            "auto_demoted_ids": demoted_ids,
         }
 
     # ========== Memory CRUD ==========
@@ -747,6 +755,41 @@ class Storage:
                 (memory_id,),
             )
 
+    def check_auto_promote(self, memory_id: int) -> bool:
+        """Check if memory should be auto-promoted and do so if eligible.
+
+        Auto-promotes if:
+        - auto_promote is enabled in settings
+        - memory is not already hot
+        - access_count >= promotion_threshold
+
+        Returns True if memory was promoted.
+        """
+        if not self.settings.auto_promote:
+            return False
+
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT is_hot, access_count FROM memories WHERE id = ?",
+                (memory_id,),
+            ).fetchone()
+
+            if not row or row["is_hot"]:
+                return False
+
+            if row["access_count"] >= self.settings.promotion_threshold:
+                promoted = self.promote_to_hot(memory_id, PromotionSource.AUTO_THRESHOLD)
+                if promoted:
+                    log.info(
+                        "Auto-promoted memory id={} (access_count={} >= threshold={})",
+                        memory_id,
+                        row["access_count"],
+                        self.settings.promotion_threshold,
+                    )
+                return promoted
+
+        return False
+
     # ========== Vector Search ==========
 
     def get_recall_mode_config(self, mode: RecallMode) -> RecallModeConfig:
@@ -1017,6 +1060,7 @@ class Storage:
 
             # Take top results and update access counts
             memories = candidates[:effective_limit]
+            memory_ids_to_check = []
             for memory in memories:
                 conn.execute(
                     """
@@ -1027,7 +1071,14 @@ class Storage:
                     """,
                     (memory.id,),
                 )
+                # Track for auto-promotion check (if not already hot)
+                if not memory.is_hot:
+                    memory_ids_to_check.append(memory.id)
             conn.commit()
+
+        # Check for auto-promotion outside the transaction
+        for memory_id in memory_ids_to_check:
+            self.check_auto_promote(memory_id)
 
         # Determine confidence level based on top result's similarity
         if not memories:
@@ -1302,6 +1353,46 @@ class Storage:
             if demoted:
                 log.info("Demoted memory id={} from hot cache", memory_id)
             return demoted
+
+    def demote_stale_hot_memories(self) -> list[int]:
+        """Demote hot memories that haven't been accessed in demotion_days.
+
+        Skips pinned memories. Called during maintenance if auto_demote is enabled.
+
+        Returns list of demoted memory IDs.
+        """
+        if not self.settings.auto_demote:
+            return []
+
+        demoted_ids = []
+        cutoff = f"-{self.settings.demotion_days} days"
+
+        with self._connection() as conn:
+            # Find stale non-pinned hot memories
+            rows = conn.execute(
+                """
+                SELECT id FROM memories
+                WHERE is_hot = 1
+                  AND is_pinned = 0
+                  AND (last_accessed_at IS NULL
+                       OR last_accessed_at < datetime('now', ?))
+                """,
+                (cutoff,),
+            ).fetchall()
+
+            stale_ids = [row["id"] for row in rows]
+
+        # Demote each (outside the read transaction)
+        for memory_id in stale_ids:
+            if self.demote_from_hot(memory_id):
+                demoted_ids.append(memory_id)
+                log.info(
+                    "Auto-demoted stale memory id={} (not accessed in {} days)",
+                    memory_id,
+                    self.settings.demotion_days,
+                )
+
+        return demoted_ids
 
     def pin_memory(self, memory_id: int) -> bool:
         """Pin a hot memory so it won't be auto-evicted."""

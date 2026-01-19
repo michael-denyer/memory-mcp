@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     hot_cache_max_items: int = Field(default=20, description="Maximum items in hot cache")
     promotion_threshold: int = Field(default=3, description="Access count to promote to hot cache")
     demotion_days: int = Field(default=14, description="Days without access before demotion")
+    auto_promote: bool = Field(
+        default=True, description="Auto-promote memories when access count reaches threshold"
+    )
+    auto_demote: bool = Field(
+        default=True, description="Auto-demote stale hot memories during maintenance"
+    )
 
     # Hot cache scoring weights (for LRU eviction)
     hot_score_access_weight: float = Field(
