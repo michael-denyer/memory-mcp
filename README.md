@@ -6,6 +6,8 @@ An Engram-inspired MCP server that gives Claude a "second brain" with:
 - **Cold Storage**: Semantic search with confidence gating
 - **Pattern Mining**: Automatic extraction from output logs with frequency-based promotion
 
+> **Security Note**: This server is designed for **local use only**. It runs unauthenticated over STDIO transport and should not be exposed to networks or untrusted clients.
+
 ## Architecture
 
 ```mermaid
@@ -31,16 +33,39 @@ graph TD
     Claude --> F
 ```
 
+## Requirements
+
+- Python 3.10+
+- [uv](https://docs.astral.sh/uv/) package manager
+
+### Dependencies
+
+Core dependencies (installed automatically):
+- `fastmcp>=2.0,<3` - MCP server framework
+- `sqlite-vec>=0.1` - Vector similarity search extension
+- `sentence-transformers>=3.0` - Embedding model
+- `pydantic>=2.0` / `pydantic-settings>=2.0` - Configuration
+- `loguru>=0.7` - Logging
+
+### First Run
+
+On first run, the embedding model (~90MB) downloads automatically from Hugging Face. This may add 30-60 seconds to initial startup depending on your connection.
+
 ## Installation
 
 ```bash
-# Clone and install
+# Clone the repository
 git clone https://github.com/michael-denyer/memory-mcp.git
 cd memory-mcp
+
+# Install dependencies
 uv sync
 
-# Run tests
+# Run tests to verify installation
 uv run pytest
+
+# Optional: Pre-download the embedding model
+uv run python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 ```
 
 ## Claude Code Integration
@@ -52,13 +77,13 @@ Add to your Claude Code settings (`~/.claude.json` or project `.claude/settings.
   "mcpServers": {
     "memory": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/memory-mcp", "memory-mcp"]
+      "args": ["run", "--directory", "<path-to-memory-mcp>", "memory-mcp"]
     }
   }
 }
 ```
 
-Replace `/path/to/memory-mcp` with your actual installation path.
+Replace `<path-to-memory-mcp>` with the absolute path where you cloned the repository.
 
 Restart Claude Code, then verify with `/mcp` - you should see the memory server's tools.
 
@@ -108,8 +133,8 @@ The `recall` tool returns results with confidence levels:
 | Confidence | Similarity | Action |
 |------------|------------|--------|
 | `high` | > 0.85 | Use directly |
-| `medium` | threshold - 0.85 | Verify context |
-| `low` | < threshold | Reason from scratch |
+| `medium` | 0.7 - 0.85 | Verify context |
+| `low` | < 0.7 | Reason from scratch |
 
 Default threshold is 0.7 (configurable via `DEFAULT_CONFIDENCE_THRESHOLD`).
 
@@ -121,19 +146,104 @@ The server exposes `memory://hot-cache` as an MCP resource. Configure Claude Cod
 
 Environment variables (prefix `MEMORY_MCP_`):
 
+### Database & Storage
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DB_PATH` | `~/.memory-mcp/memory.db` | Database location |
-| `HOT_CACHE_MAX_ITEMS` | 20 | Max hot cache size |
-| `PROMOTION_THRESHOLD` | 3 | Access count for auto-promotion |
-| `DEMOTION_DAYS` | 14 | Days without access before demotion |
-| `MINING_ENABLED` | true | Enable pattern mining |
-| `LOG_RETENTION_DAYS` | 7 | Days to retain output logs |
-| `DEFAULT_RECALL_LIMIT` | 5 | Default results per recall |
-| `DEFAULT_CONFIDENCE_THRESHOLD` | 0.7 | Minimum similarity for results |
-| `HIGH_CONFIDENCE_THRESHOLD` | 0.85 | Threshold for high confidence |
-| `MAX_CONTENT_LENGTH` | 100000 | Max chars per memory/log |
-| `MAX_RECALL_LIMIT` | 100 | Max results per recall |
+| `DB_PATH` | `~/.memory-mcp/memory.db` | SQLite database location |
+
+### Embeddings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Sentence transformer model |
+| `EMBEDDING_DIM` | `384` | Embedding vector dimension (must match model) |
+
+> **Warning**: Changing `EMBEDDING_DIM` after creating memories will cause retrieval failures. Delete the database or migrate if changing models.
+
+### Hot Cache
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HOT_CACHE_MAX_ITEMS` | `20` | Maximum items in hot cache |
+| `PROMOTION_THRESHOLD` | `3` | Access count for auto-promotion |
+| `DEMOTION_DAYS` | `14` | Days without access before demotion |
+
+### Mining
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MINING_ENABLED` | `true` | Enable pattern mining |
+| `LOG_RETENTION_DAYS` | `7` | Days to retain output logs |
+
+### Retrieval
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEFAULT_RECALL_LIMIT` | `5` | Default results per recall |
+| `DEFAULT_CONFIDENCE_THRESHOLD` | `0.7` | Minimum similarity for results |
+| `HIGH_CONFIDENCE_THRESHOLD` | `0.85` | Threshold for high confidence |
+
+### Input Limits
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAX_CONTENT_LENGTH` | `100000` | Max characters per memory/log |
+| `MAX_RECALL_LIMIT` | `100` | Max results per recall query |
+
+## Data Persistence
+
+### Database Location
+
+By default, the SQLite database is stored at `~/.memory-mcp/memory.db`. The directory is created automatically on first run.
+
+### Backups
+
+```bash
+# Backup the database
+cp ~/.memory-mcp/memory.db ~/.memory-mcp/memory.db.backup
+
+# Restore from backup
+cp ~/.memory-mcp/memory.db.backup ~/.memory-mcp/memory.db
+```
+
+### Changing Embedding Models
+
+If you change `EMBEDDING_MODEL` or `EMBEDDING_DIM`, existing embeddings become incompatible. Options:
+
+1. **Delete and rebuild** (recommended for small datasets):
+   ```bash
+   rm ~/.memory-mcp/memory.db
+   # Re-add memories after restart
+   ```
+
+2. **Use a separate database**:
+   ```bash
+   export MEMORY_MCP_DB_PATH=~/.memory-mcp/memory-new-model.db
+   ```
+
+## Development
+
+### Running Tests
+
+```bash
+uv run pytest -v
+```
+
+### Running with Debug Logging
+
+The server logs to stderr (required for STDIO MCP transport):
+
+```bash
+# Run directly with visible logs
+uv run memory-mcp 2>&1 | head -50
+```
+
+### Resource Usage
+
+- **Disk**: ~1-10 MB typical (depends on memory count)
+- **Memory**: ~200-400 MB (embedding model loaded in memory)
+- **Startup**: 2-5 seconds (after model is cached)
 
 ## Example Usage
 
@@ -150,3 +260,7 @@ You: "Promote that to hot cache"
 Claude: [calls promote(1)]
 → Memory #1 now in hot cache - zero latency access
 ```
+
+## License
+
+MIT
