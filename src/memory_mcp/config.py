@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     mining_enabled: bool = Field(default=True, description="Enable pattern mining")
     log_retention_days: int = Field(default=7, description="Days to retain output logs")
 
+    # Logging
+    log_level: str = Field(default="INFO", description="Log level: DEBUG, INFO, WARNING, ERROR")
+    log_format: str = Field(
+        default="pretty", description="Log format: 'pretty' (human-readable) or 'json' (structured)"
+    )
+
     # Retrieval
     default_recall_limit: int = Field(default=5, description="Default recall result limit")
     default_confidence_threshold: float = Field(

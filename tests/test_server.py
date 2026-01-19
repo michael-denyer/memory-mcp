@@ -402,3 +402,182 @@ class TestAutoBootstrap:
         assert len(hot_memories) >= 1
 
         test_storage.close()
+
+
+# ========== Metrics and Logging Tests ==========
+
+
+class TestMetrics:
+    """Tests for observability metrics tracking."""
+
+    def test_metrics_snapshot_has_uptime(self):
+        """Metrics snapshot includes uptime."""
+        from memory_mcp.logging import metrics
+
+        metrics.reset()
+        snapshot = metrics.snapshot()
+        assert "uptime_seconds" in snapshot
+        assert snapshot["uptime_seconds"] >= 0
+
+    def test_metrics_increment_counter(self):
+        """Incrementing a counter tracks the value."""
+        from memory_mcp.logging import metrics
+
+        metrics.reset()
+        metrics.increment("test.counter")
+        metrics.increment("test.counter")
+        assert metrics.get_counter("test.counter") == 2
+
+    def test_metrics_increment_by_value(self):
+        """Incrementing by a specific value works."""
+        from memory_mcp.logging import metrics
+
+        metrics.reset()
+        metrics.increment("test.counter", 5)
+        assert metrics.get_counter("test.counter") == 5
+
+    def test_metrics_set_gauge(self):
+        """Setting a gauge stores the value."""
+        from memory_mcp.logging import metrics
+
+        metrics.reset()
+        metrics.set_gauge("test.gauge", 42.5)
+        assert metrics.get_gauge("test.gauge") == 42.5
+
+    def test_metrics_snapshot_includes_all(self):
+        """Snapshot includes all counters and gauges."""
+        from memory_mcp.logging import metrics
+
+        metrics.reset()
+        metrics.increment("recall.total", 10)
+        metrics.set_gauge("hot_cache.size", 5.0)
+
+        snapshot = metrics.snapshot()
+        assert snapshot["counters"]["recall.total"] == 10
+        assert snapshot["gauges"]["hot_cache.size"] == 5.0
+
+    def test_record_recall_increments_counters(self):
+        """record_recall() updates appropriate counters."""
+        from memory_mcp.logging import metrics, record_recall
+
+        metrics.reset()
+        record_recall(query_length=20, results_count=3, gated_count=1, hot_hit=True, threshold=0.7)
+
+        assert metrics.get_counter("recall.total") == 1
+        assert metrics.get_counter("recall.results_returned") == 3
+        assert metrics.get_counter("recall.results_gated") == 1
+        assert metrics.get_counter("recall.hot_hits") == 1
+
+    def test_record_recall_empty_result(self):
+        """record_recall() tracks empty results."""
+        from memory_mcp.logging import metrics, record_recall
+
+        metrics.reset()
+        record_recall(query_length=20, results_count=0, gated_count=5, hot_hit=False, threshold=0.7)
+
+        assert metrics.get_counter("recall.empty") == 1
+        assert metrics.get_counter("recall.hot_hits") == 0
+
+    def test_record_store_by_type(self):
+        """record_store() tracks stores by type."""
+        from memory_mcp.logging import metrics, record_store
+
+        metrics.reset()
+        record_store(memory_type="project", merged=False, contradictions=0)
+        record_store(memory_type="pattern", merged=True, contradictions=1)
+
+        assert metrics.get_counter("store.total") == 2
+        assert metrics.get_counter("store.type.project") == 1
+        assert metrics.get_counter("store.type.pattern") == 1
+        assert metrics.get_counter("store.merged") == 1
+        assert metrics.get_counter("store.contradictions_found") == 1
+
+    def test_record_mining_counters(self):
+        """record_mining() updates mining counters."""
+        from memory_mcp.logging import metrics, record_mining
+
+        metrics.reset()
+        record_mining(patterns_found=10, patterns_new=7, patterns_updated=3)
+
+        assert metrics.get_counter("mining.runs") == 1
+        assert metrics.get_counter("mining.patterns_found") == 10
+        assert metrics.get_counter("mining.patterns_new") == 7
+        assert metrics.get_counter("mining.patterns_updated") == 3
+
+    def test_record_hot_cache_change(self):
+        """record_hot_cache_change() tracks cache mutations."""
+        from memory_mcp.logging import metrics, record_hot_cache_change
+
+        metrics.reset()
+        record_hot_cache_change(promoted=True)
+        record_hot_cache_change(demoted=True)
+        record_hot_cache_change(evicted=True)
+
+        assert metrics.get_counter("hot_cache.promotions") == 1
+        assert metrics.get_counter("hot_cache.demotions") == 1
+        assert metrics.get_counter("hot_cache.evictions") == 1
+
+    def test_update_hot_cache_stats_gauges(self):
+        """update_hot_cache_stats() sets gauge values."""
+        from memory_mcp.logging import metrics, update_hot_cache_stats
+
+        metrics.reset()
+        update_hot_cache_stats(size=5, max_size=20, pinned=2)
+
+        assert metrics.get_gauge("hot_cache.size") == 5.0
+        assert metrics.get_gauge("hot_cache.max_size") == 20.0
+        assert metrics.get_gauge("hot_cache.pinned") == 2.0
+        assert metrics.get_gauge("hot_cache.utilization") == 0.25
+
+
+class TestLoggingConfiguration:
+    """Tests for logging configuration."""
+
+    def test_configure_logging_default(self):
+        """Default logging configuration works."""
+        from memory_mcp.logging import configure_logging
+
+        # Should not raise
+        configure_logging()
+
+    def test_configure_logging_json_format(self):
+        """JSON logging format can be configured."""
+        from memory_mcp.logging import configure_logging
+
+        # Should not raise
+        configure_logging(level="DEBUG", log_format="json")
+
+        # Reset to default
+        configure_logging()
+
+    def test_configure_logging_levels(self):
+        """Various log levels can be configured."""
+        from memory_mcp.logging import configure_logging
+
+        for level in ["DEBUG", "INFO", "WARNING", "ERROR"]:
+            configure_logging(level=level)
+
+        # Reset to default
+        configure_logging()
+
+    def test_json_serializer_handles_datetime(self):
+        """JSON serializer handles datetime objects."""
+        import json
+        from datetime import datetime, timezone
+
+        from memory_mcp.logging import json_serializer
+
+        record = {
+            "time": datetime.now(timezone.utc),
+            "level": type("Level", (), {"name": "INFO"})(),
+            "extra": {"name": "test"},
+            "name": "test_module",
+            "function": "test_func",
+            "message": "Test message",
+        }
+        result = json_serializer(record)
+        parsed = json.loads(result)
+
+        assert "timestamp" in parsed
+        assert parsed["level"] == "INFO"
+        assert parsed["message"] == "Test message"

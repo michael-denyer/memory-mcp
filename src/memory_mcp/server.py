@@ -6,7 +6,16 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 from memory_mcp.config import find_bootstrap_files, get_settings
-from memory_mcp.logging import get_logger
+from memory_mcp.logging import (
+    configure_logging,
+    get_logger,
+    metrics,
+    record_hot_cache_change,
+    record_mining,
+    record_recall,
+    record_store,
+    update_hot_cache_stats,
+)
 from memory_mcp.storage import (
     Memory,
     MemoryRelation,
@@ -24,6 +33,7 @@ log = get_logger("server")
 
 # Initialize
 settings = get_settings()
+configure_logging(level=settings.log_level, log_format=settings.log_format)
 storage = Storage(settings)
 mcp = FastMCP("memory-mcp")
 
@@ -327,6 +337,9 @@ def remember(
         session_id=session_id,
     )
 
+    # Record metrics (merged=False since we can't detect semantic merges at this level)
+    record_store(memory_type=mem_type.value, merged=not is_new, contradictions=0)
+
     if is_new:
         return success_response(f"Stored as memory #{memory_id}", memory_id=memory_id)
     else:
@@ -428,6 +441,17 @@ def recall(
         threshold=threshold,
         mode=recall_mode,
         memory_types=memory_types,
+    )
+
+    # Record metrics
+    hot_hit = any(m.is_hot for m in result.memories)
+    effective_threshold = threshold or settings.default_confidence_threshold
+    record_recall(
+        query_length=len(query),
+        results_count=len(result.memories),
+        gated_count=result.gated_count,
+        hot_hit=hot_hit,
+        threshold=effective_threshold,
     )
 
     # Generate promotion suggestions for frequently-accessed cold memories
@@ -570,12 +594,12 @@ def hot_cache_status() -> HotCacheResponse:
     """
     stats = storage.get_hot_cache_stats()
     hot_memories = storage.get_hot_memories()
-    metrics = storage.get_hot_cache_metrics()
+    cache_metrics = storage.get_hot_cache_metrics()
 
     # Compute effectiveness metrics
     total_accesses = sum(m.access_count for m in hot_memories)
-    total_reads = metrics.hits + metrics.misses
-    hit_rate = (metrics.hits / total_reads * 100) if total_reads > 0 else 0.0
+    total_reads = cache_metrics.hits + cache_metrics.misses
+    hit_rate = (cache_metrics.hits / total_reads * 100) if total_reads > 0 else 0.0
 
     # Most and least accessed items (for feedback)
     most_accessed = max(hot_memories, key=lambda m: m.access_count) if hot_memories else None
@@ -590,14 +614,14 @@ def hot_cache_status() -> HotCacheResponse:
         pinned_count=stats["pinned_count"],
         avg_hot_score=stats["avg_hot_score"],
         metrics=HotCacheMetricsResponse(
-            hits=metrics.hits,
-            misses=metrics.misses,
-            evictions=metrics.evictions,
-            promotions=metrics.promotions,
+            hits=cache_metrics.hits,
+            misses=cache_metrics.misses,
+            evictions=cache_metrics.evictions,
+            promotions=cache_metrics.promotions,
         ),
         effectiveness=HotCacheEffectivenessResponse(
             total_accesses=total_accesses,
-            estimated_tool_calls_saved=metrics.hits,  # Each hit = 1 recall tool call saved
+            estimated_tool_calls_saved=cache_metrics.hits,  # Each hit = 1 recall tool call saved
             hit_rate_percent=round(hit_rate, 1),
             most_accessed_id=most_accessed.id if most_accessed else None,
             least_accessed_id=least_accessed.id if least_accessed else None,
@@ -606,11 +630,35 @@ def hot_cache_status() -> HotCacheResponse:
 
 
 @mcp.tool
+def metrics_status() -> dict:
+    """Get observability metrics for monitoring and debugging.
+
+    Returns counters and gauges for key operations:
+    - recall: queries, results returned/gated, hot hits, empty results
+    - store: total stores, by type, merges, contradictions
+    - mining: runs, patterns found/new/updated
+    - hot_cache: promotions, demotions, evictions, utilization
+
+    Useful for debugging performance issues, monitoring usage patterns,
+    and understanding system behavior.
+    """
+    # Update hot cache gauges before returning
+    stats = storage.get_hot_cache_stats()
+    update_hot_cache_stats(
+        size=stats["current_count"],
+        max_size=stats["max_items"],
+        pinned=stats["pinned_count"],
+    )
+    return {"success": True, **metrics.snapshot()}
+
+
+@mcp.tool
 def promote(
     memory_id: Annotated[int, Field(description="ID of memory to promote to hot cache")],
 ) -> dict:
     """Manually promote a memory to hot cache for zero-latency access."""
     if storage.promote_to_hot(memory_id):
+        record_hot_cache_change(promoted=True)
         return success_response(f"Memory #{memory_id} promoted to hot cache")
     return error_response(f"Failed to promote memory #{memory_id}")
 
@@ -621,6 +669,7 @@ def demote(
 ) -> dict:
     """Remove a memory from hot cache (keeps in cold storage)."""
     if storage.demote_from_hot(memory_id):
+        record_hot_cache_change(demoted=True)
         return success_response(f"Memory #{memory_id} demoted from hot cache")
     return error_response(f"Failed to demote memory #{memory_id}")
 
@@ -861,6 +910,14 @@ def run_mining(
         result["outputs_processed"],
         result["patterns_found"],
     )
+
+    # Record mining metrics
+    record_mining(
+        patterns_found=result["patterns_found"],
+        patterns_new=result["new_patterns"],
+        patterns_updated=result["updated_patterns"],
+    )
+
     return {"success": True, **result}
 
 
