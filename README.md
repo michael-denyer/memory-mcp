@@ -66,12 +66,44 @@ The system learns what you use and automatically promotes it. No manual curation
 
 ## Quick Start
 
+### Install
+
 ```bash
+# pip (recommended)
+pip install memory-mcp
+
+# pipx (isolated environment)
+pipx install memory-mcp
+
+# Homebrew (macOS)
+brew install memory-mcp
+
+# From source
 git clone https://github.com/michael-denyer/memory-mcp.git
 cd memory-mcp && uv sync
 ```
 
+**Apple Silicon?** Add MLX support for faster embeddings:
+```bash
+pip install memory-mcp[mlx]
+```
+
+### Configure
+
 Add to your MCP client config (e.g., `~/.claude.json` for Claude Code):
+
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "command": "memory-mcp"
+    }
+  }
+}
+```
+
+<details>
+<summary>From source? Use this config instead</summary>
 
 ```json
 {
@@ -83,6 +115,7 @@ Add to your MCP client config (e.g., `~/.claude.json` for Claude Code):
   }
 }
 ```
+</details>
 
 Restart your client. That's it. The hot cache auto-populates from your project docs.
 
@@ -314,8 +347,7 @@ Both clients share the same database - memories learned in one are available in 
 {
   "mcpServers": {
     "memory": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/memory-mcp", "memory-mcp"]
+      "command": "memory-mcp"
     }
   }
 }
@@ -326,8 +358,7 @@ Both clients share the same database - memories learned in one are available in 
 {
   "mcpServers": {
     "memory": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/memory-mcp", "memory-mcp"]
+      "command": "memory-mcp"
     }
   }
 }
@@ -341,8 +372,7 @@ Use different database paths via `MEMORY_MCP_DB_PATH` environment variable:
 {
   "mcpServers": {
     "memory": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/memory-mcp", "memory-mcp"],
+      "command": "memory-mcp",
       "env": {
         "MEMORY_MCP_DB_PATH": "~/.memory-mcp/claude.db"
       }
@@ -392,30 +422,40 @@ Add to `~/.claude/settings.json`:
 
 ```bash
 # Bootstrap hot cache from project docs (auto-detects README.md, CLAUDE.md, etc.)
-uv run memory-mcp-cli bootstrap
+memory-mcp-cli bootstrap
 
 # Bootstrap from specific directory
-uv run memory-mcp-cli bootstrap -r /path/to/project
+memory-mcp-cli bootstrap -r /path/to/project
 
 # Bootstrap specific files only
-uv run memory-mcp-cli bootstrap -f README.md -f ARCHITECTURE.md
+memory-mcp-cli bootstrap -f README.md -f ARCHITECTURE.md
 
 # Log content for mining
-echo "Some content" | uv run memory-mcp-cli log-output
+echo "Some content" | memory-mcp-cli log-output
 
 # Run pattern extraction
-uv run memory-mcp-cli run-mining --hours 24
+memory-mcp-cli run-mining --hours 24
 
 # Seed from a file
-uv run memory-mcp-cli seed ~/project/CLAUDE.md -t project --promote
+memory-mcp-cli seed ~/project/CLAUDE.md -t project --promote
 
 # Consolidate similar memories (preview first with --dry-run)
-uv run memory-mcp-cli consolidate --dry-run
-uv run memory-mcp-cli consolidate
+memory-mcp-cli consolidate --dry-run
+memory-mcp-cli consolidate
 
 # Show memory system status
-uv run memory-mcp-cli status
+memory-mcp-cli status
 ```
+
+<details>
+<summary>From source? Prefix commands with `uv run`</summary>
+
+```bash
+uv run memory-mcp-cli bootstrap
+uv run memory-mcp-cli status
+# etc.
+```
+</details>
 
 ## Development
 
@@ -466,11 +506,13 @@ Claude: [calls promote(1)]
 
 1. **Check the command works directly**:
    ```bash
-   cd /path/to/memory-mcp
-   uv run memory-mcp
+   memory-mcp
    ```
 
-2. **Verify path in `~/.claude.json`**: The `--directory` path must be absolute
+2. **Verify installation**:
+   ```bash
+   which memory-mcp  # Should return a path
+   ```
 
 3. **Check Python version**: Requires 3.10+
    ```bash
@@ -484,7 +526,7 @@ Claude: [calls promote(1)]
 This happens when the embedding model changes. Rebuild vectors:
 
 ```bash
-uv run memory-mcp-cli db-rebuild-vectors
+memory-mcp-cli db-rebuild-vectors
 ```
 
 ### Hot Cache Not Updating
@@ -493,7 +535,7 @@ uv run memory-mcp-cli db-rebuild-vectors
 
 1. **Check hot cache status**:
    ```bash
-   uv run memory-mcp-cli status
+   memory-mcp-cli status
    ```
 
 2. **Verify memory exists**:
@@ -517,7 +559,7 @@ uv run memory-mcp-cli db-rebuild-vectors
 
 2. **Verify logs exist**:
    ```bash
-   uv run memory-mcp-cli run-mining --hours 24
+   memory-mcp-cli run-mining --hours 24
    ```
 
 3. **Check hook is installed** (see [Automatic Output Logging](#automatic-output-logging))
@@ -538,7 +580,7 @@ uv run memory-mcp-cli db-rebuild-vectors
 
 3. **Test manually**:
    ```bash
-   echo "test content" | uv run memory-mcp-cli log-output
+   echo "test content" | memory-mcp-cli log-output
    ```
 
 ### Slow First Startup
@@ -559,7 +601,7 @@ This is expected - the embedding model (~90MB) downloads on first use. Subsequen
 
 2. **Re-bootstrap from project docs**:
    ```bash
-   uv run memory-mcp-cli bootstrap
+   memory-mcp-cli bootstrap
    ```
 
 ## Security Note
