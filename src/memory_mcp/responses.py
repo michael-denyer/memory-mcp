@@ -168,45 +168,43 @@ class CrossSessionPatternResponse(BaseModel):
 
 
 class SeedResult(BaseModel):
-    """Result of seed operation."""
+    """Result from seeding operation."""
 
-    chunks_processed: int
     memories_created: int
     memories_skipped: int
-    hot_promoted: int
+    errors: list[str]
 
 
 class BootstrapResponse(BaseModel):
-    """Response for bootstrap_project operation."""
+    """Response for bootstrap operation."""
 
     success: bool
-    files_found: int
-    files_processed: int
-    memories_created: int
-    memories_skipped: int
-    hot_cache_promoted: int
-    errors: list[str]
-    message: str
+    files_found: int = 0
+    files_processed: int = 0
+    memories_created: int = 0
+    memories_skipped: int = 0
+    hot_cache_promoted: int = 0
+    errors: list[str] = []
+    message: str = ""
 
 
 # ========== Trust Response Models ==========
 
 
 class TrustResponse(BaseModel):
-    """Response for trust adjustment operations."""
+    """Response for trust operations."""
 
-    success: bool
     memory_id: int
     old_trust: float
     new_trust: float
-    reason: str | None
-    note: str | None
+    message: str
 
 
 class TrustHistoryEntry(BaseModel):
-    """Single trust history entry."""
+    """A single trust history entry."""
 
     id: int
+    memory_id: int
     reason: str
     old_trust: float
     new_trust: float
@@ -220,20 +218,25 @@ class TrustHistoryResponse(BaseModel):
     """Response for trust history query."""
 
     memory_id: int
-    current_trust: float
     entries: list[TrustHistoryEntry]
+    current_trust: float
+    total_changes: int
 
 
 # ========== Maintenance Response Models ==========
 
 
 class MaintenanceResponse(BaseModel):
-    """Response for maintenance operations."""
+    """Response for maintenance operation."""
 
-    success: bool
+    size_before_bytes: int
+    size_after_bytes: int
     bytes_reclaimed: int
     memory_count: int
-    auto_demoted_count: int
+    vector_count: int
+    schema_version: int
+    auto_demoted_count: int = 0
+    auto_demoted_ids: list[int] = []
 
 
 class AuditEntryResponse(BaseModel):
@@ -248,24 +251,23 @@ class AuditEntryResponse(BaseModel):
 
 
 class AuditHistoryResponse(BaseModel):
-    """Response for audit history query."""
+    """Audit history response."""
 
     entries: list[AuditEntryResponse]
-    total_count: int
+    count: int
 
 
 class VectorRebuildResponse(BaseModel):
-    """Response for vector rebuild operations."""
+    """Response from vector rebuild operation."""
 
     success: bool
     vectors_cleared: int
     memories_total: int
     memories_embedded: int
     memories_failed: int
-    old_model: str | None
-    new_model: str
-    old_dimension: int | None
     new_dimension: int
+    new_model: str
+    message: str
 
 
 # ========== Contradiction Response Models ==========

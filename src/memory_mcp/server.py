@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastmcp import FastMCP
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from memory_mcp.config import find_bootstrap_files, get_settings
 from memory_mcp.logging import (
@@ -19,18 +19,31 @@ from memory_mcp.logging import (
 )
 from memory_mcp.models import Memory
 from memory_mcp.responses import (
+    AccessPatternResponse,
+    AuditEntryResponse,
+    AuditHistoryResponse,
+    BootstrapResponse,
+    ContradictionPairResponse,
+    ContradictionResponse,
     CrossSessionPatternResponse,
     FormattedMemory,
     HotCacheEffectivenessResponse,
     HotCacheMetricsResponse,
     HotCacheResponse,
+    MaintenanceResponse,
     MemoryResponse,
+    PredictionResponse,
     RecallResponse,
     RelatedMemoryResponse,
     RelationshipResponse,
     RelationshipStatsResponse,
+    SeedResult,
     SessionResponse,
     StatsResponse,
+    TrustHistoryEntry,
+    TrustHistoryResponse,
+    TrustResponse,
+    VectorRebuildResponse,
     error_response,
     memory_to_response,
     relation_to_response,
@@ -875,14 +888,6 @@ def run_mining(
 # ========== Seeding Tools ==========
 
 
-class SeedResult(BaseModel):
-    """Result from seeding operation."""
-
-    memories_created: int
-    memories_skipped: int
-    errors: list[str]
-
-
 @mcp.tool
 def seed_from_text(
     content: Annotated[str, Field(description="Text content to parse and seed memories from")],
@@ -961,19 +966,6 @@ def seed_from_file(
         return SeedResult(memories_created=0, memories_skipped=0, errors=[f"Read error: {e}"])
 
     return seed_from_text(content=content, memory_type=memory_type, promote_to_hot=promote_to_hot)
-
-
-class BootstrapResponse(BaseModel):
-    """Response for bootstrap operation."""
-
-    success: bool
-    files_found: int = 0
-    files_processed: int = 0
-    memories_created: int = 0
-    memories_skipped: int = 0
-    hot_cache_promoted: int = 0
-    errors: list[str] = Field(default_factory=list)
-    message: str = ""
 
 
 def _empty_bootstrap_response(
@@ -1080,15 +1072,6 @@ def bootstrap_project(
 
 
 # ========== Trust Management Tools ==========
-
-
-class TrustResponse(BaseModel):
-    """Response for trust operations."""
-
-    memory_id: int
-    old_trust: float
-    new_trust: float
-    message: str
 
 
 STRENGTHENING_REASONS = ["used_correctly", "explicitly_confirmed", "cross_validated"]
@@ -1273,29 +1256,6 @@ def invalidate_memory(
     )
 
 
-class TrustHistoryEntry(BaseModel):
-    """A single trust history entry."""
-
-    id: int
-    memory_id: int
-    reason: str
-    old_trust: float
-    new_trust: float
-    delta: float
-    similarity: float | None
-    note: str | None
-    created_at: str
-
-
-class TrustHistoryResponse(BaseModel):
-    """Response for trust history query."""
-
-    memory_id: int
-    entries: list[TrustHistoryEntry]
-    current_trust: float
-    total_changes: int
-
-
 @mcp.tool
 def get_trust_history(
     memory_id: Annotated[int, Field(description="ID of memory to get trust history for")],
@@ -1338,19 +1298,6 @@ def get_trust_history(
 
 
 # ========== Maintenance Tools ==========
-
-
-class MaintenanceResponse(BaseModel):
-    """Response for maintenance operation."""
-
-    size_before_bytes: int
-    size_after_bytes: int
-    bytes_reclaimed: int
-    memory_count: int
-    vector_count: int
-    schema_version: int
-    auto_demoted_count: int = 0
-    auto_demoted_ids: list[int] = Field(default_factory=list)
 
 
 @mcp.tool
@@ -1458,24 +1405,6 @@ def embedding_info() -> dict:
     }
 
 
-class AuditEntryResponse(BaseModel):
-    """Single audit log entry."""
-
-    id: int
-    operation: str
-    target_type: str | None
-    target_id: int | None
-    details: str | None
-    timestamp: str
-
-
-class AuditHistoryResponse(BaseModel):
-    """Audit history response."""
-
-    entries: list[AuditEntryResponse]
-    count: int
-
-
 @mcp.tool
 def audit_history(
     limit: int = 50,
@@ -1520,19 +1449,6 @@ def audit_history(
 
 
 # ========== Database Maintenance Tools ==========
-
-
-class VectorRebuildResponse(BaseModel):
-    """Response from vector rebuild operation."""
-
-    success: bool
-    vectors_cleared: int
-    memories_total: int
-    memories_embedded: int
-    memories_failed: int
-    new_dimension: int
-    new_model: str
-    message: str
 
 
 @mcp.tool
@@ -1713,23 +1629,6 @@ def relationship_stats() -> RelationshipStatsResponse:
 
 
 # ========== Contradiction Detection Tools ==========
-
-
-class ContradictionResponse(BaseModel):
-    """A potential contradiction between two memories."""
-
-    memory_a: MemoryResponse
-    memory_b: MemoryResponse
-    similarity: float
-    already_linked: bool
-
-
-class ContradictionPairResponse(BaseModel):
-    """An existing contradiction relationship."""
-
-    memory_a: MemoryResponse
-    memory_b: MemoryResponse
-    relationship: RelationshipResponse
 
 
 @mcp.tool
@@ -1922,24 +1821,6 @@ def set_session_topic(
 
 
 # ========== Predictive Hot Cache Tools ==========
-
-
-class AccessPatternResponse(BaseModel):
-    """A learned access pattern between memories."""
-
-    from_memory_id: int
-    to_memory_id: int
-    count: int
-    probability: float
-    last_seen: str
-
-
-class PredictionResponse(BaseModel):
-    """A predicted memory that may be needed next."""
-
-    memory: MemoryResponse
-    probability: float
-    source_memory_id: int
 
 
 @mcp.tool
