@@ -1,10 +1,35 @@
-# Memory MCP Server
+<div align="center">
 
-**Your AI assistant forgets everything when you start a new chat.** This MCP server gives Claude a persistent "second brain" with two-tier memory - frequently-used knowledge is always available (zero latency), while everything else is searchable on demand.
+# 🧠 Memory MCP Server
+
+**Persistent memory for AI assistants with two-tier hot/cold architecture**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Works with Claude Code](https://img.shields.io/badge/Works%20with-Claude%20Code-blueviolet)](https://claude.ai/claude-code)
+[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io)
+
+<br />
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Memory MCP                           │
+├─────────────────────┬───────────────────────────────────┤
+│   HOT CACHE · 0ms   │      COLD STORAGE · ~50ms        │
+│  ┌───────────────┐  │  ┌─────────────────────────────┐  │
+│  │ 📌 Pinned     │  │  │  🔍 Semantic Search         │  │
+│  │ ⭐ Frequent   │  │  │  🕸️  Knowledge Graph         │  │
+│  │ 🆕 Recent     │  │  │  📚 All Memories            │  │
+│  └───────────────┘  │  └─────────────────────────────┘  │
+│   Auto-injected     │      Tool call required          │
+└─────────────────────┴───────────────────────────────────┘
+```
+
+</div>
+
+---
+
+**Your AI assistant forgets everything when you start a new chat.** This MCP server gives Claude a persistent "second brain" with two-tier memory - frequently-used knowledge is always available (zero latency), while everything else is searchable on demand.
 
 ## Why You Need This
 
