@@ -15,6 +15,25 @@
 
 Memory MCP learns what matters and keeps it ready — zero latency for the stuff you use most, semantic search for everything else.
 
+```mermaid
+flowchart LR
+    subgraph Hot["HOT CACHE · 0ms"]
+        direction TB
+        P[📌 Pinned]
+        F[⭐ Frequent]
+        R[🆕 Recent]
+    end
+
+    subgraph Cold["COLD STORAGE · ~50ms"]
+        direction TB
+        S[🔍 Semantic Search]
+        K[🕸️ Knowledge Graph]
+    end
+
+    Hot -->|auto-injected| LLM((Your AI))
+    Cold -->|tool call| LLM
+```
+
 </div>
 
 ---
