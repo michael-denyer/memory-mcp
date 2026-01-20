@@ -2271,6 +2271,10 @@ class Storage:
             for i in range(len(memory_ids) - 1):
                 self.record_access_sequence(memory_ids[i], memory_ids[i + 1])
 
+        # Auto-warm hot cache with predicted next memories (based on top result)
+        if self.settings.predictive_cache_enabled and memories:
+            self.warm_predicted_cache(memories[0].id)
+
         # Auto-strengthen trust for high-similarity matches (confidence-weighted)
         if self.settings.trust_auto_strengthen_on_recall:
             for memory in memories:

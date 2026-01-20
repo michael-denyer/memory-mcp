@@ -55,6 +55,17 @@ class Settings(BaseSettings):
     mining_enabled: bool = Field(default=True, description="Enable pattern mining")
     log_retention_days: int = Field(default=7, description="Days to retain output logs")
 
+    # Auto-approve high-confidence patterns (reduces manual intervention)
+    mining_auto_approve_enabled: bool = Field(
+        default=True, description="Auto-approve patterns meeting confidence/occurrence thresholds"
+    )
+    mining_auto_approve_confidence: float = Field(
+        default=0.8, description="Minimum confidence for auto-approval"
+    )
+    mining_auto_approve_occurrences: int = Field(
+        default=3, description="Minimum occurrences for auto-approval"
+    )
+
     # Logging
     log_level: str = Field(default="INFO", description="Log level: DEBUG, INFO, WARNING, ERROR")
     log_format: str = Field(
@@ -146,9 +157,9 @@ class Settings(BaseSettings):
         default=90, description="Days to retain conversation memories (0 = forever)"
     )
 
-    # Predictive hot cache warming (opt-in)
+    # Predictive hot cache warming (enabled by default for maximum value)
     predictive_cache_enabled: bool = Field(
-        default=False, description="Enable predictive hot cache pre-warming"
+        default=True, description="Enable predictive hot cache pre-warming"
     )
     prediction_threshold: float = Field(
         default=0.3, description="Minimum transition probability for prediction"

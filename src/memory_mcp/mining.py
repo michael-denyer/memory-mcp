@@ -209,13 +209,16 @@ def extract_patterns(text: str) -> list[ExtractedPattern]:
 def run_mining(storage: Storage, hours: int = 24) -> dict:
     """Run pattern mining on recent outputs.
 
-    Returns statistics about patterns found and updated.
+    Returns statistics about patterns found, updated, and auto-approved.
+    High-confidence patterns meeting thresholds are auto-approved and promoted.
     """
     outputs = storage.get_recent_outputs(hours=hours)
+    settings = storage.settings
 
     total_patterns = 0
     new_patterns = 0
     updated_patterns = 0
+    auto_approved = 0
 
     for log_id, content, _ in outputs:
         patterns = extract_patterns(content)
@@ -238,9 +241,38 @@ def run_mining(storage: Storage, hours: int = 24) -> dict:
                 confidence=pattern.confidence,
             )
 
+    # Auto-approve high-confidence patterns if enabled
+    if settings.mining_auto_approve_enabled:
+        from memory_mcp.storage import MemorySource, MemoryType, PatternStatus
+
+        candidates = storage.get_promotion_candidates(threshold=1, status=PatternStatus.PENDING)
+        for candidate in candidates:
+            # Check if meets auto-approve thresholds
+            if (
+                candidate.confidence >= settings.mining_auto_approve_confidence
+                and candidate.occurrence_count >= settings.mining_auto_approve_occurrences
+            ):
+                # Auto-approve: store as memory and promote to hot cache
+                mem_type = MemoryType.PATTERN
+                if candidate.pattern_type == "fact":
+                    mem_type = MemoryType.PROJECT
+                elif candidate.pattern_type == "command":
+                    mem_type = MemoryType.REFERENCE
+
+                memory_id, _ = storage.store_memory(
+                    content=candidate.pattern,
+                    memory_type=mem_type,
+                    source=MemorySource.MINED,
+                    tags=["auto-approved"],
+                )
+                storage.promote_to_hot(memory_id)
+                storage.delete_mined_pattern(candidate.id)
+                auto_approved += 1
+
     return {
         "outputs_processed": len(outputs),
         "patterns_found": total_patterns,
         "new_patterns": new_patterns,
         "updated_patterns": updated_patterns,
+        "auto_approved": auto_approved,
     }

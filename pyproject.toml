@@ -19,14 +19,17 @@ classifiers = [
 ]
 dependencies = [
     "fastmcp>=2.0,<3",  # Pin to v2 for stability until v3 is released
-    "sqlite-vec>=0.1",
-    "sentence-transformers>=3.0",
-    "pydantic>=2.0",
-    "pydantic-settings>=2.0",
-    "loguru>=0.7",
-    "click>=8.0",
-    "rich>=13.0",
+    "sqlite-vec>=0.1,<1",  # Pre-1.0 package - pin to avoid breaking changes
+    "sentence-transformers>=3.0,<4",  # Major version bound for stability
+    "pydantic>=2.0,<3",
+    "pydantic-settings>=2.0,<3",
+    "loguru>=0.7,<1",
+    "click>=8.0,<9",
+    "rich>=13.0,<14",
 ]
+
+[project.optional-dependencies]
+mlx = ["mlx>=0.16", "mlx-lm>=0.1"]  # Apple Silicon acceleration
 
 [project.scripts]
 memory-mcp = "memory_mcp.server:main"
