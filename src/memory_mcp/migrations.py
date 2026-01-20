@@ -12,7 +12,7 @@ from memory_mcp.logging import get_logger
 log = get_logger("migrations")
 
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA = """
 -- Schema version tracking
@@ -336,6 +336,35 @@ def migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     log.info("Created audit_log table for destructive operation tracking")
 
 
+def migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
+    """Add importance scoring and retrieval tracking (research-inspired features).
+
+    - importance_score: MemGPT-inspired admission-time content scoring
+    - retrieval_events: RAG-inspired tracking of recall usage
+    """
+    # Add importance_score column to memories
+    add_column_if_missing(conn, "memories", "importance_score", "REAL DEFAULT 0.5")
+
+    # Create retrieval tracking table (RAG-inspired)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS retrieval_events (
+            id INTEGER PRIMARY KEY,
+            query_hash TEXT NOT NULL,
+            memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            similarity REAL NOT NULL,
+            was_used INTEGER DEFAULT 0,
+            feedback TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_retrieval_query ON retrieval_events(query_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_retrieval_memory ON retrieval_events(memory_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_retrieval_created ON retrieval_events(created_at)")
+    log.info("Added importance_score column and retrieval_events table")
+
+
 # ========== Migration Runner ==========
 
 
@@ -357,6 +386,8 @@ def run_migrations(conn: sqlite3.Connection, from_version: int, settings: Settin
         migrate_v7_to_v8(conn)
     if from_version < 9:
         migrate_v8_to_v9(conn)
+    if from_version < 10:
+        migrate_v9_to_v10(conn)
 
 
 def check_schema_version(conn: sqlite3.Connection) -> None:

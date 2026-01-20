@@ -295,6 +295,12 @@ def recall(
         threshold=effective_threshold,
     )
 
+    # Record retrieval events for quality tracking (RAG-inspired)
+    if result.memories:
+        memory_ids = [m.id for m in result.memories]
+        similarities = [m.similarity or 0.0 for m in result.memories]
+        storage.record_retrieval_event(query, memory_ids, similarities)
+
     # Generate promotion suggestions for frequently-accessed cold memories
     suggestions = get_promotion_suggestions(result.memories) if result.memories else None
 
@@ -1832,6 +1838,141 @@ def predictive_cache_status() -> dict:
             "total_transitions": total_transitions,
         },
     }
+
+
+# ========== Retrieval Quality Tracking (RAG-inspired) ==========
+
+
+@mcp.tool
+def mark_memory_used(
+    memory_id: int,
+    feedback: str | None = None,
+) -> dict:
+    """Mark a memory as actually used/helpful after recall.
+
+    Call this when a recalled memory was useful in your response.
+    Helps improve ranking by tracking which memories are valuable.
+
+    Args:
+        memory_id: ID of the memory that was useful
+        feedback: Optional feedback (e.g., "helpful", "partially_helpful")
+
+    Returns:
+        Success response with update count
+    """
+    updated = storage.mark_retrieval_used(memory_id, feedback=feedback)
+    if updated > 0:
+        return success_response(
+            f"Marked memory {memory_id} as used",
+            updated_count=updated,
+        )
+    return success_response(
+        "No retrieval event found to update (tracking may be disabled)",
+        updated_count=0,
+    )
+
+
+@mcp.tool
+def retrieval_quality_stats(
+    memory_id: int | None = None,
+    days: int = 30,
+) -> dict:
+    """Get retrieval quality statistics.
+
+    Shows which memories are frequently retrieved and actually used.
+    Helps identify high-value and low-utility memories.
+
+    Args:
+        memory_id: Get stats for specific memory (None for global)
+        days: How many days back to analyze (default 30)
+
+    Returns:
+        Statistics on retrieval and usage patterns
+    """
+    stats = storage.get_retrieval_stats(memory_id=memory_id, days=days)
+    return success_response("Retrieval quality stats", **stats)
+
+
+# ========== Memory Consolidation (MemoryBank-inspired) ==========
+
+
+def _parse_memory_type_for_consolidation(
+    memory_type: str | None,
+) -> tuple[MemoryType | None, dict | None]:
+    """Parse memory type string for consolidation tools.
+
+    Returns:
+        Tuple of (parsed MemoryType or None, error response dict or None)
+    """
+    if not memory_type:
+        return None, None
+    mem_type = parse_memory_type(memory_type)
+    if mem_type is None:
+        return None, error_response(f"Invalid memory_type. Use: {[t.value for t in MemoryType]}")
+    return mem_type, None
+
+
+@mcp.tool
+def preview_consolidation(
+    memory_type: str | None = None,
+) -> dict:
+    """Preview memory consolidation without making changes.
+
+    Shows clusters of similar memories that could be merged.
+    Use this before running actual consolidation to review changes.
+
+    Args:
+        memory_type: Filter by type (project/pattern/reference/conversation)
+
+    Returns:
+        Preview of clusters and potential space savings
+    """
+    mem_type, err = _parse_memory_type_for_consolidation(memory_type)
+    if err:
+        return err
+
+    result = storage.preview_consolidation(memory_type=mem_type)
+    return success_response(
+        f"Found {result['cluster_count']} clusters "
+        f"({result['memories_to_delete']} memories can be merged)",
+        **result,
+    )
+
+
+@mcp.tool
+def run_consolidation(
+    memory_type: str | None = None,
+    dry_run: bool = True,
+) -> dict:
+    """Consolidate similar memories by merging near-duplicates.
+
+    Finds clusters of semantically similar memories and merges them,
+    keeping the most accessed/valuable one as representative.
+
+    Args:
+        memory_type: Filter by type (project/pattern/reference/conversation)
+        dry_run: If True (default), only preview without making changes
+
+    Returns:
+        Consolidation results (clusters processed, memories deleted)
+    """
+    mem_type, err = _parse_memory_type_for_consolidation(memory_type)
+    if err:
+        return err
+
+    result = storage.run_consolidation(memory_type=mem_type, dry_run=dry_run)
+
+    if dry_run:
+        return success_response(
+            f"DRY RUN: Would process {result.get('cluster_count', 0)} clusters",
+            **result,
+        )
+
+    return success_response(
+        f"Consolidated {result['clusters_processed']} clusters, "
+        f"deleted {result['memories_deleted']} duplicate memories",
+        **result,
+    )
 
 
 # ========== Entry Point ==========

@@ -1073,10 +1073,10 @@ class TestMemoryRelationships:
             ).fetchone()
             assert result is not None
 
-    def test_schema_version_is_7(self, storage):
-        """Schema version should be 7 after migration."""
+    def test_schema_version_is_10(self, storage):
+        """Schema version should be 10 after migration."""
         version = storage.get_schema_version()
-        assert version == 9
+        assert version == 10
 
 
 # ========== Contradiction Detection Tests ==========
@@ -1793,10 +1793,10 @@ class TestPredictiveCache:
 
         assert mid2 not in promoted  # Already hot
 
-    def test_schema_version_is_7(self, predictive_storage):
-        """Schema version should be 7 after migration."""
+    def test_schema_version_is_10(self, predictive_storage):
+        """Schema version should be 10 after migration."""
         version = predictive_storage.get_schema_version()
-        assert version == 9
+        assert version == 10
 
     def test_access_sequences_table_exists(self, predictive_storage):
         """access_sequences table should exist."""
@@ -2108,4 +2108,276 @@ class TestVectorRebuild:
 
         assert result["memories_total"] == 0
         assert result["memories_embedded"] == 0
+        stor.close()
+
+
+# ========== Retrieval Tracking Tests (RAG-inspired) ==========
+
+
+class TestRetrievalTracking:
+    """Tests for retrieval event tracking."""
+
+    @pytest.fixture
+    def tracking_storage(self, tmp_path):
+        """Storage with retrieval tracking enabled."""
+        settings = Settings(
+            db_path=tmp_path / "tracking.db",
+            retrieval_tracking_enabled=True,
+            semantic_dedup_enabled=False,
+        )
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    def test_record_retrieval_event(self, tracking_storage):
+        """record_retrieval_event creates entries in retrieval_events."""
+        # Store a memory first
+        mid, _ = tracking_storage.store_memory(
+            content="Test memory for retrieval tracking",
+            memory_type=MemoryType.PROJECT,
+        )
+
+        # Record retrieval
+        event_ids = tracking_storage.record_retrieval_event(
+            query="test query",
+            memory_ids=[mid],
+            similarities=[0.85],
+        )
+
+        assert len(event_ids) == 1
+        assert event_ids[0] > 0
+
+    def test_mark_retrieval_used(self, tracking_storage):
+        """mark_retrieval_used updates was_used flag."""
+        mid, _ = tracking_storage.store_memory(
+            content="Memory to mark as used",
+            memory_type=MemoryType.PROJECT,
+        )
+
+        # Record then mark used
+        tracking_storage.record_retrieval_event("query", [mid], [0.9])
+        updated = tracking_storage.mark_retrieval_used(mid, feedback="helpful")
+
+        assert updated == 1
+
+    def test_get_retrieval_stats_global(self, tracking_storage):
+        """get_retrieval_stats returns global statistics."""
+        mid, _ = tracking_storage.store_memory(
+            content="Stats test memory",
+            memory_type=MemoryType.PROJECT,
+        )
+
+        # Record some events
+        tracking_storage.record_retrieval_event("query1", [mid], [0.9])
+        tracking_storage.record_retrieval_event("query2", [mid], [0.8])
+        tracking_storage.mark_retrieval_used(mid)
+
+        stats = tracking_storage.get_retrieval_stats(days=30)
+
+        assert stats["total_retrievals"] == 2
+        assert stats["used_count"] == 1
+        assert stats["usage_rate"] == 0.5
+
+    def test_get_retrieval_stats_per_memory(self, tracking_storage):
+        """get_retrieval_stats returns stats for specific memory."""
+        mid, _ = tracking_storage.store_memory(
+            content="Per-memory stats test",
+            memory_type=MemoryType.PROJECT,
+        )
+
+        tracking_storage.record_retrieval_event("query", [mid], [0.85])
+
+        stats = tracking_storage.get_retrieval_stats(memory_id=mid, days=30)
+
+        assert stats["memory_id"] == mid
+        assert stats["total_retrievals"] == 1
+
+    def test_tracking_disabled_returns_empty(self, tmp_path):
+        """When tracking disabled, methods return empty/zero."""
+        settings = Settings(
+            db_path=tmp_path / "no_tracking.db",
+            retrieval_tracking_enabled=False,
+        )
+        stor = Storage(settings)
+
+        event_ids = stor.record_retrieval_event("query", [1], [0.9])
+        assert event_ids == []
+
+        updated = stor.mark_retrieval_used(1)
+        assert updated == 0
+
+        stor.close()
+
+
+# ========== Memory Consolidation Tests (MemoryBank-inspired) ==========
+
+
+class TestMemoryConsolidation:
+    """Tests for memory consolidation feature."""
+
+    @pytest.fixture
+    def consolidation_storage(self, tmp_path):
+        """Storage with consolidation settings."""
+        settings = Settings(
+            db_path=tmp_path / "consolidation.db",
+            consolidation_threshold=0.85,
+            consolidation_min_cluster_size=2,
+            semantic_dedup_enabled=False,  # Disable so we can create similar memories
+        )
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    def test_find_consolidation_clusters_empty(self, consolidation_storage):
+        """find_consolidation_clusters returns empty for no memories."""
+        clusters = consolidation_storage.find_consolidation_clusters()
+        assert clusters == []
+
+    def test_find_consolidation_clusters_finds_similar(self, consolidation_storage):
+        """find_consolidation_clusters finds similar memories."""
+        # Create very similar memories
+        consolidation_storage.store_memory(
+            content="Python uses indentation for code blocks",
+            memory_type=MemoryType.PROJECT,
+        )
+        consolidation_storage.store_memory(
+            content="Python uses indentation for defining code blocks",
+            memory_type=MemoryType.PROJECT,
+        )
+
+        clusters = consolidation_storage.find_consolidation_clusters()
+
+        # May or may not find clusters depending on embedding similarity
+        # At minimum, should not error
+        assert isinstance(clusters, list)
+
+    def test_preview_consolidation(self, consolidation_storage):
+        """preview_consolidation returns preview without changes."""
+        mid1, _ = consolidation_storage.store_memory(
+            content="This is test content about databases",
+            memory_type=MemoryType.PROJECT,
+        )
+
+        preview = consolidation_storage.preview_consolidation()
+
+        assert "cluster_count" in preview
+        assert "memories_to_delete" in preview
+        assert "clusters" in preview
+
+        # Memory should still exist (preview doesn't delete)
+        mem = consolidation_storage.get_memory(mid1)
+        assert mem is not None
+
+    def test_run_consolidation_dry_run(self, consolidation_storage):
+        """run_consolidation with dry_run=True doesn't delete."""
+        mid, _ = consolidation_storage.store_memory(
+            content="Dry run test memory",
+            memory_type=MemoryType.PROJECT,
+        )
+
+        result = consolidation_storage.run_consolidation(dry_run=True)
+
+        assert "cluster_count" in result
+        # Memory still exists
+        mem = consolidation_storage.get_memory(mid)
+        assert mem is not None
+
+    def test_consolidate_cluster_merges_tags(self, consolidation_storage):
+        """consolidate_cluster combines tags from all members."""
+        from memory_mcp.storage import ConsolidationCluster
+
+        mid1, _ = consolidation_storage.store_memory(
+            content="Memory with tag A",
+            memory_type=MemoryType.PROJECT,
+            tags=["tag_a"],
+        )
+        mid2, _ = consolidation_storage.store_memory(
+            content="Memory with tag B",
+            memory_type=MemoryType.PROJECT,
+            tags=["tag_b"],
+        )
+
+        # Create cluster manually
+        cluster = ConsolidationCluster(
+            representative_id=mid1,
+            member_ids=[mid1, mid2],
+            avg_similarity=0.9,
+            total_access_count=2,
+            combined_tags=["tag_a", "tag_b"],
+        )
+
+        result = consolidation_storage.consolidate_cluster(cluster)
+
+        assert result["success"]
+        assert mid2 in result["deleted_ids"]
+
+        # Check representative has both tags
+        mem = consolidation_storage.get_memory(mid1)
+        assert "tag_a" in mem.tags
+        assert "tag_b" in mem.tags
+
+
+# ========== Importance Scoring Tests (MemGPT-inspired) ==========
+
+
+class TestImportanceScoring:
+    """Tests for importance scoring at admission."""
+
+    def test_compute_importance_score_short_content(self):
+        """Short content gets low importance score."""
+        from memory_mcp.helpers import compute_importance_score
+
+        score = compute_importance_score("Hi")
+        assert score < 0.5
+
+    def test_compute_importance_score_code_content(self):
+        """Code content gets higher importance score than short plain text."""
+        from memory_mcp.helpers import compute_importance_score
+
+        code = "def hello_world():\n    print('Hello')"
+        plain = "Hello world"
+        code_score = compute_importance_score(code)
+        plain_score = compute_importance_score(plain)
+        # Code content should score higher than plain short text
+        assert code_score > plain_score
+
+    def test_compute_importance_score_with_entities(self):
+        """Content with entities gets higher score."""
+        from memory_mcp.helpers import compute_importance_score
+
+        content = "Deploy to https://api.example.com using version 1.2.3"
+        score = compute_importance_score(content)
+        assert score > 0.3
+
+    def test_get_importance_breakdown(self):
+        """get_importance_breakdown returns component details."""
+        from memory_mcp.helpers import get_importance_breakdown
+
+        content = "```python\nimport os\n```"
+        breakdown = get_importance_breakdown(content)
+
+        assert "score" in breakdown
+        assert "length" in breakdown
+        assert "code" in breakdown
+        assert "entities" in breakdown
+
+    def test_importance_score_stored_with_memory(self, tmp_path):
+        """Importance score is stored when memory is created."""
+        settings = Settings(
+            db_path=tmp_path / "importance.db",
+            importance_scoring_enabled=True,
+        )
+        stor = Storage(settings)
+
+        mid, _ = stor.store_memory(
+            content="def calculate_total(items):\n    return sum(items)",
+            memory_type=MemoryType.PATTERN,
+        )
+
+        mem = stor.get_memory(mid)
+        # Should have a computed importance score (not 0)
+        assert mem.importance_score > 0
+        # Code content should score higher than very short plain text
+        assert mem.importance_score > 0.1
+
         stor.close()

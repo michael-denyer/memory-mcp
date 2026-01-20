@@ -31,6 +31,7 @@ from memory_mcp.models import (
     AccessPattern,
     AuditEntry,
     AuditOperation,
+    ConsolidationCluster,
     HotCacheMetrics,
     Memory,
     MemoryRelation,
@@ -45,6 +46,7 @@ from memory_mcp.models import (
     RecallModeConfig,
     RecallResult,
     RelationType,
+    RetrievalEvent,
     ScoreBreakdown,
     SemanticMergeResult,
     Session,
@@ -79,6 +81,8 @@ __all__ = [
     "PredictionResult",
     "SemanticMergeResult",
     "AuditEntry",
+    "RetrievalEvent",
+    "ConsolidationCluster",
     # Constants
     "TRUST_REASON_DEFAULTS",
     # Classes
@@ -879,6 +883,18 @@ class Storage:
         }
         trust_score = trust_scores.get(source, self.settings.trust_score_mined)
 
+        # Compute importance score at admission time (MemGPT-inspired)
+        importance_score = 0.5  # Default
+        if self.settings.importance_scoring_enabled:
+            from memory_mcp.helpers import compute_importance_score
+
+            importance_score = compute_importance_score(
+                content,
+                self.settings.importance_length_weight,
+                self.settings.importance_code_weight,
+                self.settings.importance_entity_weight,
+            )
+
         with self.transaction() as conn:
             # Check if memory already exists
             existing = conn.execute(
@@ -936,9 +952,9 @@ class Storage:
                 """
                 INSERT INTO memories (
                     content, content_hash, memory_type, source, is_hot,
-                    trust_score, source_log_id, extracted_at, session_id
+                    trust_score, importance_score, source_log_id, extracted_at, session_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING id
                 """,
                 (
@@ -948,6 +964,7 @@ class Storage:
                     source.value,
                     int(is_hot),
                     trust_score,
+                    importance_score,
                     source_log_id,
                     extracted_at,
                     session_id,
@@ -1034,6 +1051,8 @@ class Storage:
         is_pinned = bool(self._get_row_value(row, "is_pinned", False))
         trust_score_val = self._get_row_value(row, "trust_score", 1.0)
         trust_score = trust_score_val if trust_score_val is not None else 1.0
+        importance_score_val = self._get_row_value(row, "importance_score", 0.5)
+        importance_score = importance_score_val if importance_score_val is not None else 0.5
         source_log_id = self._get_row_value(row, "source_log_id")
         extracted_at_str = self._get_row_value(row, "extracted_at")
         extracted_at = datetime.fromisoformat(extracted_at_str) if extracted_at_str else None
@@ -1055,6 +1074,7 @@ class Storage:
             last_accessed_at=last_accessed_dt,
             created_at=datetime.fromisoformat(row["created_at"]),
             trust_score=trust_score,
+            importance_score=importance_score,
             source_log_id=source_log_id,
             extracted_at=extracted_at,
             session_id=session_id,
@@ -3478,3 +3498,543 @@ class Storage:
                 return len(chunk) > 0 and non_text / len(chunk) > 0.30
         except OSError:
             return False  # Can't read, let the main read handle the error
+
+    # ========== Retrieval Tracking (RAG-inspired) ==========
+
+    def record_retrieval_event(
+        self,
+        query: str,
+        memory_ids: list[int],
+        similarities: list[float],
+    ) -> list[int]:
+        """Record which memories were retrieved for a query.
+
+        Called after recall() to log which memories were returned.
+        Enables tracking usage patterns for ranking feedback.
+
+        Args:
+            query: The recall query text
+            memory_ids: IDs of memories returned
+            similarities: Similarity scores for each memory
+
+        Returns:
+            List of retrieval event IDs
+        """
+        if not self.settings.retrieval_tracking_enabled:
+            return []
+
+        query_hash = content_hash(query)
+        event_ids = []
+
+        with self.transaction() as conn:
+            for memory_id, similarity in zip(memory_ids, similarities):
+                cursor = conn.execute(
+                    """
+                    INSERT INTO retrieval_events
+                        (query_hash, memory_id, similarity, was_used, feedback)
+                    VALUES (?, ?, ?, 0, NULL)
+                    """,
+                    (query_hash, memory_id, similarity),
+                )
+                event_ids.append(cursor.lastrowid)
+
+        log.debug(
+            "Recorded {} retrieval events for query_hash={}",
+            len(event_ids),
+            query_hash[:8],
+        )
+        return event_ids
+
+    def mark_retrieval_used(
+        self,
+        memory_id: int,
+        query: str | None = None,
+        feedback: str | None = None,
+    ) -> int:
+        """Mark a retrieved memory as actually used by the LLM.
+
+        Called when user/system confirms a memory was helpful.
+        If query is provided, marks the specific retrieval event.
+        Otherwise, marks the most recent retrieval for this memory.
+
+        Args:
+            memory_id: ID of the memory that was used
+            query: Optional query to match specific retrieval
+            feedback: Optional feedback (e.g., "helpful", "partially_helpful")
+
+        Returns:
+            Number of retrieval events updated
+        """
+        if not self.settings.retrieval_tracking_enabled:
+            return 0
+
+        with self.transaction() as conn:
+            if query:
+                query_hash = content_hash(query)
+                cursor = conn.execute(
+                    """
+                    UPDATE retrieval_events
+                    SET was_used = 1, feedback = COALESCE(?, feedback)
+                    WHERE memory_id = ? AND query_hash = ?
+                    """,
+                    (feedback, memory_id, query_hash),
+                )
+            else:
+                # Mark most recent retrieval for this memory
+                cursor = conn.execute(
+                    """
+                    UPDATE retrieval_events
+                    SET was_used = 1, feedback = COALESCE(?, feedback)
+                    WHERE id = (
+                        SELECT id FROM retrieval_events
+                        WHERE memory_id = ?
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    )
+                    """,
+                    (feedback, memory_id),
+                )
+
+            updated = cursor.rowcount
+            if updated > 0:
+                log.debug(
+                    "Marked {} retrieval(s) as used for memory_id={}",
+                    updated,
+                    memory_id,
+                )
+            return updated
+
+    def get_retrieval_stats(
+        self,
+        memory_id: int | None = None,
+        days: int = 30,
+    ) -> dict:
+        """Get retrieval quality statistics.
+
+        Args:
+            memory_id: Optional memory ID to get stats for (None = all)
+            days: How many days back to analyze
+
+        Returns:
+            Dictionary with retrieval quality metrics
+        """
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+
+        with self._connection() as conn:
+            if memory_id:
+                # Stats for specific memory
+                row = conn.execute(
+                    """
+                    SELECT
+                        COUNT(*) as total_retrievals,
+                        SUM(was_used) as used_count,
+                        AVG(similarity) as avg_similarity,
+                        AVG(CASE WHEN was_used = 1 THEN similarity END) as avg_used_sim
+                    FROM retrieval_events
+                    WHERE memory_id = ? AND created_at >= ?
+                    """,
+                    (memory_id, cutoff),
+                ).fetchone()
+
+                total = row["total_retrievals"] or 0
+                used = row["used_count"] or 0
+                usage_rate = used / total if total > 0 else 0.0
+
+                return {
+                    "memory_id": memory_id,
+                    "days": days,
+                    "total_retrievals": total,
+                    "used_count": used,
+                    "usage_rate": round(usage_rate, 3),
+                    "avg_similarity": round(row["avg_similarity"] or 0, 3),
+                    "avg_used_similarity": round(row["avg_used_sim"] or 0, 3),
+                }
+            else:
+                # Global stats
+                row = conn.execute(
+                    """
+                    SELECT
+                        COUNT(*) as total_retrievals,
+                        SUM(was_used) as used_count,
+                        COUNT(DISTINCT memory_id) as unique_memories,
+                        COUNT(DISTINCT query_hash) as unique_queries,
+                        AVG(similarity) as avg_similarity
+                    FROM retrieval_events
+                    WHERE created_at >= ?
+                    """,
+                    (cutoff,),
+                ).fetchone()
+
+                total = row["total_retrievals"] or 0
+                used = row["used_count"] or 0
+                usage_rate = used / total if total > 0 else 0.0
+
+                # Top used memories
+                top_used = conn.execute(
+                    """
+                    SELECT memory_id, COUNT(*) as retrieval_count,
+                           SUM(was_used) as used_count
+                    FROM retrieval_events
+                    WHERE created_at >= ?
+                    GROUP BY memory_id
+                    ORDER BY used_count DESC
+                    LIMIT 5
+                    """,
+                    (cutoff,),
+                ).fetchall()
+
+                # Least useful (retrieved but rarely used)
+                least_useful = conn.execute(
+                    """
+                    SELECT memory_id, COUNT(*) as retrieval_count,
+                           SUM(was_used) as used_count
+                    FROM retrieval_events
+                    WHERE created_at >= ?
+                    GROUP BY memory_id
+                    HAVING COUNT(*) >= 3 AND SUM(was_used) = 0
+                    ORDER BY retrieval_count DESC
+                    LIMIT 5
+                    """,
+                    (cutoff,),
+                ).fetchall()
+
+                return {
+                    "days": days,
+                    "total_retrievals": total,
+                    "used_count": used,
+                    "usage_rate": round(usage_rate, 3),
+                    "unique_memories": row["unique_memories"] or 0,
+                    "unique_queries": row["unique_queries"] or 0,
+                    "avg_similarity": round(row["avg_similarity"] or 0, 3),
+                    "top_used_memories": [
+                        {
+                            "memory_id": r["memory_id"],
+                            "retrieval_count": r["retrieval_count"],
+                            "used_count": r["used_count"],
+                        }
+                        for r in top_used
+                    ],
+                    "least_useful_memories": [
+                        {
+                            "memory_id": r["memory_id"],
+                            "retrieval_count": r["retrieval_count"],
+                        }
+                        for r in least_useful
+                    ],
+                }
+
+    def cleanup_old_retrieval_events(self, days: int = 90) -> int:
+        """Remove old retrieval events to manage table size.
+
+        Args:
+            days: Delete events older than this many days
+
+        Returns:
+            Number of events deleted
+        """
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM retrieval_events WHERE created_at < ?",
+                (cutoff,),
+            )
+            deleted = cursor.rowcount
+            if deleted > 0:
+                log.info("Cleaned up {} old retrieval events (>{} days)", deleted, days)
+            return deleted
+
+    # ========== Memory Consolidation (MemoryBank-inspired) ==========
+
+    def find_consolidation_clusters(
+        self,
+        memory_type: MemoryType | None = None,
+        threshold: float | None = None,
+        min_cluster_size: int | None = None,
+    ) -> list[ConsolidationCluster]:
+        """Find clusters of similar memories that could be consolidated.
+
+        Uses vector similarity to group near-duplicates.
+
+        Args:
+            memory_type: Optional filter by memory type
+            threshold: Similarity threshold (default from settings)
+            min_cluster_size: Minimum memories to form cluster (default from settings)
+
+        Returns:
+            List of ConsolidationCluster objects
+        """
+        threshold = threshold or self.settings.consolidation_threshold
+        min_size = min_cluster_size or self.settings.consolidation_min_cluster_size
+
+        # Get all memories (optionally filtered)
+        with self._connection() as conn:
+            if memory_type:
+                rows = conn.execute(
+                    """
+                    SELECT id, content, access_count, is_hot, is_pinned
+                    FROM memories
+                    WHERE memory_type = ?
+                    ORDER BY access_count DESC
+                    """,
+                    (memory_type.value,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, content, access_count, is_hot, is_pinned
+                    FROM memories
+                    ORDER BY access_count DESC
+                    """
+                ).fetchall()
+
+        if len(rows) < min_size:
+            return []
+
+        # Build similarity matrix using embeddings
+        memory_ids = [r["id"] for r in rows]
+        contents = [r["content"] for r in rows]
+        access_counts = {r["id"]: r["access_count"] for r in rows}
+        is_hot = {r["id"]: r["is_hot"] for r in rows}
+        is_pinned = {r["id"]: r["is_pinned"] for r in rows}
+
+        # Get embeddings for all memories
+        embeddings = []
+        for content in contents:
+            emb = self._embedding_engine.embed(content)
+            embeddings.append(emb)
+
+        embeddings_array = np.array(embeddings)
+
+        # Find clusters using greedy approach
+        clusters: list[ConsolidationCluster] = []
+        assigned: set[int] = set()
+
+        for i, mem_id in enumerate(memory_ids):
+            if mem_id in assigned:
+                continue
+
+            # Skip pinned memories as cluster seeds
+            if is_pinned.get(mem_id):
+                continue
+
+            # Find similar memories
+            cluster_members = [mem_id]
+            similarities = []
+
+            for j, other_id in enumerate(memory_ids):
+                if i == j or other_id in assigned:
+                    continue
+
+                # Compute cosine similarity
+                norm_i = np.linalg.norm(embeddings_array[i])
+                norm_j = np.linalg.norm(embeddings_array[j])
+                if norm_i > 0 and norm_j > 0:
+                    sim = float(
+                        np.dot(embeddings_array[i], embeddings_array[j]) / (norm_i * norm_j)
+                    )
+                else:
+                    sim = 0.0
+
+                if sim >= threshold:
+                    cluster_members.append(other_id)
+                    similarities.append(sim)
+
+            if len(cluster_members) >= min_size:
+                # Get tags for all members
+                all_tags: set[str] = set()
+                for mid in cluster_members:
+                    memory = self.get_memory(mid)
+                    if memory:
+                        all_tags.update(memory.tags)
+
+                # Choose representative: prefer hot, then highest access count
+                representative = max(
+                    cluster_members,
+                    key=lambda mid: (is_hot.get(mid, 0), access_counts.get(mid, 0)),
+                )
+
+                avg_sim = sum(similarities) / len(similarities) if similarities else 1.0
+                clusters.append(
+                    ConsolidationCluster(
+                        representative_id=representative,
+                        member_ids=cluster_members,
+                        avg_similarity=avg_sim,
+                        total_access_count=sum(access_counts.get(m, 0) for m in cluster_members),
+                        combined_tags=sorted(all_tags),
+                    )
+                )
+
+                assigned.update(cluster_members)
+
+        log.info(
+            "Found {} consolidation clusters from {} memories",
+            len(clusters),
+            len(memory_ids),
+        )
+        return clusters
+
+    def consolidate_cluster(
+        self,
+        cluster: ConsolidationCluster,
+    ) -> dict:
+        """Consolidate a cluster by merging members into representative.
+
+        Args:
+            cluster: The cluster to consolidate
+
+        Returns:
+            Dict with consolidation results
+        """
+        if len(cluster.member_ids) < 2:
+            return {"success": False, "error": "Cluster too small"}
+
+        # Get representative memory
+        representative = self.get_memory(cluster.representative_id)
+        if not representative:
+            return {"success": False, "error": "Representative memory not found"}
+
+        deleted_ids = []
+        new_tags: set[str] = set()
+
+        with self.transaction() as conn:
+            # Update representative with combined tags
+            existing_tags = set(representative.tags)
+            new_tags = set(cluster.combined_tags) - existing_tags
+
+            for tag in new_tags:
+                conn.execute(
+                    "INSERT OR IGNORE INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                    (cluster.representative_id, tag),
+                )
+
+            # Update access count to reflect combined usage
+            conn.execute(
+                """
+                UPDATE memories
+                SET access_count = ?,
+                    last_accessed_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (cluster.total_access_count, cluster.representative_id),
+            )
+
+            # Delete non-representative members
+            for member_id in cluster.member_ids:
+                if member_id != cluster.representative_id:
+                    # Delete vectors
+                    conn.execute(
+                        "DELETE FROM memory_vectors WHERE rowid = ?",
+                        (member_id,),
+                    )
+                    # Delete memory
+                    conn.execute(
+                        "DELETE FROM memories WHERE id = ?",
+                        (member_id,),
+                    )
+                    deleted_ids.append(member_id)
+
+            # Record in audit log
+            self._record_audit(
+                conn,
+                AuditOperation.CLEANUP_MEMORIES,
+                target_type="consolidation",
+                target_id=cluster.representative_id,
+                details=json.dumps(
+                    {
+                        "merged_count": len(deleted_ids),
+                        "deleted_ids": deleted_ids,
+                        "avg_similarity": cluster.avg_similarity,
+                    }
+                ),
+            )
+
+        log.info(
+            "Consolidated cluster: kept id={}, deleted {} members",
+            cluster.representative_id,
+            len(deleted_ids),
+        )
+
+        return {
+            "success": True,
+            "representative_id": cluster.representative_id,
+            "deleted_count": len(deleted_ids),
+            "deleted_ids": deleted_ids,
+            "tags_added": list(new_tags),
+        }
+
+    def preview_consolidation(
+        self,
+        memory_type: MemoryType | None = None,
+    ) -> dict:
+        """Preview what consolidation would do without making changes.
+
+        Args:
+            memory_type: Optional filter by memory type
+
+        Returns:
+            Preview of consolidation results
+        """
+        clusters = self.find_consolidation_clusters(memory_type=memory_type)
+
+        total_memories = sum(len(c.member_ids) for c in clusters)
+        memories_to_delete = sum(len(c.member_ids) - 1 for c in clusters)
+
+        pct = memories_to_delete / total_memories * 100 if total_memories > 0 else 0
+
+        return {
+            "cluster_count": len(clusters),
+            "total_memories_in_clusters": total_memories,
+            "memories_to_delete": memories_to_delete,
+            "space_savings_pct": round(pct, 1),
+            "clusters": [
+                {
+                    "representative_id": c.representative_id,
+                    "member_count": len(c.member_ids),
+                    "avg_similarity": round(c.avg_similarity, 3),
+                    "total_access_count": c.total_access_count,
+                }
+                for c in clusters
+            ],
+        }
+
+    def run_consolidation(
+        self,
+        memory_type: MemoryType | None = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """Run consolidation on all eligible clusters.
+
+        Args:
+            memory_type: Optional filter by memory type
+            dry_run: If True, only preview without making changes
+
+        Returns:
+            Consolidation results
+        """
+        if dry_run:
+            return self.preview_consolidation(memory_type=memory_type)
+
+        clusters = self.find_consolidation_clusters(memory_type=memory_type)
+
+        results: dict = {
+            "clusters_processed": 0,
+            "memories_deleted": 0,
+            "errors": [],
+        }
+
+        for cluster in clusters:
+            result = self.consolidate_cluster(cluster)
+            if result.get("success"):
+                results["clusters_processed"] += 1
+                results["memories_deleted"] += result.get("deleted_count", 0)
+            else:
+                results["errors"].append(result.get("error"))
+
+        log.info(
+            "Consolidation complete: {} clusters, {} memories deleted",
+            results["clusters_processed"],
+            results["memories_deleted"],
+        )
+
+        return results

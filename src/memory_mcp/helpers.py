@@ -4,6 +4,7 @@ This module contains utility functions used by server.py tools for
 validation, formatting, and response building.
 """
 
+import re
 from datetime import datetime, timezone
 
 from memory_mcp.models import Memory, MemoryType
@@ -216,3 +217,109 @@ def build_ranking_factors(
         f"Ranked by: similarity ({sim_w}%) + recency ({rec_w}%) + access ({acc_w}%)"
     )
     return f"{prefix} | {base}" if prefix else base
+
+
+# ========== Importance Scoring (MemGPT-inspired) ==========
+
+# Pattern definitions for importance scoring
+_CODE_INDICATORS = [
+    r"```",  # Code blocks
+    r"def\s+\w+\s*\(",  # Python functions
+    r"class\s+\w+",  # Classes
+    r"import\s+\w+",  # Imports
+    r"function\s+\w+",  # JS functions
+    r"\w+\s*=\s*['\"]",  # Assignments
+    r"npm\s+\w+|pip\s+\w+|uv\s+\w+",  # Package commands
+    r"git\s+\w+",  # Git commands
+]
+
+_ENTITY_PATTERNS = [
+    r"/[\w/.-]+",  # File paths
+    r"https?://\S+",  # URLs
+    r"[A-Z][a-z]+(?:[A-Z][a-z]+)+",  # CamelCase names
+    r"\b[A-Z]{2,}\b",  # ACRONYMS
+    r"\b\d+\.\d+\.\d+\b",  # Version numbers
+    r"@\w+",  # Mentions/decorators
+]
+
+
+def _compute_length_score(length: int) -> float:
+    """Compute length-based importance score (optimal around 200-500 chars)."""
+    if length < 20:
+        return 0.2  # Too short, low value
+    if length < 100:
+        return 0.5
+    if length < 500:
+        return 1.0  # Sweet spot
+    if length < 2000:
+        return 0.8  # Still good but might be verbose
+    return 0.6  # Very long, might need summarization
+
+
+def _count_pattern_matches(content: str, patterns: list[str]) -> int:
+    """Count how many patterns match in the content."""
+    return sum(1 for pat in patterns if re.search(pat, content))
+
+
+def compute_importance_score(
+    content: str,
+    length_weight: float = 0.3,
+    code_weight: float = 0.4,
+    entity_weight: float = 0.3,
+) -> float:
+    """Compute importance score for content at admission time.
+
+    Uses simple heuristics to estimate content value:
+    - Length factor: Longer content often has more information
+    - Code factor: Code blocks/patterns are high-value
+    - Entity factor: Named entities, paths, URLs indicate specificity
+
+    Args:
+        content: The memory content to score
+        length_weight: Weight for length component (0-1)
+        code_weight: Weight for code detection component (0-1)
+        entity_weight: Weight for entity density component (0-1)
+
+    Returns:
+        Importance score between 0.0 and 1.0
+    """
+    length_score = _compute_length_score(len(content))
+    code_matches = _count_pattern_matches(content, _CODE_INDICATORS)
+    code_score = min(1.0, code_matches * 0.25)
+    entity_matches = _count_pattern_matches(content, _ENTITY_PATTERNS)
+    entity_score = min(1.0, entity_matches * 0.2)
+
+    total = length_score * length_weight + code_score * code_weight + entity_score * entity_weight
+
+    return round(min(1.0, max(0.0, total)), 3)
+
+
+def get_importance_breakdown(
+    content: str,
+    length_weight: float = 0.3,
+    code_weight: float = 0.4,
+    entity_weight: float = 0.3,
+) -> dict:
+    """Get detailed breakdown of importance score components.
+
+    Useful for debugging and transparency.
+    """
+    length = len(content)
+    length_score = _compute_length_score(length)
+    code_matches = _count_pattern_matches(content, _CODE_INDICATORS)
+    code_score = min(1.0, code_matches * 0.25)
+    entity_matches = _count_pattern_matches(content, _ENTITY_PATTERNS)
+    entity_score = min(1.0, entity_matches * 0.2)
+
+    total = length_score * length_weight + code_score * code_weight + entity_score * entity_weight
+
+    return {
+        "score": round(min(1.0, max(0.0, total)), 3),
+        "length": {"chars": length, "score": length_score, "weight": length_weight},
+        "code": {"matches": code_matches, "score": code_score, "weight": code_weight},
+        "entities": {
+            "matches": entity_matches,
+            "score": entity_score,
+            "weight": entity_weight,
+        },
+    }

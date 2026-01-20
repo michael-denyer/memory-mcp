@@ -145,6 +145,7 @@ class Memory:
     created_at: datetime
     # Trust and provenance
     trust_score: float = 1.0  # Base trust (decays over time)
+    importance_score: float = 0.5  # Admission-time importance (MemGPT-inspired)
     source_log_id: int | None = None  # For mined memories: originating log
     extracted_at: datetime | None = None  # When pattern was extracted
     session_id: str | None = None  # Conversation session this came from
@@ -310,3 +311,27 @@ class AuditEntry:
     target_id: int | None
     details: str | None
     timestamp: str
+
+
+@dataclass
+class RetrievalEvent:
+    """A record of a memory being retrieved (RAG-inspired tracking)."""
+
+    id: int
+    query_hash: str  # Hash of the query that retrieved this
+    memory_id: int
+    similarity: float
+    was_used: bool  # Whether the LLM actually used this memory
+    feedback: str | None  # Optional feedback (helpful/not helpful)
+    created_at: datetime
+
+
+@dataclass
+class ConsolidationCluster:
+    """A cluster of similar memories for consolidation."""
+
+    representative_id: int  # Best memory to keep as representative
+    member_ids: list[int]  # All memories in this cluster
+    avg_similarity: float  # Average pairwise similarity
+    total_access_count: int  # Sum of access counts
+    combined_tags: list[str]  # Union of all tags

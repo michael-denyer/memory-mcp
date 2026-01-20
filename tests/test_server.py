@@ -652,7 +652,7 @@ class TestContextShaping:
         """format_age returns 'just now' for very recent times."""
         from datetime import datetime, timedelta, timezone
 
-        from memory_mcp.server import format_age
+        from memory_mcp.helpers import format_age
 
         now = datetime.now(timezone.utc)
         recent = now - timedelta(seconds=30)
@@ -662,7 +662,7 @@ class TestContextShaping:
         """format_age returns hours for recent times."""
         from datetime import datetime, timedelta, timezone
 
-        from memory_mcp.server import format_age
+        from memory_mcp.helpers import format_age
 
         now = datetime.now(timezone.utc)
         hours_ago = now - timedelta(hours=5)
@@ -672,7 +672,7 @@ class TestContextShaping:
         """format_age returns days for multi-day times."""
         from datetime import datetime, timedelta, timezone
 
-        from memory_mcp.server import format_age
+        from memory_mcp.helpers import format_age
 
         now = datetime.now(timezone.utc)
         days_ago = now - timedelta(days=3)
@@ -682,7 +682,7 @@ class TestContextShaping:
         """format_age returns weeks for multi-week times."""
         from datetime import datetime, timedelta, timezone
 
-        from memory_mcp.server import format_age
+        from memory_mcp.helpers import format_age
 
         now = datetime.now(timezone.utc)
         weeks_ago = now - timedelta(days=14)
@@ -692,7 +692,7 @@ class TestContextShaping:
         """format_age returns months for multi-month times."""
         from datetime import datetime, timedelta, timezone
 
-        from memory_mcp.server import format_age
+        from memory_mcp.helpers import format_age
 
         now = datetime.now(timezone.utc)
         months_ago = now - timedelta(days=60)
@@ -702,7 +702,7 @@ class TestContextShaping:
         """format_age returns years for multi-year times."""
         from datetime import datetime, timedelta, timezone
 
-        from memory_mcp.server import format_age
+        from memory_mcp.helpers import format_age
 
         now = datetime.now(timezone.utc)
         years_ago = now - timedelta(days=400)
@@ -710,14 +710,14 @@ class TestContextShaping:
 
     def test_summarize_content_short_text(self):
         """summarize_content returns short text unchanged."""
-        from memory_mcp.server import summarize_content
+        from memory_mcp.helpers import summarize_content
 
         content = "This is a short fact about the project."
         assert summarize_content(content) == content
 
     def test_summarize_content_long_text_truncates(self):
         """summarize_content truncates long text with ellipsis."""
-        from memory_mcp.server import summarize_content
+        from memory_mcp.helpers import summarize_content
 
         content = "x" * 200
         result = summarize_content(content, max_length=50)
@@ -726,14 +726,14 @@ class TestContextShaping:
 
     def test_summarize_content_multiline_takes_first(self):
         """summarize_content takes first line of multiline text."""
-        from memory_mcp.server import summarize_content
+        from memory_mcp.helpers import summarize_content
 
         content = "First line is important.\nSecond line is detail.\nThird is more."
         assert summarize_content(content) == "First line is important."
 
     def test_summarize_content_code_block_extracts_code(self):
         """summarize_content extracts meaningful content from code blocks."""
-        from memory_mcp.server import summarize_content
+        from memory_mcp.helpers import summarize_content
 
         content = "```python\ndef hello_world():\n    print('hello')\n```"
         result = summarize_content(content)

@@ -181,6 +181,33 @@ class Settings(BaseSettings):
         default=0.92, description="Similarity threshold for merging (0.92 = very similar)"
     )
 
+    # Memory consolidation (MemoryBank-inspired)
+    consolidation_threshold: float = Field(
+        default=0.85, description="Similarity threshold for consolidation clusters"
+    )
+    consolidation_min_cluster_size: int = Field(
+        default=2, description="Minimum memories in a cluster to consolidate"
+    )
+
+    # Importance scoring at admission (MemGPT-inspired)
+    importance_scoring_enabled: bool = Field(
+        default=True, description="Score content importance at remember() time"
+    )
+    importance_length_weight: float = Field(
+        default=0.3, description="Weight for content length in importance score"
+    )
+    importance_code_weight: float = Field(
+        default=0.4, description="Weight for code content in importance score"
+    )
+    importance_entity_weight: float = Field(
+        default=0.3, description="Weight for entity density in importance score"
+    )
+
+    # Retrieval quality tracking (RAG-inspired)
+    retrieval_tracking_enabled: bool = Field(
+        default=True, description="Track which recalled memories were actually used"
+    )
+
     # Recall mode presets
     # Precision mode: high threshold, few results, prioritize similarity
     precision_threshold: float = Field(
