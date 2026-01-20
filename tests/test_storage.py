@@ -2514,3 +2514,111 @@ class TestImportanceScoring:
         assert mem.importance_score > 0.1
 
         stor.close()
+
+
+class TestWorkingSet:
+    """Tests for working set resource functionality."""
+
+    def test_get_working_set_empty_when_disabled(self, tmp_path):
+        """Working set returns empty list when disabled."""
+        settings = Settings(
+            db_path=tmp_path / "ws.db",
+            working_set_enabled=False,
+        )
+        stor = Storage(settings)
+        try:
+            result = stor.get_working_set()
+            assert result == []
+        finally:
+            stor.close()
+
+    def test_get_working_set_includes_hot_memories(self, tmp_path):
+        """Working set includes hot memories when no recent recalls."""
+        settings = Settings(
+            db_path=tmp_path / "ws.db",
+            working_set_enabled=True,
+            working_set_max_items=10,
+            semantic_dedup_enabled=False,
+        )
+        stor = Storage(settings)
+        try:
+            # Create and promote a memory
+            mid, _ = stor.store_memory(
+                content="Hot memory content for working set",
+                memory_type=MemoryType.PROJECT,
+            )
+            stor.promote_to_hot(mid)
+
+            working_set = stor.get_working_set()
+            assert len(working_set) >= 1
+            assert any(m.id == mid for m in working_set)
+        finally:
+            stor.close()
+
+    def test_get_recent_recalls_empty(self, tmp_path):
+        """Recent recalls returns empty when no retrieval events."""
+        settings = Settings(
+            db_path=tmp_path / "ws.db",
+            retrieval_tracking_enabled=True,
+        )
+        stor = Storage(settings)
+        try:
+            result = stor.get_recent_recalls(limit=5)
+            assert result == []
+        finally:
+            stor.close()
+
+    def test_get_recent_recalls_with_used_events(self, tmp_path):
+        """Recent recalls returns memories marked as used."""
+        settings = Settings(
+            db_path=tmp_path / "ws.db",
+            retrieval_tracking_enabled=True,
+            semantic_dedup_enabled=False,
+        )
+        stor = Storage(settings)
+        try:
+            # Create memories
+            mid1, _ = stor.store_memory(
+                content="Memory one for recall test",
+                memory_type=MemoryType.PROJECT,
+            )
+            mid2, _ = stor.store_memory(
+                content="Memory two for recall test",
+                memory_type=MemoryType.PROJECT,
+            )
+
+            # Record retrieval events
+            stor.record_retrieval_event("test query", [mid1, mid2], [0.9, 0.8])
+
+            # Mark one as used
+            stor.mark_retrieval_used(mid1, query="test query")
+
+            # Get recent recalls - should only include used ones
+            recent = stor.get_recent_recalls(limit=5)
+            assert len(recent) == 1
+            assert recent[0].id == mid1
+        finally:
+            stor.close()
+
+    def test_working_set_respects_max_items(self, tmp_path):
+        """Working set caps at max_items setting."""
+        settings = Settings(
+            db_path=tmp_path / "ws.db",
+            working_set_enabled=True,
+            working_set_max_items=3,
+            semantic_dedup_enabled=False,
+        )
+        stor = Storage(settings)
+        try:
+            # Create and promote more memories than max
+            for i in range(5):
+                mid, _ = stor.store_memory(
+                    content=f"Working set memory {i}",
+                    memory_type=MemoryType.PROJECT,
+                )
+                stor.promote_to_hot(mid)
+
+            working_set = stor.get_working_set()
+            assert len(working_set) <= 3
+        finally:
+            stor.close()

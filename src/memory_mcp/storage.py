@@ -3864,6 +3864,102 @@ class Storage:
                 log.info("Cleaned up {} old retrieval events (>{} days)", deleted, days)
             return deleted
 
+    def get_recent_recalls(self, limit: int = 5) -> list[Memory]:
+        """Get memories from recent recall operations.
+
+        Args:
+            limit: Maximum memories to return
+
+        Returns:
+            List of recently recalled memories (most recent first)
+        """
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT m.*
+                FROM memories m
+                INNER JOIN (
+                    SELECT DISTINCT memory_id, MAX(created_at) as last_used
+                    FROM retrieval_events
+                    WHERE was_used = 1
+                    GROUP BY memory_id
+                    ORDER BY last_used DESC
+                    LIMIT ?
+                ) r ON m.id = r.memory_id
+                ORDER BY r.last_used DESC
+                """,
+                (limit,),
+            ).fetchall()
+
+            return [self._row_to_memory(row, conn) for row in rows]
+
+    def get_working_set(self) -> list[Memory]:
+        """Get the working set: recent recalls + predictions + top hot items.
+
+        Combines:
+        1. Recently recalled memories (from retrieval_events with was_used=1)
+        2. Predicted next memories (from access patterns)
+        3. Top salience hot memories (to fill remaining slots)
+
+        Returns:
+            List of memories for the working set, capped at working_set_max_items
+        """
+        if not self.settings.working_set_enabled:
+            return []
+
+        max_items = self.settings.working_set_max_items
+        seen_ids: set[int] = set()
+        working_set: list[Memory] = []
+
+        def add_memory(memory: Memory) -> bool:
+            """Add memory to working set if not seen and not full. Returns True if added."""
+            if memory.id not in seen_ids and len(working_set) < max_items:
+                working_set.append(memory)
+                seen_ids.add(memory.id)
+                return True
+            return False
+
+        # 1. Recent recalls (most valuable - user actually used these)
+        recent_recalls = self.get_recent_recalls(
+            limit=self.settings.working_set_recent_recalls_limit
+        )
+        for memory in recent_recalls:
+            add_memory(memory)
+
+        # 2. Predictions based on recent recalls (use top 3 as seeds)
+        pred_limit = self.settings.working_set_predictions_limit
+        for memory in recent_recalls[:3]:
+            if len(working_set) >= max_items:
+                break
+            for pred in self.predict_next_memories(memory.id, limit=pred_limit):
+                add_memory(pred.memory)
+
+        # 3. Fill with top salience hot memories
+        if len(working_set) < max_items:
+            hot_memories = self._get_hot_memories_by_salience()
+            for memory in hot_memories:
+                add_memory(memory)
+
+        log.debug(
+            "Working set: {} recent recalls, {} total items",
+            len(recent_recalls),
+            len(working_set),
+        )
+        return working_set
+
+    def _get_hot_memories_by_salience(self) -> list[Memory]:
+        """Get hot memories sorted by salience score (highest first)."""
+        hot_memories = self.get_hot_memories()
+        for memory in hot_memories:
+            memory.salience_score = self._compute_salience_score(
+                importance_score=memory.importance_score,
+                trust_score=memory.trust_score,
+                access_count=memory.access_count,
+                last_accessed_at=memory.last_accessed_at,
+            )
+        hot_memories.sort(key=lambda m: m.salience_score or 0, reverse=True)
+        return hot_memories
+
     # ========== Memory Consolidation (MemoryBank-inspired) ==========
 
     def find_consolidation_clusters(

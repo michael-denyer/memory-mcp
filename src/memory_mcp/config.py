@@ -240,6 +240,20 @@ class Settings(BaseSettings):
         default=0.8, description="Score decay for expanded results (0-1)"
     )
 
+    # Working-set resource (Engram-inspired active memory)
+    working_set_enabled: bool = Field(
+        default=True, description="Enable memory://working-set resource"
+    )
+    working_set_max_items: int = Field(
+        default=10, description="Maximum items in working-set resource"
+    )
+    working_set_recent_recalls_limit: int = Field(
+        default=5, description="Recent recalls to include in working set"
+    )
+    working_set_predictions_limit: int = Field(
+        default=3, description="Predicted memories to include in working set"
+    )
+
     # Recall mode presets
     # Precision mode: high threshold, few results, prioritize similarity
     precision_threshold: float = Field(

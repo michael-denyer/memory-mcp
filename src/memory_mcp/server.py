@@ -612,6 +612,27 @@ def _try_auto_bootstrap() -> bool:
     return False
 
 
+def _format_memory_list(memories: list[Memory], header: str) -> str:
+    """Format a list of memories as a resource string.
+
+    Args:
+        memories: List of Memory objects to format
+        header: Header line for the resource (e.g., "[MEMORY: Hot Cache]")
+
+    Returns:
+        Formatted string with header and memory items
+    """
+    max_chars = settings.hot_cache_display_max_chars
+    lines = [header]
+
+    for m in memories:
+        content = m.content[:max_chars] + "..." if len(m.content) > max_chars else m.content
+        tags_str = f" [{', '.join(m.tags[:3])}]" if m.tags else ""
+        lines.append(f"- {content}{tags_str}")
+
+    return "\n".join(lines)
+
+
 @mcp.resource("memory://hot-cache")
 def hot_cache_resource() -> str:
     """Auto-injectable system context with high-confidence patterns.
@@ -626,31 +647,37 @@ def hot_cache_resource() -> str:
     """
     hot_memories = storage.get_hot_memories()
 
-    # Auto-bootstrap if hot cache is empty
-    if not hot_memories:
-        if _try_auto_bootstrap():
-            # Re-fetch after bootstrap
-            hot_memories = storage.get_hot_memories()
+    if not hot_memories and _try_auto_bootstrap():
+        hot_memories = storage.get_hot_memories()
 
     if not hot_memories:
         storage.record_hot_cache_miss()
         return "[MEMORY: Hot cache empty - no frequently-accessed patterns yet]"
 
     storage.record_hot_cache_hit()
-    lines = ["[MEMORY: Hot Cache - High-confidence patterns]"]
-    max_chars = settings.hot_cache_display_max_chars
+    return _format_memory_list(hot_memories, "[MEMORY: Hot Cache - High-confidence patterns]")
 
-    for m in hot_memories:
-        # Truncate long content for context efficiency
-        content = m.content
-        if len(content) > max_chars:
-            content = content[:max_chars] + "..."
 
-        # Limit tags shown (first 3)
-        tags_str = f" [{', '.join(m.tags[:3])}]" if m.tags else ""
-        lines.append(f"- {content}{tags_str}")
+@mcp.resource("memory://working-set")
+def working_set_resource() -> str:
+    """Session-aware active memory context (Engram-inspired).
 
-    return "\n".join(lines)
+    Provides a compact working set of contextually relevant memories:
+    1. Recently recalled memories (that were actually used)
+    2. Predicted next memories (from access pattern learning)
+    3. Top salience hot items (to fill remaining slots)
+
+    Smaller and more focused than hot-cache - designed for active work context.
+    """
+    if not settings.working_set_enabled:
+        return "[MEMORY: Working set disabled]"
+
+    working_set = storage.get_working_set()
+
+    if not working_set:
+        return "[MEMORY: Working set empty - no recent activity]"
+
+    return _format_memory_list(working_set, "[MEMORY: Working Set - Active context]")
 
 
 # ========== Mining Tools ==========
