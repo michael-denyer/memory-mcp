@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     auto_demote: bool = Field(
         default=True, description="Auto-demote stale hot memories during maintenance"
     )
+    hot_cache_display_max_chars: int = Field(
+        default=150,
+        description="Max chars per item in hot cache resource (truncates for context efficiency)",
+    )
 
     # Hot cache scoring weights (for LRU eviction)
     hot_score_access_weight: float = Field(

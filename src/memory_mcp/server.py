@@ -620,9 +620,17 @@ def hot_cache_resource() -> str:
 
     storage.record_hot_cache_hit()
     lines = ["[MEMORY: Hot Cache - High-confidence patterns]"]
+    max_chars = settings.hot_cache_display_max_chars
+
     for m in hot_memories:
-        tags_str = f" [{', '.join(m.tags)}]" if m.tags else ""
-        lines.append(f"- {m.content}{tags_str}")
+        # Truncate long content for context efficiency
+        content = m.content
+        if len(content) > max_chars:
+            content = content[:max_chars] + "..."
+
+        # Limit tags shown (first 3)
+        tags_str = f" [{', '.join(m.tags[:3])}]" if m.tags else ""
+        lines.append(f"- {content}{tags_str}")
 
     return "\n".join(lines)
 
