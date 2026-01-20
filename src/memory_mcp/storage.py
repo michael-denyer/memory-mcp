@@ -1021,6 +1021,34 @@ class Storage:
 
         return access_score + recency_boost
 
+    def _compute_salience_score(
+        self,
+        importance_score: float,
+        trust_score: float,
+        access_count: int,
+        last_accessed_at: datetime | None,
+    ) -> float:
+        """Compute unified salience score for promotion/eviction decisions.
+
+        Combines importance, trust, access frequency, and recency into a single
+        metric (Engram-inspired). Used for smarter hot cache promotion than
+        simple access count threshold.
+        """
+        from memory_mcp.helpers import compute_salience_score
+
+        return compute_salience_score(
+            importance_score=importance_score,
+            trust_score=trust_score,
+            access_count=access_count,
+            last_accessed_at=last_accessed_at,
+            importance_weight=self.settings.salience_importance_weight,
+            trust_weight=self.settings.salience_trust_weight,
+            access_weight=self.settings.salience_access_weight,
+            recency_weight=self.settings.salience_recency_weight,
+            recency_halflife_days=self.settings.salience_recency_halflife_days,
+            max_access_count=self.settings.hot_cache_max_items,  # Normalize against cache size
+        )
+
     def _get_row_value(self, row: sqlite3.Row, column: str, default=None):
         """Get column value from row, returning default if column doesn't exist."""
         return row[column] if column in row.keys() else default
@@ -1059,6 +1087,9 @@ class Storage:
         session_id = self._get_row_value(row, "session_id")
 
         hot_score = self._compute_hot_score(row["access_count"], last_accessed_dt)
+        salience_score = self._compute_salience_score(
+            importance_score, trust_score, row["access_count"], last_accessed_dt
+        )
 
         return Memory(
             id=row["id"],
@@ -1080,6 +1111,7 @@ class Storage:
             session_id=session_id,
             similarity=similarity,
             hot_score=hot_score,
+            salience_score=salience_score,
         )
 
     def get_memory(self, memory_id: int) -> Memory | None:
@@ -1326,7 +1358,8 @@ class Storage:
         Auto-promotes if:
         - auto_promote is enabled in settings
         - memory is not already hot
-        - access_count >= promotion_threshold
+        - salience_score >= salience_promotion_threshold (Engram-inspired)
+        - OR access_count >= promotion_threshold (legacy fallback)
 
         Returns True if memory was promoted.
         """
@@ -1335,25 +1368,39 @@ class Storage:
 
         with self._connection() as conn:
             row = conn.execute(
-                "SELECT is_hot, access_count FROM memories WHERE id = ?",
+                """SELECT is_hot, access_count, trust_score, importance_score, last_accessed_at
+                   FROM memories WHERE id = ?""",
                 (memory_id,),
             ).fetchone()
 
             if not row or row["is_hot"]:
                 return False
 
-            if row["access_count"] >= self.settings.promotion_threshold:
-                promoted = self.promote_to_hot(memory_id, PromotionSource.AUTO_THRESHOLD)
-                if promoted:
-                    log.info(
-                        "Auto-promoted memory id={} (access_count={} >= threshold={})",
-                        memory_id,
-                        row["access_count"],
-                        self.settings.promotion_threshold,
-                    )
-                return promoted
+            trust_score = row["trust_score"] or 1.0
+            importance_score = row["importance_score"] or 0.5
+            last_accessed_dt = (
+                datetime.fromisoformat(row["last_accessed_at"]) if row["last_accessed_at"] else None
+            )
 
-        return False
+            salience = self._compute_salience_score(
+                importance_score, trust_score, row["access_count"], last_accessed_dt
+            )
+
+            meets_salience_threshold = salience >= self.settings.salience_promotion_threshold
+            meets_access_threshold = row["access_count"] >= self.settings.promotion_threshold
+
+            if not (meets_salience_threshold or meets_access_threshold):
+                return False
+
+            promoted = self.promote_to_hot(memory_id, PromotionSource.AUTO_THRESHOLD)
+            if promoted:
+                log.info(
+                    "Auto-promoted memory id={} (salience={:.3f}, access_count={})",
+                    memory_id,
+                    salience,
+                    row["access_count"],
+                )
+            return promoted
 
     # ========== Vector Search ==========
 

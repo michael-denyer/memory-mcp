@@ -323,3 +323,138 @@ def get_importance_breakdown(
             "weight": entity_weight,
         },
     }
+
+
+# ========== Salience Scoring (Engram-inspired) ==========
+
+
+def _compute_recency_score(
+    last_accessed_at: datetime | None, halflife_days: float
+) -> tuple[float, float | None]:
+    """Compute recency score with exponential decay.
+
+    Args:
+        last_accessed_at: When last accessed (None if never)
+        halflife_days: Half-life for recency decay
+
+    Returns:
+        Tuple of (recency_score, days_since_access or None)
+    """
+    if not last_accessed_at:
+        return 0.0, None
+
+    now = datetime.now(timezone.utc)
+    if last_accessed_at.tzinfo is None:
+        last_accessed_at = last_accessed_at.replace(tzinfo=timezone.utc)
+    days_since = (now - last_accessed_at).total_seconds() / 86400
+    score = 2 ** (-days_since / halflife_days)
+    return score, days_since
+
+
+def compute_salience_score(
+    importance_score: float,
+    trust_score: float,
+    access_count: int,
+    last_accessed_at: datetime | None,
+    importance_weight: float = 0.25,
+    trust_weight: float = 0.25,
+    access_weight: float = 0.25,
+    recency_weight: float = 0.25,
+    recency_halflife_days: float = 14.0,
+    max_access_count: int = 20,
+) -> float:
+    """Compute unified salience score for promotion/eviction decisions.
+
+    Combines multiple signals into a single metric (Engram-inspired):
+    - Importance: Content-based value (code, entities, length)
+    - Trust: Confidence in accuracy (decays over time, boosted by use)
+    - Access: Usage frequency (normalized)
+    - Recency: How recently accessed (exponential decay)
+
+    Args:
+        importance_score: Admission-time importance (0-1)
+        trust_score: Current trust score (0-1)
+        access_count: Number of times accessed
+        last_accessed_at: When last accessed (None if never)
+        importance_weight: Weight for importance component
+        trust_weight: Weight for trust component
+        access_weight: Weight for access component
+        recency_weight: Weight for recency component
+        recency_halflife_days: Half-life for recency decay
+        max_access_count: Access count that maps to 1.0 (for normalization)
+
+    Returns:
+        Salience score between 0.0 and 1.0
+    """
+    access_normalized = min(1.0, access_count / max_access_count)
+    recency_score, _ = _compute_recency_score(last_accessed_at, recency_halflife_days)
+
+    salience = (
+        importance_score * importance_weight
+        + trust_score * trust_weight
+        + access_normalized * access_weight
+        + recency_score * recency_weight
+    )
+
+    return round(min(1.0, max(0.0, salience)), 3)
+
+
+def get_salience_breakdown(
+    importance_score: float,
+    trust_score: float,
+    access_count: int,
+    last_accessed_at: datetime | None,
+    importance_weight: float = 0.25,
+    trust_weight: float = 0.25,
+    access_weight: float = 0.25,
+    recency_weight: float = 0.25,
+    recency_halflife_days: float = 14.0,
+    max_access_count: int = 20,
+) -> dict:
+    """Get detailed breakdown of salience score components.
+
+    Useful for debugging and transparency.
+    """
+    access_normalized = min(1.0, access_count / max_access_count)
+    recency_score, days_since_access = _compute_recency_score(
+        last_accessed_at, recency_halflife_days
+    )
+
+    salience = compute_salience_score(
+        importance_score,
+        trust_score,
+        access_count,
+        last_accessed_at,
+        importance_weight,
+        trust_weight,
+        access_weight,
+        recency_weight,
+        recency_halflife_days,
+        max_access_count,
+    )
+
+    return {
+        "salience": salience,
+        "importance": {
+            "score": importance_score,
+            "weight": importance_weight,
+            "component": round(importance_score * importance_weight, 3),
+        },
+        "trust": {
+            "score": trust_score,
+            "weight": trust_weight,
+            "component": round(trust_score * trust_weight, 3),
+        },
+        "access": {
+            "count": access_count,
+            "normalized": round(access_normalized, 3),
+            "weight": access_weight,
+            "component": round(access_normalized * access_weight, 3),
+        },
+        "recency": {
+            "days_since": round(days_since_access, 1) if days_since_access else None,
+            "score": round(recency_score, 3),
+            "weight": recency_weight,
+            "component": round(recency_score * recency_weight, 3),
+        },
+    }

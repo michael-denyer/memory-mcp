@@ -301,6 +301,8 @@ class TestAutoPromotion:
             db_path=tmp_path / "test.db",
             auto_promote=True,
             promotion_threshold=3,
+            # Set high salience threshold so we only test access count promotion
+            salience_promotion_threshold=0.99,
         )
         stor = Storage(settings)
 
@@ -324,6 +326,34 @@ class TestAutoPromotion:
         memory = stor.get_memory(memory_id)
         assert memory.is_hot is True
         assert memory.promotion_source == PromotionSource.AUTO_THRESHOLD
+        stor.close()
+
+    def test_auto_promote_on_salience(self, tmp_path):
+        """Memory should auto-promote when salience score reaches threshold."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_promote=True,
+            promotion_threshold=100,  # Very high so access count won't trigger
+            salience_promotion_threshold=0.4,  # Low threshold to test salience
+        )
+        stor = Storage(settings)
+
+        # Content with high importance score (code-like content)
+        code_content = "```python\ndef hello():\n    print('hi')\n```"
+        memory_id, _ = stor.store_memory(code_content, MemoryType.PATTERN)
+
+        # With high importance, trust=1.0, and recent access, salience should be high enough
+        stor.update_access(memory_id)  # Make it recently accessed
+
+        # Should promote based on salience even with access_count=1
+        memory = stor.get_memory(memory_id)
+        assert memory.salience_score is not None
+        assert memory.salience_score >= 0.4  # Should meet threshold
+        assert stor.check_auto_promote(memory_id) is True
+
+        # Verify promoted
+        memory = stor.get_memory(memory_id)
+        assert memory.is_hot is True
         stor.close()
 
     def test_auto_promote_already_hot(self, tmp_path):

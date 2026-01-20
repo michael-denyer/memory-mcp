@@ -31,6 +31,7 @@ class MemoryResponse(BaseModel):
     # Computed scores
     similarity: float | None = None
     hot_score: float | None = None
+    salience_score: float | None = None  # Unified metric for promotion (Engram-inspired)
     # Recall scoring (populated during recall)
     recency_score: float | None = None
     trust_score_decayed: float | None = None
@@ -356,6 +357,7 @@ def memory_to_response(m: Memory) -> MemoryResponse:
         session_id=m.session_id,
         similarity=m.similarity,
         hot_score=m.hot_score,
+        salience_score=m.salience_score,
         recency_score=m.recency_score,
         trust_score_decayed=m.trust_score_decayed,
         composite_score=m.composite_score,

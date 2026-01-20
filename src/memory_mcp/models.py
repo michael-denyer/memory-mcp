@@ -152,6 +152,7 @@ class Memory:
     # Computed scores (populated during search/recall)
     similarity: float | None = None  # Populated during search
     hot_score: float | None = None  # Computed score for LRU ranking
+    salience_score: float | None = None  # Unified metric for promotion/eviction (Engram-inspired)
     # Recall scoring components (populated during recall)
     recency_score: float | None = None  # 0-1 based on age with decay
     trust_score_decayed: float | None = None  # Trust with time decay applied

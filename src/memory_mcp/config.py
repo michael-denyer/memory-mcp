@@ -208,6 +208,27 @@ class Settings(BaseSettings):
         default=True, description="Track which recalled memories were actually used"
     )
 
+    # Salience scoring (Engram-inspired unified metric)
+    # Combines importance + trust + access + recency for promotion/eviction decisions
+    salience_importance_weight: float = Field(
+        default=0.25, description="Weight for importance score in salience"
+    )
+    salience_trust_weight: float = Field(
+        default=0.25, description="Weight for trust score in salience"
+    )
+    salience_access_weight: float = Field(
+        default=0.25, description="Weight for normalized access count in salience"
+    )
+    salience_recency_weight: float = Field(
+        default=0.25, description="Weight for recency in salience"
+    )
+    salience_recency_halflife_days: float = Field(
+        default=14.0, description="Half-life for recency decay in salience"
+    )
+    salience_promotion_threshold: float = Field(
+        default=0.5, description="Minimum salience score for auto-promotion (0-1)"
+    )
+
     # Recall mode presets
     # Precision mode: high threshold, few results, prioritize similarity
     precision_threshold: float = Field(

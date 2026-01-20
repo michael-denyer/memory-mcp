@@ -15,7 +15,7 @@
 | Context balloons to 500k+ tokens | Hot cache keeps system prompt lean (~20 items) |
 | Tool calls for every memory lookup | Hot cache: **0ms** (already in context) |
 
-**Inspired by [Engram](https://github.com/AnswerDotAI/engram)**: Frequently-used patterns should be instantly available, not searched every time.
+**Inspired by Engram**: Frequently-used patterns should be instantly available, not searched every time.
 
 ## Quick Start (60 seconds)
 
