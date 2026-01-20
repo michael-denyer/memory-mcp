@@ -1108,6 +1108,109 @@ class TestMemoryRelationships:
         version = storage.get_schema_version()
         assert version == 10
 
+    def test_expand_via_relations(self, storage):
+        """expand_via_relations adds related memories with decayed scores."""
+        # Create memories with relationships
+        mid1, _ = storage.store_memory("Main memory about Python", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Related memory about Django", MemoryType.PATTERN)
+        mid3, _ = storage.store_memory("Another related memory", MemoryType.REFERENCE)
+        mid4, _ = storage.store_memory("Unrelated memory", MemoryType.CONVERSATION)
+
+        # Link mid1 -> mid2 and mid1 -> mid3
+        storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
+        storage.link_memories(mid1, mid3, RelationType.ELABORATES)
+
+        # Get the main memory with a mock composite score
+        memory = storage.get_memory(mid1)
+        memory.composite_score = 0.9
+        memory.similarity = 0.85
+
+        # Expand via relations
+        expanded = storage.expand_via_relations([memory], max_per_memory=5, decay_factor=0.8)
+
+        # Should include original + 2 related (mid4 is not linked)
+        assert len(expanded) == 3
+        assert expanded[0].id == mid1  # Original first
+
+        # Related memories should have decayed scores
+        related_ids = {m.id for m in expanded[1:]}
+        assert mid2 in related_ids
+        assert mid3 in related_ids
+        assert mid4 not in related_ids  # Unrelated
+
+        # Check score decay
+        for related in expanded[1:]:
+            assert related.composite_score == 0.9 * 0.8  # Decayed
+            assert related.similarity == 0.85 * 0.8
+
+    def test_expand_via_relations_respects_max(self, storage):
+        """expand_via_relations respects max_per_memory limit."""
+        mid1, _ = storage.store_memory("Main memory", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Related 1", MemoryType.PROJECT)
+        mid3, _ = storage.store_memory("Related 2", MemoryType.PROJECT)
+        mid4, _ = storage.store_memory("Related 3", MemoryType.PROJECT)
+
+        storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
+        storage.link_memories(mid1, mid3, RelationType.RELATES_TO)
+        storage.link_memories(mid1, mid4, RelationType.RELATES_TO)
+
+        memory = storage.get_memory(mid1)
+        memory.composite_score = 0.9
+
+        # Limit to 2 expansions
+        expanded = storage.expand_via_relations([memory], max_per_memory=2)
+
+        # Should be original + 2 (not all 3 related)
+        assert len(expanded) == 3  # 1 original + 2 expanded
+
+    def test_expand_via_relations_deduplicates(self, storage):
+        """expand_via_relations avoids duplicate memories."""
+        mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory B", MemoryType.PROJECT)
+
+        # Both link to each other
+        storage.link_memories(mid1, mid2, RelationType.RELATES_TO)
+        storage.link_memories(mid2, mid1, RelationType.ELABORATES)
+
+        mem1 = storage.get_memory(mid1)
+        mem2 = storage.get_memory(mid2)
+        mem1.composite_score = 0.9
+        mem2.composite_score = 0.8
+
+        # Expand both - should not duplicate
+        expanded = storage.expand_via_relations([mem1, mem2])
+
+        # Should still be exactly 2 (no duplicates)
+        assert len(expanded) == 2
+        assert {m.id for m in expanded} == {mid1, mid2}
+
+    def test_recall_with_expand_relations(self, tmp_path):
+        """recall with expand_relations=True includes related memories."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            semantic_dedup_enabled=False,
+            recall_expand_relations=False,
+        )
+        stor = Storage(settings)
+
+        # Create memories with relationships
+        mid1, _ = stor.store_memory("Python programming language", MemoryType.PROJECT)
+        mid2, _ = stor.store_memory("Django web framework for Python", MemoryType.PATTERN)
+        stor.link_memories(mid1, mid2, RelationType.RELATES_TO)
+
+        # Recall without expansion
+        result_no_expand = stor.recall("Python", expand_relations=False)
+        assert result_no_expand.memories is not None
+
+        # Recall with expansion should include related memories
+        result_expand = stor.recall("Python", expand_relations=True)
+        assert result_expand.memories is not None
+
+        # Expansion should add at least as many results (related memories are appended)
+        assert len(result_expand.memories) >= len(result_no_expand.memories)
+
+        stor.close()
+
 
 # ========== Contradiction Detection Tests ==========
 

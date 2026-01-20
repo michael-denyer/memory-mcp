@@ -229,6 +229,17 @@ class Settings(BaseSettings):
         default=0.5, description="Minimum salience score for auto-promotion (0-1)"
     )
 
+    # Multi-hop recall via knowledge graph (Engram-inspired associative recall)
+    recall_expand_relations: bool = Field(
+        default=False, description="Expand recall results via knowledge graph relations"
+    )
+    recall_max_expansion: int = Field(
+        default=3, description="Maximum related memories to add per recall result"
+    )
+    recall_expansion_decay: float = Field(
+        default=0.8, description="Score decay for expanded results (0-1)"
+    )
+
     # Recall mode presets
     # Precision mode: high threshold, few results, prioritize similarity
     precision_threshold: float = Field(

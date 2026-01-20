@@ -222,6 +222,15 @@ def recall(
         bool,
         Field(description="Include related memories from knowledge graph for top results"),
     ] = False,
+    expand_relations: Annotated[
+        bool | None,
+        Field(
+            description=(
+                "Expand results via knowledge graph (Engram-style associative recall). "
+                "Related memories are added with decayed scores. None uses config default."
+            )
+        ),
+    ] = None,
 ) -> RecallResponse:
     """Semantic search with confidence gating and composite ranking.
 
@@ -280,6 +289,7 @@ def recall(
         threshold=threshold,
         mode=recall_mode,
         memory_types=memory_types,
+        expand_relations=expand_relations,
     )
 
     # Record metrics

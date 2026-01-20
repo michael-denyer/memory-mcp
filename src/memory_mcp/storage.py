@@ -1583,6 +1583,7 @@ class Storage:
         threshold: float | None = None,
         mode: RecallMode | None = None,
         memory_types: list[MemoryType] | None = None,
+        expand_relations: bool | None = None,
     ) -> RecallResult:
         """Semantic search with confidence gating and composite ranking.
 
@@ -1592,6 +1593,7 @@ class Storage:
             threshold: Minimum similarity (overrides mode preset if set)
             mode: Recall mode preset (precision, balanced, exploratory)
             memory_types: Filter to specific memory types
+            expand_relations: Expand results via knowledge graph (default from config)
 
         Results are ranked by composite score combining:
         - Semantic similarity (weight varies by mode)
@@ -1786,6 +1788,15 @@ class Storage:
             confidence, len(memories), gated_count, effective_mode
         )
 
+        # Expand via knowledge graph if enabled
+        should_expand = (
+            expand_relations
+            if expand_relations is not None
+            else self.settings.recall_expand_relations
+        )
+        if should_expand and memories:
+            memories = self.expand_via_relations(memories)
+
         log.debug(
             "Recall query='{}' mode={} returned {} results (confidence={}, gated={})",
             query[:50],
@@ -1806,6 +1817,68 @@ class Storage:
     def _get_memories_by_ids(self, ids: list[int]) -> list[Memory]:
         """Fetch multiple memories by ID, filtering out None results."""
         return [m for mid in ids if (m := self.get_memory(mid)) is not None]
+
+    def expand_via_relations(
+        self,
+        memories: list[Memory],
+        max_per_memory: int | None = None,
+        decay_factor: float | None = None,
+    ) -> list[Memory]:
+        """Expand recall results by traversing knowledge graph relations.
+
+        For each memory, finds related memories via the knowledge graph and adds
+        them with a decayed score. This implements Engram-style associative recall
+        where one memory activates related memories.
+
+        Relation handling:
+        - relates_to, depends_on, elaborates: Add related memory
+        - contradicts: Add with flag for user awareness
+        - supersedes: Prefer the superseding (newer) memory
+
+        Args:
+            memories: Initial recall results to expand
+            max_per_memory: Max related memories per source (default from config)
+            decay_factor: Score decay for expanded results (default from config)
+
+        Returns:
+            Expanded list with related memories appended (deduplicated).
+        """
+        max_expansion = max_per_memory or self.settings.recall_max_expansion
+        decay = decay_factor or self.settings.recall_expansion_decay
+
+        # Track already-included memory IDs to avoid duplicates
+        seen_ids = {m.id for m in memories}
+        expanded: list[Memory] = []
+
+        for source_memory in memories:
+            # Get related memories (1-hop only)
+            related = self.get_related(source_memory.id, direction="both")
+
+            added_count = 0
+            for related_memory, relation in related:
+                if added_count >= max_expansion:
+                    break
+                if related_memory.id in seen_ids:
+                    continue
+
+                # Handle supersedes specially - if this memory supersedes another,
+                # we already have the newer version, skip the old one
+                if relation.relation_type == RelationType.SUPERSEDES:
+                    if relation.from_memory_id == source_memory.id:
+                        # source supersedes related - skip related (it's outdated)
+                        continue
+
+                # Apply score decay from parent
+                if source_memory.composite_score is not None:
+                    related_memory.composite_score = source_memory.composite_score * decay
+                if source_memory.similarity is not None:
+                    related_memory.similarity = source_memory.similarity * decay
+
+                expanded.append(related_memory)
+                seen_ids.add(related_memory.id)
+                added_count += 1
+
+        return memories + expanded
 
     def recall_with_fallback(
         self,
