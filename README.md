@@ -316,6 +316,56 @@ Smaller and more focused than hot-cache (~10 items) - designed for active work c
 
 Add the MCP server to your settings (see Quick Start). Both resources are automatically available. Verify with `/mcp` in Claude Code.
 
+## Multi-Client Setup
+
+Memory MCP works with any MCP-compatible client (Claude Code, Codex, etc.).
+
+### Shared Memory (Recommended)
+
+Both clients share the same database - memories learned in one are available in the other:
+
+**Claude Code** (`~/.claude.json`):
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/memory-mcp", "memory-mcp"]
+    }
+  }
+}
+```
+
+**Codex** (or other MCP client):
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/memory-mcp", "memory-mcp"]
+    }
+  }
+}
+```
+
+### Separate Memory per Client
+
+Use different database paths via `MEMORY_MCP_DB_PATH` environment variable:
+
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/memory-mcp", "memory-mcp"],
+      "env": {
+        "MEMORY_MCP_DB_PATH": "~/.memory-mcp/claude.db"
+      }
+    }
+  }
+}
+```
+
 ## Automatic Output Logging
 
 For pattern mining to work automatically, install the Claude Code hook.
