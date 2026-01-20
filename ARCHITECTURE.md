@@ -21,7 +21,7 @@ This principle drives every architectural decision. We optimize for the common c
 │  MCP Resource     │              │    Vector Database     │
 │                   │              │                        │
 │  - 20 items max   │◄────────────►│  - Unlimited capacity  │
-│  - Zero latency   │  promotion   │  - Semantic search     │
+│  - Instant recall │  promotion   │  - Semantic search     │
 │  - Pinnable       │  / demotion  │  - ~50ms lookup        │
 └───────────────────┘              └────────────────────────┘
         ▲                                    ▲

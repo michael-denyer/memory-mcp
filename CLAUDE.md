@@ -7,7 +7,7 @@
 This project differentiates from generic memory servers (like mcp-memory-service) through:
 
 1. **Two-Tier Memory Architecture**
-   - **Hot Cache**: Zero-latency access via MCP resource injection (no tool call needed)
+   - **Hot Cache**: Instant recall via MCP resource injection (no tool call needed)
    - **Cold Storage**: Semantic search for everything else
 
 2. **Salience-Based Promotion**

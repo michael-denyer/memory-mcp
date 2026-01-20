@@ -58,7 +58,7 @@ You: "Promote the tech stack memory to hot cache"
 
 Claude: [calls promote(1)]
 
-→ Memory #1 now in hot cache - zero latency access
+→ Memory #1 now in hot cache - instant recall
 ```
 
 ## Step 3: Use in Future Sessions

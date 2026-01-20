@@ -13,26 +13,7 @@
 
 **Stop re-explaining your project every session.**
 
-Memory MCP learns what matters and keeps it ready — zero latency for the stuff you use most, semantic search for everything else.
-
-```mermaid
-flowchart LR
-    subgraph Hot["HOT CACHE · 0ms"]
-        direction TB
-        P[📌 Pinned]
-        F[⭐ Frequent]
-        R[🆕 Recent]
-    end
-
-    subgraph Cold["COLD STORAGE · ~50ms"]
-        direction TB
-        S[🔍 Semantic Search]
-        K[🕸️ Knowledge Graph]
-    end
-
-    Hot -->|auto-injected| LLM((Your AI))
-    Cold -->|tool call| LLM
-```
+Memory MCP learns what matters and keeps it ready — instant recall for the stuff you use most, semantic search for everything else.
 
 </div>
 
@@ -57,7 +38,7 @@ The system learns what you use and automatically promotes it. No manual curation
 
 ## Key Features
 
-🚀 **Zero-latency hot cache** — Frequently-used memories auto-injected into context. No tool calls needed.
+🚀 **Instant recall hot cache** — Frequently-used memories auto-injected into context. No tool calls needed.
 
 🔍 **Semantic search** — Find memories by meaning, not just keywords. Knowledge graph connects related concepts.
 
@@ -314,7 +295,7 @@ Environment variables (prefix `MEMORY_MCP_`):
 
 ## MCP Resources
 
-The server exposes two MCP resources for zero-latency memory access:
+The server exposes two MCP resources for instant memory access:
 
 ### Hot Cache (`memory://hot-cache`)
 

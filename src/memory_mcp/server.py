@@ -524,7 +524,7 @@ def metrics_status() -> dict:
 def promote(
     memory_id: Annotated[int, Field(description="ID of memory to promote to hot cache")],
 ) -> dict:
-    """Manually promote a memory to hot cache for zero-latency access."""
+    """Manually promote a memory to hot cache for instant recall."""
     if storage.promote_to_hot(memory_id):
         record_hot_cache_change(promoted=True)
         return success_response(f"Memory #{memory_id} promoted to hot cache")
@@ -639,7 +639,7 @@ def hot_cache_resource() -> str:
     """Auto-injectable system context with high-confidence patterns.
 
     Configure Claude Code to include this resource in system prompts
-    for zero-latency access to frequently-used knowledge.
+    for instant recall of frequently-used knowledge.
 
     If the hot cache is empty and documentation files exist in the current
     directory, auto-bootstraps from README.md, CLAUDE.md, etc.
@@ -1881,7 +1881,7 @@ def warm_cache(
 ) -> dict:
     """Pre-warm hot cache with predicted next memories.
 
-    Promotes predicted memories to hot cache for zero-latency access.
+    Promotes predicted memories to hot cache for instant recall.
     Only promotes memories that aren't already in hot cache.
 
     Requires MEMORY_MCP_PREDICTIVE_CACHE_ENABLED=true.

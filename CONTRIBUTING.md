@@ -158,7 +158,7 @@ Use [conventional commits](https://www.conventionalcommits.org/):
 
 Memory MCP is built around a **two-tier memory architecture**. When contributing, keep these principles in mind:
 
-1. **Hot cache is the differentiator** - Zero-latency access via MCP resource injection
+1. **Hot cache is the differentiator** - Instant recall via MCP resource injection
 2. **Automatic over manual** - Features should work without user intervention
 3. **Local-first** - All data stays in SQLite, no cloud dependencies
 4. **Simple over complex** - Avoid over-engineering; question new configuration options

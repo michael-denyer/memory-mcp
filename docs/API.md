@@ -606,7 +606,7 @@ Get observability metrics for recall, store, mining, and hot cache.
 
 Auto-injectable system context with high-confidence patterns.
 
-- Zero-latency access (no tool call needed)
+- Instant recall (no tool call needed)
 - Auto-bootstraps from README.md, CLAUDE.md if empty
 - Records hit/miss metrics
 

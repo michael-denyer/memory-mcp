@@ -94,7 +94,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Two-tier memory architecture**
-  - Hot cache with zero-latency MCP resource injection
+  - Hot cache with instant recall via MCP resource injection
   - Cold storage with semantic search via sqlite-vec
 
 - **Auto-bootstrap** from project documentation
