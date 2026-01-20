@@ -2283,7 +2283,7 @@ class Storage:
         Returns:
             List of MinedPattern sorted by score descending.
         """
-        threshold = threshold or self.settings.promotion_threshold
+        threshold = threshold if threshold is not None else self.settings.promotion_threshold
 
         # Build status filter: specific status or default to pending/approved
         params: tuple[int, ...] | tuple[int, str]
@@ -3081,6 +3081,8 @@ class Storage:
         Returns number of sequences affected.
         """
         cutoff = datetime.now() - timedelta(days=self.settings.sequence_decay_days)
+        # Use space-separated format to match SQLite CURRENT_TIMESTAMP
+        cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
 
         with self.transaction() as conn:
             # Halve counts for old sequences
@@ -3090,7 +3092,7 @@ class Storage:
                 SET count = count / 2
                 WHERE last_seen < ?
                 """,
-                (cutoff.isoformat(),),
+                (cutoff_str,),
             )
             affected = conn.execute("SELECT changes()").fetchone()[0]
 
@@ -3392,13 +3394,17 @@ class Storage:
                     errors.append(f"{path.name}: chunk too long ({len(chunk)} chars), skipped")
                     continue
 
-                # Store the memory
-                memory_id, is_new = self.store_memory(
-                    content=chunk,
-                    memory_type=memory_type,
-                    source=MemorySource.MANUAL,
-                    tags=tag_list,
-                )
+                # Store the memory (catch validation errors to honor "errors reported not raised")
+                try:
+                    memory_id, is_new = self.store_memory(
+                        content=chunk,
+                        memory_type=memory_type,
+                        source=MemorySource.MANUAL,
+                        tags=tag_list,
+                    )
+                except ValidationError as e:
+                    errors.append(f"{path.name}: {e}")
+                    continue
 
                 if is_new:
                     memories_created += 1

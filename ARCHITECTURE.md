@@ -66,39 +66,51 @@ composite_score = (similarity_weight × similarity) +
 ## Data Flow
 
 ```mermaid
-graph TD
-    subgraph Input
-        R[remember] --> S[Store Memory]
-        L[log_output] --> O[Output Log]
+graph TB
+    subgraph Input["Input Layer"]
+        direction LR
+        R[remember tool]
+        L[log_output tool]
     end
 
-    subgraph Storage
-        S --> E[Embed Content]
-        E --> V[Vector Store]
-        E --> M[Metadata Store]
+    subgraph Process["Processing"]
+        direction TB
+        subgraph Store["Store Path"]
+            S[Store Memory] --> E[Embed]
+        end
+        subgraph Mine["Mining Path"]
+            O[Output Log] --> MP[Extract Patterns]
+            MP --> P{Confidence?}
+        end
     end
 
-    subgraph Mining
-        O --> MP[Mining Pipeline]
-        MP --> P[Mined Patterns]
-        P -->|Auto-approve| S
-        P -->|Manual| A[approve_candidate]
-        A --> S
+    subgraph Persist["Persistence Layer"]
+        direction LR
+        V[(Vectors)]
+        M[(Metadata)]
     end
 
-    subgraph Retrieval
-        Q[recall] --> VS[Vector Search]
-        VS --> V
-        VS --> RK[Rank Results]
-        RK --> M
+    subgraph Retrieve["Retrieval"]
+        direction TB
+        Q[recall tool] --> VS[Vector Search]
+        VS --> RK[Composite Rank]
     end
 
-    subgraph HotCache
-        RK -->|access 3+| PR[Auto-promote]
-        PR --> H[Hot Cache]
-        H -->|14 days stale| DE[Auto-demote]
-        DE --> V
+    subgraph Cache["Hot Cache Lifecycle"]
+        direction LR
+        PR[Promote] --> H[Hot Cache]
+        H --> DE[Demote]
     end
+
+    R --> S
+    L --> O
+    E --> V & M
+    P -->|≥0.8| S
+    P -->|<0.8| A[approve_candidate]
+    A --> S
+    RK --> V & M
+    RK -->|access 3+| PR
+    DE -->|14 days stale| V
 ```
 
 ## Module Structure
@@ -122,22 +134,41 @@ src/memory_mcp/
 ### Module Dependencies
 
 ```mermaid
-graph TD
-    server[server.py] --> storage[storage.py]
-    server --> responses[responses.py]
-    server --> config[config.py]
-    server --> logging[logging.py]
+graph TB
+    subgraph API["API Layer"]
+        direction LR
+        server[server.py]
+        cli[cli.py]
+    end
 
-    storage --> models[models.py]
-    storage --> migrations[migrations.py]
-    storage --> embeddings[embeddings.py]
-    storage --> config
+    subgraph Core["Core Layer"]
+        direction LR
+        storage[storage.py]
+        mining[mining.py]
+    end
 
-    responses --> models
-    migrations --> config
-    cli --> storage
-    cli --> config
+    subgraph Support["Support Layer"]
+        direction LR
+        helpers[helpers.py]
+        responses[responses.py]
+        embeddings[embeddings.py]
+    end
+
+    subgraph Foundation["Foundation Layer"]
+        direction LR
+        models[models.py]
+        config[config.py]
+        migrations[migrations.py]
+        logging[logging.py]
+        metrics[metrics.py]
+    end
+
+    server --> storage & helpers & responses & logging
+    cli --> storage & config
+    storage --> models & migrations & embeddings & config
     mining --> storage
+    helpers --> models & responses
+    responses --> models
     metrics --> logging
 ```
 

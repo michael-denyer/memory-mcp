@@ -36,13 +36,19 @@ uv pip install mlx mlx-lm
 
 ```
 src/memory_mcp/
-├── server.py       # MCP tools and resources
-├── storage.py      # SQLite + vector operations
+├── server.py       # MCP tools and resources - the API layer
+├── storage.py      # SQLite + vector operations, caching logic
+├── responses.py    # Pydantic response models for MCP tools
+├── models.py       # Enums and dataclasses (domain models)
+├── helpers.py      # Helper functions for server.py tools
+├── migrations.py   # Database schema and version migrations
 ├── mining.py       # Pattern extraction from outputs
 ├── config.py       # Settings and configuration
-├── cli.py          # CLI commands
-├── embeddings.py   # Embedding providers
-└── text_parsing.py # Content chunking
+├── cli.py          # CLI commands for hooks and administration
+├── embeddings.py   # Embedding providers (sentence-transformers, MLX)
+├── text_parsing.py # Content chunking for seeding
+├── logging.py      # Structured logging configuration
+└── metrics.py      # Metrics collection and observability
 ```
 
 ## Code Style

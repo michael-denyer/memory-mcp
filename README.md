@@ -45,35 +45,46 @@ Restart Claude Code. Verify with `/mcp` - you should see memory tools.
 ## Architecture
 
 ```mermaid
-graph TD
-    subgraph "Hot Cache (Zero Latency)"
-        H[System Prompt Resource] --> A[High-freq project facts]
-        H --> B[Mined code patterns]
-        H --> P[Pinned memories]
+graph TB
+    subgraph Claude["Claude / LLM"]
+        direction LR
+        REQ[Request]
     end
 
-    subgraph "Cold Storage (Tool Call)"
-        C[Vector store] --> D[Semantic search]
-        C --> K[Knowledge graph]
+    subgraph HotTier["Hot Cache · 0ms latency"]
+        direction TB
+        RES[memory://hot-cache]
+        RES --> PROJ[Project facts]
+        RES --> PAT[Mined patterns]
+        RES --> PIN[Pinned items]
     end
 
-    subgraph "Bootstrap"
-        BOOT[Auto-detect docs] --> README[README.md]
-        BOOT --> CLAUDE[CLAUDE.md]
-        README --> A
-        CLAUDE --> A
+    subgraph ColdTier["Cold Storage · ~50ms latency"]
+        direction TB
+        VEC[(Vector DB)]
+        VEC --> SEM[Semantic search]
+        VEC --> KG[Knowledge graph]
     end
 
-    subgraph "Mining Pipeline"
-        F[Output logger] --> G[7-day rolling window]
-        G --> I[Pattern extractor]
-        I --> J[Frequency counter]
-        J -->|Threshold reached| A
+    subgraph Bootstrap["Auto-Bootstrap"]
+        direction LR
+        DETECT[Detect docs] --> MD1[README.md]
+        DETECT --> MD2[CLAUDE.md]
     end
 
-    Claude --> H
-    Claude --> D
-    Claude --> F
+    subgraph Mining["Pattern Mining"]
+        direction TB
+        LOG[log_output] --> WINDOW[7-day window]
+        WINDOW --> EXTRACT[Extract patterns]
+        EXTRACT --> FREQ[Count frequency]
+    end
+
+    REQ -->|auto-injected| RES
+    REQ -->|tool call| SEM
+    REQ --> LOG
+    MD1 & MD2 -->|seed| PROJ
+    FREQ -->|threshold 3+| PAT
+    SEM -->|promote| PROJ
 ```
 
 ### Two-Tier Memory System

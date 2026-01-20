@@ -284,7 +284,9 @@ def recall(
 
     # Record metrics
     hot_hit = any(m.is_hot for m in result.memories)
-    effective_threshold = threshold or settings.default_confidence_threshold
+    effective_threshold = (
+        threshold if threshold is not None else settings.default_confidence_threshold
+    )
     record_recall(
         query_length=len(query),
         results_count=len(result.memories),
