@@ -110,9 +110,22 @@ uv run pytest -k bootstrap    # Bootstrap tests
 uv run pytest -k relationship # Knowledge graph tests
 ```
 
-## When Working on This Project
+## Design Principles
+
+### Zero-Config by Default
+
+**The system must work out of the box with no configuration.** This is non-negotiable.
+
+- All defaults should be optimized for immediate value
+- `auto_promote=True`, `auto_demote=True`, `mining_auto_approve_enabled=True`
+- Auto-detect hardware (MLX on Apple Silicon)
+- Auto-bootstrap from project docs when hot cache is empty
+- Configuration exists for power users, not as a requirement
+
+### When Working on This Project
 
 - The hot cache is the differentiator - keep it simple and automatic
 - Avoid adding features that don't serve the two-tier memory model
 - If a feature requires manual user action, question whether it's worth it
+- New features must have sensible defaults that "just work"
 - Test with real Claude Code usage, not just unit tests
