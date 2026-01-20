@@ -370,6 +370,129 @@ def db_rebuild_vectors(ctx: click.Context, batch_size: int, clear_only: bool) ->
         storage.close()
 
 
+def _display_consolidation_preview(result: dict) -> None:
+    """Display dry-run consolidation preview."""
+    console.print("[bold]Consolidation Preview (dry run)[/bold]")
+    clusters = result.get("clusters", [])
+
+    if not clusters:
+        console.print("[dim]No clusters found - nothing to consolidate[/dim]")
+        return
+
+    console.print(f"  Clusters found: [cyan]{result.get('cluster_count', 0)}[/cyan]")
+    console.print(
+        f"  Memories in clusters: [cyan]{result.get('total_memories_in_clusters', 0)}[/cyan]"
+    )
+    console.print(f"  Would delete: [yellow]{result.get('memories_to_delete', 0)}[/yellow]")
+    console.print(f"  Space savings: [green]{result.get('space_savings_pct', 0)}%[/green]")
+
+    console.print("\n[bold]Clusters:[/bold]")
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Rep. ID", width=8)
+    table.add_column("Members", width=8)
+    table.add_column("Similarity", width=10)
+    table.add_column("Access Count", width=12)
+
+    max_display = 10
+    for cluster in clusters[:max_display]:
+        table.add_row(
+            str(cluster.get("representative_id", "")),
+            str(cluster.get("member_count", "")),
+            f"{cluster.get('avg_similarity', 0):.3f}",
+            str(cluster.get("total_access_count", "")),
+        )
+    console.print(table)
+
+    remaining = len(clusters) - max_display
+    if remaining > 0:
+        console.print(f"  [dim]... and {remaining} more clusters[/dim]")
+
+    console.print("\n[dim]Run without --dry-run to apply changes[/dim]")
+
+
+def _display_consolidation_results(result: dict) -> None:
+    """Display actual consolidation results."""
+    console.print("[bold]Consolidation Results[/bold]")
+    console.print(f"  Clusters processed: [cyan]{result.get('clusters_processed', 0)}[/cyan]")
+    console.print(f"  Memories deleted: [yellow]{result.get('memories_deleted', 0)}[/yellow]")
+
+    errors = result.get("errors", [])
+    if errors:
+        console.print(f"  [red]Errors: {len(errors)}[/red]")
+        for err in errors:
+            console.print(f"    [dim]{err}[/dim]")
+
+
+@cli.command("consolidate")
+@click.option(
+    "-t",
+    "--type",
+    "memory_type",
+    default=None,
+    type=click.Choice(["project", "pattern", "reference", "conversation"]),
+    help="Only consolidate memories of this type",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview consolidation without making changes",
+)
+@click.option(
+    "--threshold",
+    type=float,
+    default=None,
+    help="Similarity threshold for clustering (default: 0.85)",
+)
+@click.pass_context
+def consolidate(
+    ctx: click.Context,
+    memory_type: str | None,
+    dry_run: bool,
+    threshold: float | None,
+) -> None:
+    """Consolidate similar memories to reduce redundancy.
+
+    Finds clusters of semantically similar memories and merges them,
+    keeping the best representative from each cluster.
+
+    Examples:
+
+        # Preview what would be consolidated (dry run)
+        memory-mcp-cli consolidate --dry-run
+
+        # Run consolidation
+        memory-mcp-cli consolidate
+
+        # Only consolidate pattern memories
+        memory-mcp-cli consolidate -t pattern
+
+        # Use stricter similarity threshold
+        memory-mcp-cli consolidate --threshold 0.9
+
+        # JSON output for scripting
+        memory-mcp-cli --json consolidate --dry-run
+    """
+    use_json = ctx.obj["json"]
+    mem_type = MemoryType(memory_type) if memory_type else None
+    settings = get_settings()
+
+    if threshold is not None:
+        settings.consolidation_threshold = threshold
+
+    storage = Storage(settings)
+    try:
+        result = storage.run_consolidation(memory_type=mem_type, dry_run=dry_run)
+
+        if use_json:
+            click.echo(json.dumps({"success": True, "dry_run": dry_run, **result}))
+        elif dry_run:
+            _display_consolidation_preview(result)
+        else:
+            _display_consolidation_results(result)
+    finally:
+        storage.close()
+
+
 @cli.command("status")
 @click.pass_context
 def status(ctx: click.Context) -> None:
