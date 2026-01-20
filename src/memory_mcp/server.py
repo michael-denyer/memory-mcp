@@ -1,12 +1,27 @@
 """FastMCP server with memory tools and hot cache resource."""
 
-from datetime import datetime, timezone
 from typing import Annotated
 
 from fastmcp import FastMCP
 from pydantic import Field
 
 from memory_mcp.config import find_bootstrap_files, get_settings
+from memory_mcp.helpers import (
+    build_ranking_factors as _build_ranking_factors,
+)
+from memory_mcp.helpers import (
+    format_memories_for_llm as _format_memories_for_llm,
+)
+from memory_mcp.helpers import (
+    get_promotion_suggestions as _get_promotion_suggestions,
+)
+from memory_mcp.helpers import (
+    get_similarity_confidence as _get_similarity_confidence,
+)
+from memory_mcp.helpers import (
+    invalid_memory_type_error,
+    parse_memory_type,
+)
 from memory_mcp.logging import (
     configure_logging,
     get_logger,
@@ -26,7 +41,6 @@ from memory_mcp.responses import (
     ContradictionPairResponse,
     ContradictionResponse,
     CrossSessionPatternResponse,
-    FormattedMemory,
     HotCacheEffectivenessResponse,
     HotCacheMetricsResponse,
     HotCacheResponse,
@@ -72,169 +86,47 @@ mcp = FastMCP("memory-mcp")
 log.info("Memory MCP server initialized")
 
 
-# ========== Cold Storage Tools ==========
-
-
-def parse_memory_type(memory_type: str) -> MemoryType | None:
-    """Parse memory type string, returning None if invalid."""
-    try:
-        return MemoryType(memory_type)
-    except ValueError:
-        return None
-
-
-def invalid_memory_type_error() -> dict:
-    """Return error for invalid memory type."""
-    return error_response(f"Invalid memory_type. Use: {[t.value for t in MemoryType]}")
+# ========== Helper Function Wrappers ==========
+# These wrap pure functions from helpers.py with module-level settings/storage
 
 
 def build_ranking_factors(mode: RecallMode | None, prefix: str = "") -> str:
-    """Build ranking factors explanation string for recall responses."""
+    """Build ranking factors string using module storage."""
     mode_config = storage.get_recall_mode_config(mode or RecallMode.BALANCED)
-    sim_w = int(mode_config.similarity_weight * 100)
-    rec_w = int(mode_config.recency_weight * 100)
-    acc_w = int(mode_config.access_weight * 100)
     mode_name = mode.value if mode else "balanced"
-    base = (
-        f"Mode: {mode_name} | "
-        f"Ranked by: similarity ({sim_w}%) + recency ({rec_w}%) + access ({acc_w}%)"
+    return _build_ranking_factors(
+        mode_name,
+        mode_config.similarity_weight,
+        mode_config.recency_weight,
+        mode_config.access_weight,
+        prefix,
     )
-    return f"{prefix} | {base}" if prefix else base
 
 
 def get_promotion_suggestions(memories: list[Memory], max_suggestions: int = 2) -> list[dict]:
-    """Generate promotion suggestions for frequently-accessed cold memories.
-
-    Suggests promoting memories that:
-    - Are NOT already in hot cache
-    - Have high access count (>= promotion_threshold)
-    - Were useful in this recall (high similarity)
-
-    Returns list of dicts with memory_id, access_count, and reason.
-    """
-    suggestions = []
-    threshold = settings.promotion_threshold
-
-    for m in memories:
-        if m.is_hot:
-            continue  # Already hot, skip
-
-        if m.access_count >= threshold:
-            suggestions.append(
-                {
-                    "memory_id": m.id,
-                    "access_count": m.access_count,
-                    "reason": f"Accessed {m.access_count}x - consider promoting to hot cache",
-                }
-            )
-
-        if len(suggestions) >= max_suggestions:
-            break
-
-    return suggestions
+    """Get promotion suggestions using module settings."""
+    return _get_promotion_suggestions(memories, settings.promotion_threshold, max_suggestions)
 
 
-def format_age(created_at: datetime) -> str:
-    """Format memory age as human-readable string."""
-    now = datetime.now(timezone.utc)
-    # Handle naive datetime (assume UTC) vs aware datetime
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    delta = now - created_at
-
-    if delta.days >= 365:
-        years = delta.days // 365
-        return f"{years} year{'s' if years > 1 else ''}"
-    elif delta.days >= 30:
-        months = delta.days // 30
-        return f"{months} month{'s' if months > 1 else ''}"
-    elif delta.days >= 7:
-        weeks = delta.days // 7
-        return f"{weeks} week{'s' if weeks > 1 else ''}"
-    elif delta.days >= 1:
-        return f"{delta.days} day{'s' if delta.days > 1 else ''}"
-    elif delta.seconds >= 3600:
-        hours = delta.seconds // 3600
-        return f"{hours} hour{'s' if hours > 1 else ''}"
-    else:
-        return "just now"
+def format_memories_for_llm(memories: list[Memory]):
+    """Format memories for LLM using module settings."""
+    return _format_memories_for_llm(
+        memories,
+        settings.high_confidence_threshold,
+        settings.default_confidence_threshold,
+    )
 
 
 def get_similarity_confidence(similarity: float | None) -> str:
-    """Map similarity score to confidence label."""
-    if similarity is None:
-        return "unknown"
-    if similarity >= settings.high_confidence_threshold:
-        return "high"
-    if similarity >= settings.default_confidence_threshold:
-        return "medium"
-    return "low"
+    """Map similarity score to confidence label using module settings."""
+    return _get_similarity_confidence(
+        similarity,
+        settings.high_confidence_threshold,
+        settings.default_confidence_threshold,
+    )
 
 
-def summarize_content(content: str, max_length: int = 150) -> str:
-    """Create concise summary of memory content.
-
-    - Strips code blocks to first line
-    - Truncates long content with ellipsis
-    - Preserves key information
-    """
-    lines = content.strip().split("\n")
-
-    # If it's a code block, take the first meaningful line
-    if content.startswith("```") or content.startswith("["):
-        # Find first non-empty, non-fence line
-        for line in lines:
-            if line and not line.startswith("```") and not line.startswith("["):
-                summary = line.strip()
-                break
-        else:
-            summary = lines[0] if lines else content
-    else:
-        # Take first line for prose
-        summary = lines[0].strip() if lines else content
-
-    # Truncate if needed
-    if len(summary) > max_length:
-        summary = summary[: max_length - 3] + "..."
-
-    return summary
-
-
-def format_memories_for_llm(
-    memories: list[Memory],
-) -> tuple[list[FormattedMemory], str]:
-    """Transform memories into LLM-friendly format.
-
-    Returns:
-        Tuple of (formatted memories list, context summary string)
-    """
-    if not memories:
-        return [], "No matching memories found"
-
-    formatted = []
-    type_counts: dict[str, int] = {}
-
-    for m in memories:
-        # Count by type for summary
-        mem_type = m.memory_type.value
-        type_counts[mem_type] = type_counts.get(mem_type, 0) + 1
-
-        formatted.append(
-            FormattedMemory(
-                summary=summarize_content(m.content),
-                memory_type=mem_type,
-                tags=m.tags[:5],  # Limit tags shown
-                age=format_age(m.created_at),
-                confidence=get_similarity_confidence(m.similarity),
-                source_hint="hot cache" if m.is_hot else "cold storage",
-            )
-        )
-
-    # Build context summary
-    type_parts = [f"{count} {typ}" for typ, count in type_counts.items()]
-    summary = f"Found {len(memories)} memories: {', '.join(type_parts)}"
-
-    return formatted, summary
+# ========== Cold Storage Tools ==========
 
 
 @mcp.tool
