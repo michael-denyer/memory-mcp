@@ -306,13 +306,20 @@ uv run pytest -v
 uv run memory-mcp 2>&1 | head -50
 ```
 
-### Resource Usage
+### System Requirements
 
-| Resource | Typical |
-|----------|---------|
-| Disk | 1-10 MB |
-| Memory | 200-400 MB (embedding model) |
-| Startup | 2-5 seconds (after model cached) |
+| Requirement | Minimum | Notes |
+|-------------|---------|-------|
+| Python | 3.10+ | 3.11+ recommended for performance |
+| Disk | ~2-3 GB | Dependencies (~2GB) + embedding model (~90MB) + database |
+| RAM | 200-400 MB | During embedding operations |
+| First Run | 30-60 seconds | One-time ~90MB model download |
+| Startup | 2-5 seconds | After model is cached |
+
+**Apple Silicon Users**: Install with MLX support for faster embeddings:
+```bash
+pip install memory-mcp[mlx]
+```
 
 ## Example Usage
 
@@ -329,6 +336,110 @@ You: "Promote that to hot cache"
 Claude: [calls promote(1)]
 → Memory #1 now in hot cache - available instantly next session
 ```
+
+## Troubleshooting
+
+### Server Won't Start
+
+**Symptom**: Claude Code shows "memory" server as disconnected
+
+1. **Check the command works directly**:
+   ```bash
+   cd /path/to/memory-mcp
+   uv run memory-mcp
+   ```
+
+2. **Verify path in `~/.claude.json`**: The `--directory` path must be absolute
+
+3. **Check Python version**: Requires 3.10+
+   ```bash
+   python --version
+   ```
+
+### Dimension Mismatch Error
+
+**Symptom**: `Vector dimension mismatch` error during recall
+
+This happens when the embedding model changes. Rebuild vectors:
+
+```bash
+uv run memory-mcp-cli db-rebuild-vectors
+```
+
+### Hot Cache Not Updating
+
+**Symptom**: Promoted memories don't appear in hot cache
+
+1. **Check hot cache status**:
+   ```bash
+   uv run memory-mcp-cli status
+   ```
+
+2. **Verify memory exists**:
+   ```
+   [In Claude] list_memories(limit=10)
+   ```
+
+3. **Manually promote**:
+   ```
+   [In Claude] promote(memory_id)
+   ```
+
+### Pattern Mining Not Working
+
+**Symptom**: `run_mining` finds no patterns
+
+1. **Check mining is enabled**:
+   ```bash
+   echo $MEMORY_MCP_MINING_ENABLED  # Should not be "false"
+   ```
+
+2. **Verify logs exist**:
+   ```bash
+   uv run memory-mcp-cli run-mining --hours 24
+   ```
+
+3. **Check hook is installed** (see [Automatic Output Logging](#automatic-output-logging))
+
+### Hook Script Fails
+
+**Symptom**: Hook runs but nothing is logged
+
+1. **Check jq is installed**:
+   ```bash
+   which jq  # Should return a path
+   ```
+
+2. **Make script executable**:
+   ```bash
+   chmod +x hooks/memory-log-response.sh
+   ```
+
+3. **Test manually**:
+   ```bash
+   echo "test content" | uv run memory-mcp-cli log-output
+   ```
+
+### Slow First Startup
+
+**Symptom**: First run takes 30-60 seconds
+
+This is expected - the embedding model (~90MB) downloads on first use. Subsequent starts take 2-5 seconds.
+
+### Database Corruption
+
+**Symptom**: SQLite errors or unexpected behavior
+
+1. **Backup and recreate**:
+   ```bash
+   mv ~/.memory-mcp/memory.db ~/.memory-mcp/memory.db.bak
+   # Server will create fresh database on next start
+   ```
+
+2. **Re-bootstrap from project docs**:
+   ```bash
+   uv run memory-mcp-cli bootstrap
+   ```
 
 ## Security Note
 
