@@ -403,6 +403,7 @@ class Storage:
             MemoryType.PATTERN: self.settings.retention_pattern_days,
             MemoryType.REFERENCE: self.settings.retention_reference_days,
             MemoryType.CONVERSATION: self.settings.retention_conversation_days,
+            MemoryType.EPISODIC: self.settings.retention_episodic_days,
         }
         return retention_map.get(memory_type, 0)
 
@@ -1349,6 +1350,7 @@ class Storage:
             MemoryType.PATTERN: self.settings.trust_decay_pattern_days,
             MemoryType.REFERENCE: self.settings.trust_decay_reference_days,
             MemoryType.CONVERSATION: self.settings.trust_decay_conversation_days,
+            MemoryType.EPISODIC: self.settings.trust_decay_episodic_days,
         }
         return type_halflife_days.get(memory_type, self.settings.trust_decay_halflife_days)
 
@@ -1768,6 +1770,7 @@ class Storage:
                     self.adjust_trust(
                         memory.id,
                         reason=TrustReason.HIGH_SIMILARITY_HIT,
+                        delta=self.settings.trust_high_similarity_boost,
                         similarity=memory.similarity,
                     )
 

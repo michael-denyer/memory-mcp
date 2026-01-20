@@ -200,7 +200,7 @@ Everything below is detailed documentation. You don't need to read it to get sta
 | `unlink_memories(from_id, to_id, relation)` | Remove relationship(s) |
 | `get_related_memories(memory_id, relation, direction)` | Find connected memories |
 
-Relation types: `related_to`, `depends_on`, `contradicts`, `supersedes`, `derived_from`, `example_of`
+Relation types: `relates_to`, `depends_on`, `supersedes`, `refines`, `contradicts`, `elaborates`
 
 ### Trust Management
 
@@ -208,6 +208,13 @@ Relation types: `related_to`, `depends_on`, `contradicts`, `supersedes`, `derive
 |------|-------------|
 | `strengthen_trust(memory_id, amount, reason)` | Increase confidence in a memory |
 | `weaken_trust(memory_id, amount, reason)` | Decrease confidence (e.g., found outdated) |
+
+### Retrieval Quality
+
+| Tool | Description |
+|------|-------------|
+| `mark_memory_used(memory_id, feedback)` | Mark a recalled memory as actually helpful |
+| `retrieval_quality_stats(memory_id, days)` | Get stats on which memories are retrieved vs used |
 
 ### Session Tracking
 

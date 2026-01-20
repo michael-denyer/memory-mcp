@@ -4,7 +4,7 @@ This module contains all Pydantic BaseModel classes used as return types
 for MCP tool functions. Extracted from server.py for cleaner organization.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from memory_mcp.models import Memory, MemoryRelation, Session
 
@@ -185,7 +185,7 @@ class BootstrapResponse(BaseModel):
     memories_created: int = 0
     memories_skipped: int = 0
     hot_cache_promoted: int = 0
-    errors: list[str] = []
+    errors: list[str] = Field(default_factory=list)
     message: str = ""
 
 
@@ -237,7 +237,7 @@ class MaintenanceResponse(BaseModel):
     vector_count: int
     schema_version: int
     auto_demoted_count: int = 0
-    auto_demoted_ids: list[int] = []
+    auto_demoted_ids: list[int] = Field(default_factory=list)
 
 
 class AuditEntryResponse(BaseModel):
