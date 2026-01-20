@@ -242,22 +242,24 @@ def bootstrap(
 
     # Handle empty repo case
     if not file_paths:
-        result = {
-            "success": True,
-            "files_found": 0,
-            "files_processed": 0,
-            "memories_created": 0,
-            "memories_skipped": 0,
-            "hot_cache_promoted": 0,
-            "errors": [],
-            "message": (
-                "No documentation files found. Create README.md or CLAUDE.md to bootstrap."
-            ),
-        }
+        message = "No documentation files found. Create README.md or CLAUDE.md to bootstrap."
         if use_json:
-            click.echo(json.dumps(result))
+            click.echo(
+                json.dumps(
+                    {
+                        "success": True,
+                        "files_found": 0,
+                        "files_processed": 0,
+                        "memories_created": 0,
+                        "memories_skipped": 0,
+                        "hot_cache_promoted": 0,
+                        "errors": [],
+                        "message": message,
+                    }
+                )
+            )
         else:
-            click.echo(result["message"])
+            click.echo(message)
         return
 
     mem_type = MemoryType(memory_type)
@@ -345,12 +347,12 @@ def db_rebuild_vectors(ctx: click.Context, batch_size: int, clear_only: bool) ->
             console.print("[bold]Vector Rebuild Results[/bold]")
             console.print(f"  Vectors cleared: [yellow]{result['vectors_cleared']}[/yellow]")
             if not clear_only:
-                console.print(
-                    f"  Memories embedded: [green]{result['memories_embedded']}[/green]"
-                    f"/{result['memories_total']}"
-                )
-                if result.get("memories_failed", 0) > 0:
-                    console.print(f"  [red]Failed: {result['memories_failed']}[/red]")
+                embedded = result["memories_embedded"]
+                total = result["memories_total"]
+                console.print(f"  Memories embedded: [green]{embedded}[/green]/{total}")
+                failed = result.get("memories_failed", 0)
+                if failed > 0:
+                    console.print(f"  [red]Failed: {failed}[/red]")
             console.print(f"  New model: [cyan]{result['new_model']}[/cyan]")
             console.print(f"  New dimension: [cyan]{result['new_dimension']}[/cyan]")
     except Exception as e:
@@ -375,11 +377,13 @@ def status(ctx: click.Context) -> None:
         stats = storage.get_hot_cache_stats()
         hot_memories = storage.get_hot_memories()
         metrics = storage.get_hot_cache_metrics()
+        memory_stats = storage.get_stats()
 
         if use_json:
             click.echo(
                 json.dumps(
                     {
+                        "memory_stats": memory_stats,
                         "hot_cache": stats,
                         "metrics": metrics.to_dict(),
                         "hot_memories": [
@@ -391,30 +395,56 @@ def status(ctx: click.Context) -> None:
             )
             return
 
-        # Hot cache status
+        # Header
         console.print("\n[bold cyan]Memory MCP Status[/bold cyan]")
         console.print(f"Database: {settings.db_path}")
 
-        # Stats table
+        # Memory overview
+        console.print("\n[bold]Memory Overview:[/bold]")
+        overview_table = Table(show_header=False, box=None)
+        overview_table.add_column("Metric", style="dim")
+        overview_table.add_column("Value", style="bold")
+        overview_table.add_row("Total memories", str(memory_stats["total_memories"]))
+        overview_table.add_row(
+            "Hot cache", f"{memory_stats['hot_cache_count']}/{stats['max_items']}"
+        )
+
+        # Type breakdown
+        by_type = memory_stats.get("by_type", {})
+        if by_type:
+            type_str = ", ".join(f"{t}: {c}" for t, c in sorted(by_type.items()))
+            overview_table.add_row("By type", type_str)
+
+        # Source breakdown
+        by_source = memory_stats.get("by_source", {})
+        if by_source:
+            source_str = ", ".join(f"{s}: {c}" for s, c in sorted(by_source.items()))
+            overview_table.add_row("By source", source_str)
+
+        console.print(overview_table)
+
+        # Hot cache stats
+        console.print("\n[bold]Hot Cache Metrics:[/bold]")
         stats_table = Table(show_header=False, box=None)
         stats_table.add_column("Metric", style="dim")
         stats_table.add_column("Value", style="bold")
 
-        stats_table.add_row("Hot cache", f"{stats['current_count']}/{stats['max_items']} items")
         stats_table.add_row("Cache hits", str(metrics.hits))
         stats_table.add_row("Cache misses", str(metrics.misses))
         stats_table.add_row("Promotions", str(metrics.promotions))
         stats_table.add_row("Evictions", str(metrics.evictions))
 
-        total_requests = metrics.hits + metrics.misses
-        if total_requests > 0:
-            hit_rate = metrics.hits / total_requests * 100
+        total = metrics.hits + metrics.misses
+        if total > 0:
+            hit_rate = metrics.hits / total * 100
             stats_table.add_row("Hit rate", f"{hit_rate:.1f}%")
 
         console.print(stats_table)
 
         # Hot memories table
-        if hot_memories:
+        if not hot_memories:
+            console.print("\n[dim]Hot cache is empty[/dim]")
+        else:
             console.print("\n[bold]Hot Cache Contents:[/bold]")
             mem_table = Table(show_header=True, header_style="bold magenta")
             mem_table.add_column("ID", style="dim", width=6)
@@ -424,19 +454,16 @@ def status(ctx: click.Context) -> None:
 
             max_display = 10
             for mem in hot_memories[:max_display]:
-                content_preview = mem.content[:57] + "..." if len(mem.content) > 60 else mem.content
-                content_preview = content_preview.replace("\n", " ")
-                pinned_marker = "[pin]" if mem.is_pinned else ""
-                mem_table.add_row(
-                    str(mem.id), mem.memory_type.value, content_preview, pinned_marker
-                )
+                content = mem.content.replace("\n", " ")
+                preview = content[:57] + "..." if len(content) > 60 else content
+                pinned = "[pin]" if mem.is_pinned else ""
+                mem_table.add_row(str(mem.id), mem.memory_type.value, preview, pinned)
 
             console.print(mem_table)
 
-            if len(hot_memories) > max_display:
-                console.print(f"  ... and {len(hot_memories) - max_display} more")
-        else:
-            console.print("\n[dim]Hot cache is empty[/dim]")
+            remaining = len(hot_memories) - max_display
+            if remaining > 0:
+                console.print(f"  ... and {remaining} more")
 
     finally:
         storage.close()
