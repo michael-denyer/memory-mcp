@@ -44,47 +44,73 @@ Restart Claude Code. Verify with `/mcp` - you should see memory tools.
 
 ## Architecture
 
+### Core: Two-Tier Memory
+
 ```mermaid
-graph TB
-    subgraph Claude["Claude / LLM"]
-        direction LR
-        REQ[Request]
+flowchart LR
+    subgraph LLM["Claude"]
+        REQ((Request))
     end
 
-    subgraph HotTier["Hot Cache · 0ms latency"]
-        direction TB
-        RES[memory://hot-cache]
-        RES --> PROJ[Project facts]
-        RES --> PAT[Mined patterns]
-        RES --> PIN[Pinned items]
+    subgraph Hot["Hot Tier · 0ms"]
+        HC[memory://hot-cache]
+        WS[memory://working-set]
     end
 
-    subgraph ColdTier["Cold Storage · ~50ms latency"]
-        direction TB
-        VEC[(Vector DB)]
-        VEC --> SEM[Semantic search]
-        VEC --> KG[Knowledge graph]
+    subgraph Cold["Cold Tier · ~50ms"]
+        VS[(Vector Store)]
+        KG[(Knowledge Graph)]
     end
 
-    subgraph Bootstrap["Auto-Bootstrap"]
-        direction LR
-        DETECT[Detect docs] --> MD1[README.md]
-        DETECT --> MD2[CLAUDE.md]
+    REQ -->|"auto-injected"| HC
+    REQ -->|"auto-injected"| WS
+    REQ -->|"recall()"| VS
+    VS <-->|"expand_relations"| KG
+```
+
+### Memory Lifecycle
+
+```mermaid
+flowchart TD
+    subgraph Input["Memory Creation"]
+        R[remember] --> NEW[New Memory]
+        M[Pattern Mining] --> NEW
+        B[Bootstrap] --> NEW
     end
 
-    subgraph Mining["Pattern Mining"]
-        direction TB
-        LOG[log_output] --> WINDOW[7-day window]
-        WINDOW --> EXTRACT[Extract patterns]
-        EXTRACT --> FREQ[Count frequency]
+    subgraph Scoring["Salience Scoring"]
+        NEW --> SCORE{Compute Score}
+        SCORE --> IMP[Importance]
+        SCORE --> TR[Trust]
+        SCORE --> AC[Access Count]
+        SCORE --> RE[Recency]
     end
 
-    REQ -->|auto-injected| RES
-    REQ -->|tool call| SEM
-    REQ --> LOG
-    MD1 & MD2 -->|seed| PROJ
-    FREQ -->|threshold 3+| PAT
-    SEM -->|promote| PROJ
+    subgraph Storage["Storage Tiers"]
+        SCORE -->|"score ≥ 0.5"| HOT[Hot Cache]
+        SCORE -->|"score < 0.5"| COLD[Cold Storage]
+        HOT <-->|"promote / demote"| COLD
+    end
+
+    subgraph Retrieval["Retrieval"]
+        HOT -->|"0ms"| OUT[Response]
+        COLD -->|"recall()"| OUT
+    end
+```
+
+### Knowledge Graph Expansion
+
+```mermaid
+flowchart LR
+    Q[Query] --> S[Semantic Search]
+    S --> M1[Memory A]
+    S --> M2[Memory B]
+
+    M1 -->|"DEPENDS_ON"| R1[Related 1]
+    M1 -->|"ELABORATES"| R2[Related 2]
+    M2 -->|"SUPERSEDES"| R3[Related 3]
+
+    M1 & M2 & R1 & R2 & R3 --> RES[Ranked Results]
 ```
 
 ### Two-Tier Memory System

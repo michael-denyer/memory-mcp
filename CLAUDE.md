@@ -10,52 +10,67 @@ This project differentiates from generic memory servers (like mcp-memory-service
    - **Hot Cache**: Zero-latency access via MCP resource injection (no tool call needed)
    - **Cold Storage**: Semantic search for everything else
 
-2. **Automatic Pattern Promotion**
-   - Patterns accessed 3+ times auto-promote to hot cache
-   - Stale patterns auto-demote after 14 days without access
+2. **Salience-Based Promotion**
+   - Unified salience score: importance + trust + access count + recency
+   - Auto-promote when salience ≥ 0.5 AND access count ≥ 3
+   - Auto-demote after 14 days without access
    - Pin important memories to prevent auto-eviction
 
-3. **Pattern Mining from Usage**
+3. **Working-Set Resource**
+   - `memory://working-set`: Session-aware active context (~10 items)
+   - Combines: recently recalled, predicted next, top salience
+   - Smaller and more focused than hot-cache
+
+4. **Multi-Hop Recall**
+   - `expand_relations=true` traverses knowledge graph
+   - Finds associated memories via typed relationships
+   - Score decay prevents dilution of results
+
+5. **Episodic Memory**
+   - Session-bound short-term context (7-day retention)
+   - `end_session()` promotes top memories to long-term storage
+   - Consolidates session context automatically
+
+6. **Pattern Mining from Usage**
    - Extracts imports, commands, project facts from Claude's outputs
    - Frequency-based promotion candidates
-   - Human approval before promotion
+   - Human approval before promotion (auto-approve for high-confidence)
 
-4. **Auto-Bootstrap**
-   - Hot cache auto-populates from README.md, CLAUDE.md when empty
-   - `bootstrap` CLI command and `bootstrap_project` MCP tool for manual seeding
-
-5. **Knowledge Graph**
+7. **Knowledge Graph**
    - Link related memories with typed relationships
-   - Relation types: `related_to`, `depends_on`, `contradicts`, `supersedes`, `derived_from`, `example_of`
+   - Relation types: `relates_to`, `depends_on`, `contradicts`, `supersedes`, `refines`, `elaborates`
 
-6. **Trust Management**
-   - Strengthen/weaken memory confidence over time
-   - Trust decay for stale information
+8. **Trust Management**
+   - Strengthen/weaken memory confidence with contextual reasons
+   - Per-memory-type trust decay rates
+   - Audit trail for trust changes
+
+9. **Memory Consolidation**
+   - `consolidate` CLI merges semantically similar memories
+   - Reduces redundancy while preserving information
 
 ## Architecture
 
 ```mermaid
-graph TD
-    subgraph "Hot Cache (Zero Latency)"
-        H[System Prompt Resource] --> A[High-freq project facts]
-        H --> B[Mined code patterns]
-        H --> P[Pinned memories]
+flowchart LR
+    subgraph LLM["Claude"]
+        REQ((Request))
     end
 
-    subgraph "Cold Storage (Tool Call)"
-        C[Vector store] --> D[Semantic search]
-        C --> K[Knowledge graph]
+    subgraph Hot["Hot Tier · 0ms"]
+        HC[memory://hot-cache]
+        WS[memory://working-set]
     end
 
-    subgraph "Bootstrap"
-        BOOT[Auto-detect docs] --> README[README.md]
-        BOOT --> CLAUDE[CLAUDE.md]
-        README --> A
-        CLAUDE --> A
+    subgraph Cold["Cold Tier · ~50ms"]
+        VS[(Vector Store)]
+        KG[(Knowledge Graph)]
     end
 
-    Claude --> H
-    Claude --> D
+    REQ -->|"auto-injected"| HC
+    REQ -->|"auto-injected"| WS
+    REQ -->|"recall()"| VS
+    VS <-->|"expand_relations"| KG
 ```
 
 ## Key Files
@@ -69,8 +84,17 @@ graph TD
 | `src/memory_mcp/config.py` | Settings and bootstrap file detection |
 | `hooks/memory-log-response.sh` | Claude Code Stop hook |
 
-## Recent Additions
+## Key Features by Version
 
+### v0.3.0 (Current)
+- **Salience Scoring**: Unified metric for promotion/eviction decisions
+- **Multi-Hop Recall**: `expand_relations` parameter for associative memory
+- **Working-Set Resource**: `memory://working-set` for session-aware context
+- **Episodic Memory**: `end_session()` for session consolidation
+- **Consolidation CLI**: `consolidate` command for memory deduplication
+- **Fine-Grained Trust**: Contextual reasons and audit trail
+
+### Earlier
 - **Bootstrap**: `bootstrap_project` tool and `bootstrap` CLI command
 - **Knowledge Graph**: `link_memories`, `unlink_memories`, `get_related_memories`
 - **Trust Management**: `strengthen_trust`, `weaken_trust`
