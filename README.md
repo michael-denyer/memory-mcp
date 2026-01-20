@@ -2,12 +2,18 @@
 
 # 🧠 Memory MCP Server
 
-**Persistent memory for AI assistants with two-tier hot/cold architecture**
+### Give your AI assistant a persistent second brain
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Works with Claude Code](https://img.shields.io/badge/Works%20with-Claude%20Code-blueviolet)](https://claude.ai/claude-code)
 [![MCP Compatible](https://img.shields.io/badge/MCP-Compatible-green.svg)](https://modelcontextprotocol.io)
+
+<br />
+
+**Stop re-explaining your project every session.**
+
+Memory MCP learns what matters and keeps it ready — zero latency for the stuff you use most, semantic search for everything else.
 
 <br />
 
@@ -29,28 +35,43 @@
 
 ---
 
-**Your AI assistant forgets everything when you start a new chat.** This MCP server gives Claude a persistent "second brain" with two-tier memory - frequently-used knowledge is always available (zero latency), while everything else is searchable on demand.
+## The Problem
 
-## Why You Need This
+Every new chat starts from scratch. You repeat yourself. Context balloons. Tool calls add latency.
 
-| Without Memory MCP | With Memory MCP |
-|-------------------|-----------------|
-| Re-explain project architecture every session | Project facts persist across sessions |
-| Repeat the same patterns manually | Frequently-used patterns auto-promoted to instant access |
-| Context balloons to 500k+ tokens | Hot cache keeps system prompt lean (~20 items) |
-| Tool calls for every memory lookup | Hot cache: **0ms** (already in context) |
+**Memory MCP fixes this.** It gives Claude persistent memory with a two-tier architecture: a hot cache for instant access to frequently-used knowledge, and cold storage with semantic search for everything else.
 
-**Inspired by Engram**: Frequently-used patterns should be instantly available, not searched every time.
+The system learns what you use and automatically promotes it. No manual curation required.
 
-## Quick Start (60 seconds)
+## Before & After
+
+| 😤 Without Memory MCP | 🎯 With Memory MCP |
+|----------------------|-------------------|
+| "Let me explain our architecture again..." | Project facts persist forever |
+| Copy-paste the same patterns | Patterns auto-promoted to instant access |
+| 500k+ token context windows | Hot cache keeps it lean (~20 items) |
+| Tool call latency on every lookup | Hot cache: **0ms** — already in context |
+
+## Key Features
+
+🚀 **Zero-latency hot cache** — Frequently-used memories auto-injected into context. No tool calls needed.
+
+🔍 **Semantic search** — Find memories by meaning, not just keywords. Knowledge graph connects related concepts.
+
+🤖 **Self-organizing** — Learns what you use. Auto-promotes frequent patterns. Auto-demotes stale ones.
+
+📦 **Local & private** — All data in SQLite. No cloud. No API keys. Works offline.
+
+🍎 **Apple Silicon optimized** — MLX backend auto-detected on M-series Macs for faster embeddings.
+
+## Quick Start
 
 ```bash
-# Clone and install
 git clone https://github.com/michael-denyer/memory-mcp.git
 cd memory-mcp && uv sync
-
-# Add to Claude Code (~/.claude.json)
 ```
+
+Add to your MCP client config (e.g., `~/.claude.json` for Claude Code):
 
 ```json
 {
@@ -63,119 +84,58 @@ cd memory-mcp && uv sync
 }
 ```
 
-Restart Claude Code. Verify with `/mcp` - you should see memory tools.
+Restart your client. That's it. The hot cache auto-populates from your project docs.
 
-> **First run**: The embedding model (~90MB) downloads automatically. This adds 30-60 seconds to initial startup.
+> **First run**: Embedding model (~90MB) downloads automatically. Takes 30-60 seconds once.
 
-## Architecture
-
-### Core: Two-Tier Memory
+## How It Works
 
 ```mermaid
 flowchart LR
-    subgraph LLM["Claude"]
+    subgraph LLM["Your AI Assistant"]
         REQ((Request))
     end
 
-    subgraph Hot["Hot Tier · 0ms"]
-        HC[memory://hot-cache]
-        WS[memory://working-set]
+    subgraph Hot["HOT CACHE · 0ms"]
+        HC[Frequent memories]
+        WS[Working set]
     end
 
-    subgraph Cold["Cold Tier · ~50ms"]
-        VS[(Vector Store)]
-        KG[(Knowledge Graph)]
+    subgraph Cold["COLD STORAGE · ~50ms"]
+        VS[(Vector search)]
+        KG[(Knowledge graph)]
     end
 
     REQ -->|"auto-injected"| HC
-    REQ -->|"auto-injected"| WS
     REQ -->|"recall()"| VS
-    VS <-->|"expand_relations"| KG
+    VS <-->|"related"| KG
 ```
 
-### Memory Lifecycle
+**Two tiers, automatic promotion:**
 
-```mermaid
-flowchart TD
-    subgraph Input["Memory Creation"]
-        R[remember] --> NEW[New Memory]
-        M[Pattern Mining] --> NEW
-        B[Bootstrap] --> NEW
-    end
+| Tier | Latency | What happens |
+|------|---------|--------------|
+| **Hot Cache** | 0ms | Auto-injected every request. No tool call needed. |
+| **Cold Storage** | ~50ms | Semantic search when you need deeper recall. |
 
-    subgraph Scoring["Salience Scoring"]
-        NEW --> SCORE{Compute Score}
-        SCORE --> IMP[Importance]
-        SCORE --> TR[Trust]
-        SCORE --> AC[Access Count]
-        SCORE --> RE[Recency]
-    end
+Memories used 3+ times automatically promote to hot cache. Unused memories demote after 14 days. Pin important ones to keep them hot forever.
 
-    subgraph Storage["Storage Tiers"]
-        SCORE -->|"score ≥ 0.5"| HOT[Hot Cache]
-        SCORE -->|"score < 0.5"| COLD[Cold Storage]
-        HOT <-->|"promote / demote"| COLD
-    end
+## What Makes It Different
 
-    subgraph Retrieval["Retrieval"]
-        HOT -->|"0ms"| OUT[Response]
-        COLD -->|"recall()"| OUT
-    end
-```
+| | Memory MCP | Others |
+|---|------------|--------|
+| **Hot cache** | Auto-injected, 0ms | Most require tool calls |
+| **Self-organizing** | Learns from usage | Manual curation |
+| **Pattern mining** | Extracts from outputs | Not available |
+| **Setup** | One command, local SQLite | Often needs cloud/services |
 
-### Knowledge Graph Expansion
+---
 
-```mermaid
-flowchart LR
-    Q[Query] --> S[Semantic Search]
-    S --> M1[Memory A]
-    S --> M2[Memory B]
+# Reference
 
-    M1 -->|"DEPENDS_ON"| R1[Related 1]
-    M1 -->|"ELABORATES"| R2[Related 2]
-    M2 -->|"SUPERSEDES"| R3[Related 3]
+Everything below is detailed documentation. You don't need to read it to get started.
 
-    M1 & M2 & R1 & R2 & R3 --> RES[Ranked Results]
-```
-
-### Two-Tier Memory System
-
-| Tier | Latency | How it works | What goes here |
-|------|---------|--------------|----------------|
-| **Hot Cache** | 0ms | Auto-injected via MCP resource | Project facts used 3+ times, pinned patterns |
-| **Cold Storage** | ~50ms | Semantic search tool call | Everything else, searchable on demand |
-
-Memories automatically promote to hot cache after 3 accesses (configurable). Stale memories demote after 14 days of non-use.
-
-## Features
-
-- **Persistent memory** - Survives across sessions, compaction events, IDE restarts
-- **Semantic search** - Find memories by meaning, not just keywords
-- **Auto-bootstrap** - Hot cache auto-populates from README.md, CLAUDE.md when empty
-- **Knowledge graph** - Link related memories with typed relationships
-- **Multi-hop recall** - Traverse knowledge graph to find associated memories
-- **Episodic memory** - Session-bound short-term context with consolidation to long-term
-- **Confidence gating** - Results tagged high/medium/low confidence
-- **Trust management** - Strengthen/weaken memory confidence over time
-- **Salience scoring** - Unified metric combining importance, trust, access, and recency
-- **Pattern mining** - Auto-extract patterns from Claude's outputs
-- **Memory consolidation** - Merge semantically similar memories to reduce redundancy
-- **Apple Silicon optimized** - MLX backend auto-detected on M-series Macs
-- **Local-first** - All data in SQLite, no cloud dependency
-
-## How This Compares
-
-| Capability | Memory MCP | Other options |
-|------------|------------|---------------|
-| MCP-native resource | Hot cache exposed as `memory://hot-cache`, auto-injected, 0ms lookup | Most are pull-only search; file configs (claude.md, cline/kilo) require manual reads; vector DBs need wrappers |
-| Auto promotion/demotion | Access-count and recency-based tiering between hot cache and vector store | Generally manual or TTL-based; Letta has policies but not a two-tier cache |
-| Pattern mining | Mines Claude outputs into reusable patterns and promotes them | Not present in Byterover, Zep, Mem0, vector DBs, LangChain/LlamaIndex |
-| Local-first setup | Single `uv run memory-mcp`, ~90MB model, SQLite | Vector DBs require external services; Byterover/Zep/Letta are heavier to deploy; file configs are light but lack semantic search |
-| Hardware awareness | MLX auto-detect on Apple Silicon | Most are backend-agnostic without local M-series optimizations |
-| Team and scale | Single-user/local focus | Byterover offers Git-like team memory; vector DBs (Pinecone/Weaviate/Milvus/pgvector) win on distributed scale |
-| Built-in summarization | Embedding-based recall with hot cache | Zep includes summarization pipelines; vector DBs/LangChain/LlamaIndex rely on added chains |
-
-## Tools Reference
+## Tools
 
 ### Memory Operations
 
