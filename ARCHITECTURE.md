@@ -107,28 +107,60 @@ graph TD
 src/memory_mcp/
 ├── server.py       # MCP tools and resources - the API layer
 ├── storage.py      # SQLite operations, vector search, caching logic
+├── responses.py    # Pydantic response models for MCP tools
+├── models.py       # Enums and dataclasses (domain models)
+├── migrations.py   # Database schema and version migrations
 ├── mining.py       # Pattern extraction from outputs
 ├── config.py       # Settings with environment variable loading
 ├── cli.py          # CLI commands for hooks and administration
 ├── embeddings.py   # Embedding providers (sentence-transformers, MLX)
 ├── text_parsing.py # Content chunking for seeding
-└── logging.py      # Structured logging and metrics
+├── logging.py      # Structured logging configuration
+└── metrics.py      # Metrics collection and observability
+```
+
+### Module Dependencies
+
+```mermaid
+graph TD
+    server[server.py] --> storage[storage.py]
+    server --> responses[responses.py]
+    server --> config[config.py]
+    server --> logging[logging.py]
+
+    storage --> models[models.py]
+    storage --> migrations[migrations.py]
+    storage --> embeddings[embeddings.py]
+    storage --> config
+
+    responses --> models
+    migrations --> config
+    cli --> storage
+    cli --> config
+    mining --> storage
+    metrics --> logging
 ```
 
 ### Layer Responsibilities
 
 | Module | Responsibility |
 |--------|----------------|
-| `server.py` | Request validation, response formatting, MCP protocol |
+| `server.py` | MCP tools/resources, request validation, response construction |
 | `storage.py` | Data persistence, vector operations, business logic |
+| `responses.py` | Pydantic models for tool return types |
+| `models.py` | Domain enums (MemoryType, TrustReason) and dataclasses (Memory, Session) |
+| `migrations.py` | Database schema definition and version migrations |
 | `mining.py` | Pattern extraction algorithms |
 | `embeddings.py` | Embedding abstraction (MLX on Apple Silicon, else ST) |
+| `logging.py` | Loguru configuration, stderr output for MCP compatibility |
+| `metrics.py` | Counters, gauges, and metric recording helpers |
 
 ### Why This Structure?
 
-1. **Single storage module**: All database operations in one place for transaction safety
-2. **Thin server layer**: Just adapts storage operations to MCP protocol
+1. **Separated concerns**: Models, responses, and migrations extracted for clarity
+2. **Thin server layer**: Adapts storage operations to MCP protocol
 3. **Swappable embeddings**: Backend detection allows hardware optimization
+4. **Backwards-compatible imports**: Re-exports preserve existing import paths
 
 ## Key Design Decisions
 
