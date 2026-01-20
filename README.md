@@ -102,9 +102,13 @@ Memories automatically promote to hot cache after 3 accesses (configurable). Sta
 - **Semantic search** - Find memories by meaning, not just keywords
 - **Auto-bootstrap** - Hot cache auto-populates from README.md, CLAUDE.md when empty
 - **Knowledge graph** - Link related memories with typed relationships
+- **Multi-hop recall** - Traverse knowledge graph to find associated memories
+- **Episodic memory** - Session-bound short-term context with consolidation to long-term
 - **Confidence gating** - Results tagged high/medium/low confidence
 - **Trust management** - Strengthen/weaken memory confidence over time
+- **Salience scoring** - Unified metric combining importance, trust, access, and recency
 - **Pattern mining** - Auto-extract patterns from Claude's outputs
+- **Memory consolidation** - Merge semantically similar memories to reduce redundancy
 - **Apple Silicon optimized** - MLX backend auto-detected on M-series Macs
 - **Local-first** - All data in SQLite, no cloud dependency
 
@@ -127,7 +131,7 @@ Memories automatically promote to hot cache after 3 accesses (configurable). Sta
 | Tool | Description |
 |------|-------------|
 | `remember(content, type, tags)` | Store a memory with semantic embedding |
-| `recall(query, limit, threshold)` | Semantic search with confidence gating |
+| `recall(query, limit, threshold, expand_relations)` | Semantic search with confidence gating and optional multi-hop expansion |
 | `recall_by_tag(tag)` | Filter memories by tag |
 | `forget(memory_id)` | Delete a memory |
 | `list_memories(limit, offset, type)` | Browse all memories |
@@ -182,6 +186,7 @@ Relation types: `related_to`, `depends_on`, `contradicts`, `supersedes`, `derive
 |------|-------------|
 | `get_or_create_session(session_id, topic)` | Track conversation context |
 | `get_session_memories(session_id)` | Retrieve memories from a session |
+| `end_session(session_id, promote_top)` | End session and promote top episodic memories to long-term storage |
 
 ## Memory Types
 
@@ -191,6 +196,7 @@ Relation types: `related_to`, `depends_on`, `contradicts`, `supersedes`, `derive
 | `pattern` | Reusable code patterns, commands |
 | `reference` | API docs, external references |
 | `conversation` | Facts from discussions |
+| `episodic` | Session-bound short-term context (auto-expires after 7 days) |
 
 ## Confidence Gating
 
@@ -231,22 +237,58 @@ Environment variables (prefix `MEMORY_MCP_`):
 | `DEFAULT_RECALL_LIMIT` | `5` | Default results per recall |
 | `DEFAULT_CONFIDENCE_THRESHOLD` | `0.7` | Minimum similarity for results |
 | `HIGH_CONFIDENCE_THRESHOLD` | `0.85` | Threshold for "high" confidence |
+| `RECALL_EXPAND_RELATIONS` | `false` | Enable multi-hop recall via knowledge graph |
 
-## Hot Cache Resource
+### Salience & Promotion
 
-The server exposes `memory://hot-cache` as an MCP resource. Hot cache contents are automatically available in Claude's context without tool calls.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SALIENCE_PROMOTION_THRESHOLD` | `0.5` | Minimum salience score for auto-promotion |
+| `SALIENCE_IMPORTANCE_WEIGHT` | `0.25` | Weight for importance in salience |
+| `SALIENCE_TRUST_WEIGHT` | `0.25` | Weight for trust in salience |
+| `SALIENCE_ACCESS_WEIGHT` | `0.25` | Weight for access count in salience |
+| `SALIENCE_RECENCY_WEIGHT` | `0.25` | Weight for recency in salience |
+
+### Episodic Memory
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EPISODIC_PROMOTE_TOP_N` | `3` | Top N episodic memories to promote on session end |
+| `EPISODIC_PROMOTE_THRESHOLD` | `0.6` | Minimum salience for episodic promotion |
+| `RETENTION_EPISODIC_DAYS` | `7` | Days to retain episodic memories |
+
+### Working Set
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WORKING_SET_ENABLED` | `true` | Enable memory://working-set resource |
+| `WORKING_SET_MAX_ITEMS` | `10` | Maximum items in working set |
+
+## MCP Resources
+
+The server exposes two MCP resources for zero-latency memory access:
+
+### Hot Cache (`memory://hot-cache`)
+
+Auto-injectable system context with high-confidence patterns. Contents are automatically available in Claude's context without tool calls.
+
+- Memories promoted to hot cache appear here
+- Keeps system prompts lean (~10-20 items max)
+- **Auto-bootstrap**: If empty, auto-seeds from project docs (README.md, CLAUDE.md, etc.)
+
+### Working Set (`memory://working-set`)
+
+Session-aware active memory context (Engram-inspired). Provides contextually relevant memories:
+
+1. Recently recalled memories (that were actually used)
+2. Predicted next memories (from access pattern learning)
+3. Top salience hot items (to fill remaining slots)
+
+Smaller and more focused than hot-cache (~10 items) - designed for active work context.
 
 ### Enabling Auto-Injection
 
-Add the MCP server to your settings (see Quick Start). The hot cache resource is automatically available. Verify with `/mcp` in Claude Code.
-
-### How It Works
-
-1. Memories promoted to hot cache appear in `memory://hot-cache`
-2. Claude sees hot cache contents without needing tool calls
-3. Keeps system prompts lean (~10-20 items max)
-4. Contents update as you promote/demote memories
-5. **Auto-bootstrap**: If hot cache is empty, auto-seeds from project docs (README.md, CLAUDE.md, etc.)
+Add the MCP server to your settings (see Quick Start). Both resources are automatically available. Verify with `/mcp` in Claude Code.
 
 ## Automatic Output Logging
 
@@ -305,6 +347,13 @@ uv run memory-mcp-cli run-mining --hours 24
 
 # Seed from a file
 uv run memory-mcp-cli seed ~/project/CLAUDE.md -t project --promote
+
+# Consolidate similar memories (preview first with --dry-run)
+uv run memory-mcp-cli consolidate --dry-run
+uv run memory-mcp-cli consolidate
+
+# Show memory system status
+uv run memory-mcp-cli status
 ```
 
 ## Development
