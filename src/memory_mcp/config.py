@@ -127,6 +127,9 @@ class Settings(BaseSettings):
     trust_decay_conversation_days: float = Field(
         default=30.0, description="Trust decay half-life for conversation memories"
     )
+    trust_decay_episodic_days: float = Field(
+        default=7.0, description="Trust decay half-life for episodic memories"
+    )
 
     # Confidence-weighted trust updates
     trust_auto_strengthen_on_recall: bool = Field(
@@ -159,6 +162,17 @@ class Settings(BaseSettings):
     )
     retention_conversation_days: int = Field(
         default=90, description="Days to retain conversation memories (0 = forever)"
+    )
+    retention_episodic_days: int = Field(
+        default=7, description="Days to retain episodic memories (0 = forever)"
+    )
+
+    # Episodic memory (session-bound short-term context)
+    episodic_promote_top_n: int = Field(
+        default=3, description="Top N episodic memories to promote on session end"
+    )
+    episodic_promote_threshold: float = Field(
+        default=0.6, description="Minimum salience score for episodic promotion"
     )
 
     # Predictive hot cache warming (enabled by default for maximum value)

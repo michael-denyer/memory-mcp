@@ -18,6 +18,7 @@ class MemoryType(str, Enum):
     PATTERN = "pattern"  # Reusable code patterns
     REFERENCE = "reference"  # External docs, API notes
     CONVERSATION = "conversation"  # Facts from discussions
+    EPISODIC = "episodic"  # Session-bound context (short-term)
 
 
 class MemorySource(str, Enum):

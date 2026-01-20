@@ -2622,3 +2622,112 @@ class TestWorkingSet:
             assert len(working_set) <= 3
         finally:
             stor.close()
+
+
+class TestEpisodicMemory:
+    """Tests for episodic memory and session end functionality."""
+
+    def test_episodic_memory_type_exists(self):
+        """EPISODIC memory type should be available."""
+        assert MemoryType.EPISODIC.value == "episodic"
+
+    def test_store_episodic_memory(self, tmp_path):
+        """Can store memories with episodic type."""
+        settings = Settings(
+            db_path=tmp_path / "episodic.db",
+            semantic_dedup_enabled=False,
+        )
+        stor = Storage(settings)
+        try:
+            mid, is_new = stor.store_memory(
+                content="Episodic memory content",
+                memory_type=MemoryType.EPISODIC,
+                session_id="test-session-123",
+            )
+            assert is_new
+            memory = stor.get_memory(mid)
+            assert memory.memory_type == MemoryType.EPISODIC
+            assert memory.session_id == "test-session-123"
+        finally:
+            stor.close()
+
+    def test_end_session_not_found(self, tmp_path):
+        """end_session returns error for unknown session."""
+        settings = Settings(db_path=tmp_path / "episodic.db")
+        stor = Storage(settings)
+        try:
+            result = stor.end_session("nonexistent-session")
+            assert result["success"] is False
+            assert "not found" in result["error"]
+        finally:
+            stor.close()
+
+    def test_end_session_promotes_top_episodic(self, tmp_path):
+        """end_session promotes top episodic memories by salience."""
+        settings = Settings(
+            db_path=tmp_path / "episodic.db",
+            semantic_dedup_enabled=False,
+            episodic_promote_top_n=2,
+            episodic_promote_threshold=0.0,  # Promote all
+        )
+        stor = Storage(settings)
+        try:
+            session_id = "test-session-end"
+            stor.create_or_get_session(session_id)
+
+            # Create episodic memories with different access counts
+            mid1, _ = stor.store_memory(
+                content="Low value episodic",
+                memory_type=MemoryType.EPISODIC,
+                session_id=session_id,
+            )
+            mid2, _ = stor.store_memory(
+                content="High value episodic",
+                memory_type=MemoryType.EPISODIC,
+                session_id=session_id,
+            )
+
+            # Increase salience for mid2 by accessing it multiple times
+            for _ in range(5):
+                stor.get_memory(mid2)
+
+            result = stor.end_session(session_id, promote_top=True)
+
+            assert result["success"] is True
+            assert result["episodic_count"] == 2
+            assert result["promoted_count"] >= 1
+            assert mid2 in result["promoted_ids"]
+
+            # Verify the higher-salience memory was promoted to PROJECT
+            promoted_mem = stor.get_memory(mid2)
+            assert promoted_mem.memory_type == MemoryType.PROJECT
+        finally:
+            stor.close()
+
+    def test_end_session_no_promote(self, tmp_path):
+        """end_session with promote_top=False keeps types unchanged."""
+        settings = Settings(
+            db_path=tmp_path / "episodic.db",
+            semantic_dedup_enabled=False,
+        )
+        stor = Storage(settings)
+        try:
+            session_id = "test-session-nopromote"
+            stor.create_or_get_session(session_id)
+
+            mid, _ = stor.store_memory(
+                content="Episodic to not promote",
+                memory_type=MemoryType.EPISODIC,
+                session_id=session_id,
+            )
+
+            result = stor.end_session(session_id, promote_top=False)
+
+            assert result["success"] is True
+            assert result["promoted_count"] == 0
+
+            # Memory type unchanged
+            memory = stor.get_memory(mid)
+            assert memory.memory_type == MemoryType.EPISODIC
+        finally:
+            stor.close()

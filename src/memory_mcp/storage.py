@@ -3445,6 +3445,112 @@ class Storage:
             log_count=row["log_count"],
         )
 
+    # ========== Episodic Memory ==========
+
+    def _compute_memory_salience(self, memory: Memory) -> float:
+        """Compute and store salience score for a memory.
+
+        Args:
+            memory: Memory to compute salience for
+
+        Returns:
+            Computed salience score
+        """
+        salience = self._compute_salience_score(
+            importance_score=memory.importance_score,
+            trust_score=memory.trust_score,
+            access_count=memory.access_count,
+            last_accessed_at=memory.last_accessed_at,
+        )
+        memory.salience_score = salience
+        return salience
+
+    def end_session(
+        self,
+        session_id: str,
+        promote_top: bool = True,
+        promote_type: MemoryType = MemoryType.PROJECT,
+    ) -> dict:
+        """End a session and optionally promote top episodic memories.
+
+        Mirrors human memory consolidation: episodic (short-term) memories
+        that prove valuable get promoted to semantic (long-term) storage.
+
+        Args:
+            session_id: Session to end
+            promote_top: Whether to promote top memories to long-term storage
+            promote_type: Memory type for promoted memories (default: PROJECT)
+
+        Returns:
+            Dict with session summary and promotion results
+        """
+        session = self.get_session(session_id)
+        if session is None:
+            return {"success": False, "error": f"Session not found: {session_id}"}
+
+        # Get and rank episodic memories by salience
+        session_memories = self.get_session_memories(session_id)
+        episodic_memories = [m for m in session_memories if m.memory_type == MemoryType.EPISODIC]
+
+        for memory in episodic_memories:
+            self._compute_memory_salience(memory)
+
+        episodic_memories.sort(key=lambda m: m.salience_score or 0, reverse=True)
+
+        # Promote top memories above threshold
+        promoted_ids: list[int] = []
+        if promote_top and episodic_memories:
+            threshold = self.settings.episodic_promote_threshold
+            candidates = [
+                m
+                for m in episodic_memories[: self.settings.episodic_promote_top_n]
+                if (m.salience_score or 0) >= threshold
+            ]
+
+            if candidates:
+                # Batch update memory types in single transaction
+                with self.transaction() as conn:
+                    for memory in candidates:
+                        conn.execute(
+                            "UPDATE memories SET memory_type = ? WHERE id = ?",
+                            (promote_type.value, memory.id),
+                        )
+                        promoted_ids.append(memory.id)
+
+                # Promote to hot cache after transaction commits
+                for memory in candidates:
+                    if not memory.is_hot:
+                        self.promote_to_hot(memory.id)
+                    log.info(
+                        "Promoted episodic memory id={} to {} (salience={:.2f})",
+                        memory.id,
+                        promote_type.value,
+                        memory.salience_score or 0,
+                    )
+
+        log.info(
+            "Ended session {} with {} episodic memories, {} promoted",
+            session_id[:8],
+            len(episodic_memories),
+            len(promoted_ids),
+        )
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "episodic_count": len(episodic_memories),
+            "promoted_count": len(promoted_ids),
+            "promoted_ids": promoted_ids,
+            "top_memories": [
+                {
+                    "id": m.id,
+                    "content": m.content[:100],
+                    "salience": round(m.salience_score or 0, 3),
+                }
+                for m in episodic_memories[:5]
+            ],
+        }
+
     # ========== Bootstrap Methods ==========
 
     def bootstrap_from_files(
