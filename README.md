@@ -1,4 +1,4 @@
-<!-- mcp-name: hot-memory-mcp -->
+<!-- mcp-name: io.github.michael-denyer/hot-memory-mcp -->
 <div align="center">
 
 # 🧠 Memory MCP Server
