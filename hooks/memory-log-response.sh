@@ -48,11 +48,17 @@ if [ -z "$MEMORY_MCP_DIR" ]; then
     MEMORY_MCP_DIR="$(dirname "$SCRIPT_DIR")"
 fi
 
-# Extract the last assistant message from the transcript
-# The transcript is JSONL format with message objects
+# Extract the last assistant message with text content from the transcript
+# Transcript format: JSONL with {type: "assistant", message: {content: [{type: "text", text: "..."}]}}
 LAST_RESPONSE=$(tail -100 "$TRANSCRIPT_PATH" 2>/dev/null | \
-    jq -s '[.[] | select(.type == "assistant" or .role == "assistant")] | last | .content // .message // empty' 2>/dev/null | \
-    jq -r 'if type == "array" then [.[] | select(.type == "text") | .text] | join("\n") else . end' 2>/dev/null)
+    jq -rs '
+        [.[] | select(.type == "assistant") | select(.message.content[]?.type == "text")]
+        | last
+        | .message.content
+        | map(select(.type == "text") | .text)
+        | join("\n")
+        | if . == "" then empty else . end
+    ' 2>/dev/null)
 
 if [ -z "$LAST_RESPONSE" ] || [ "$LAST_RESPONSE" = "null" ]; then
     # No response found, exit silently

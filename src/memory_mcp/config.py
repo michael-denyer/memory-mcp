@@ -64,7 +64,7 @@ class Settings(BaseSettings):
         default=True, description="Auto-approve patterns meeting confidence/occurrence thresholds"
     )
     mining_auto_approve_confidence: float = Field(
-        default=0.8, description="Minimum confidence for auto-approval"
+        default=0.5, description="Minimum confidence for auto-approval"
     )
     mining_auto_approve_occurrences: int = Field(
         default=3, description="Minimum occurrences for auto-approval"
