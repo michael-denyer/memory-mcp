@@ -248,15 +248,21 @@ class TestSentenceTransformerProvider:
 class TestCreateProvider:
     """Tests for the provider factory."""
 
-    def test_creates_sentence_transformer_by_default(self):
-        """Factory should create SentenceTransformerProvider by default."""
-        settings = Settings(embedding_model="sentence-transformers/all-MiniLM-L6-v2")
+    def test_force_sentence_transformers_backend(self):
+        """Setting backend to sentence-transformers should force SentenceTransformerProvider."""
+        settings = Settings(
+            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+            embedding_backend="sentence-transformers",
+        )
         provider = create_provider(settings)
         assert isinstance(provider, SentenceTransformerProvider)
 
-    def test_handles_model_with_slash(self):
-        """Models with slash should use SentenceTransformer."""
-        settings = Settings(embedding_model="custom/model")
+    def test_force_st_backend_shorthand(self):
+        """Setting backend to 'st' should force SentenceTransformerProvider."""
+        settings = Settings(
+            embedding_model="custom/model",
+            embedding_backend="st",
+        )
         provider = create_provider(settings)
         assert isinstance(provider, SentenceTransformerProvider)
 
@@ -450,7 +456,7 @@ class TestMLXEmbeddingProvider:
         """Should provide helpful error when MLX not installed."""
         provider = MLXEmbeddingProvider("mlx-community/test-model", 384)
 
-        with patch.dict("sys.modules", {"mlx": None, "mlx.core": None, "mlx_lm": None}):
+        with patch.dict("sys.modules", {"mlx_embeddings": None, "mlx_embeddings.utils": None}):
             with pytest.raises(ImportError, match="MLX dependencies not installed"):
                 provider._get_model()
 

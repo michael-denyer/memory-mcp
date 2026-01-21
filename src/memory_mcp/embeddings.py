@@ -27,9 +27,9 @@ def is_apple_silicon() -> bool:
 
 
 def is_mlx_available() -> bool:
-    """Check if MLX is installed and available."""
+    """Check if mlx-embeddings is installed and available."""
     try:
-        import mlx.core  # noqa: F401
+        from mlx_embeddings.utils import load  # noqa: F401
 
         return True
     except ImportError:
@@ -237,7 +237,7 @@ MLX_MODEL_MAPPINGS = {
 
 
 class MLXEmbeddingProvider(BaseEmbeddingProvider):
-    """Embedding provider using MLX for Apple Silicon acceleration.
+    """Embedding provider using mlx-embeddings for Apple Silicon acceleration.
 
     Uses MLX-optimized models from the mlx-community on Hugging Face.
     Falls back to sentence-transformers if MLX is not available.
@@ -245,7 +245,7 @@ class MLXEmbeddingProvider(BaseEmbeddingProvider):
     Supported models:
     - mlx-community/all-MiniLM-L6-v2-4bit (384 dim, fast)
     - mlx-community/bge-small-en-v1.5-4bit (384 dim)
-    - mlx-community/mxbai-embed-large-v1-4bit (1024 dim, better quality)
+    - Any BERT/RoBERTa-based model supported by mlx-embeddings
     """
 
     def __init__(self, model_name: str, expected_dim: int):
@@ -266,50 +266,29 @@ class MLXEmbeddingProvider(BaseEmbeddingProvider):
         """Lazy-load the MLX model and tokenizer."""
         if self._model is None:
             try:
-                import mlx.core as mx
-                from mlx_lm import load
+                from mlx_embeddings.utils import load
 
                 log.info("Loading MLX embedding model: {}", self._model_name)
                 self._model, self._tokenizer = load(self._model_name)
-                self._mx = mx
             except ImportError as e:
                 raise ImportError(
-                    f"MLX dependencies not installed. Install with: pip install mlx mlx-lm\n"
+                    f"MLX dependencies not installed. Install with: pip install mlx-embeddings\n"
                     f"Original error: {e}"
                 )
         return self._model, self._tokenizer
 
-    def _mean_pooling(self, model_output, attention_mask):
-        """Apply mean pooling to get sentence embeddings."""
-        mx = self._mx
-        token_embeddings = model_output
-        input_mask_expanded = mx.expand_dims(attention_mask, -1)
-        input_mask_expanded = mx.broadcast_to(input_mask_expanded, token_embeddings.shape)
-        sum_embeddings = mx.sum(token_embeddings * input_mask_expanded, axis=1)
-        sum_mask = mx.clip(mx.sum(input_mask_expanded, axis=1), a_min=1e-9, a_max=None)
-        return sum_embeddings / sum_mask
-
     def embed(self, text: str) -> np.ndarray:
         """Generate embedding using MLX."""
         model, tokenizer = self._get_model()
-        mx = self._mx
 
         # Tokenize
-        inputs = tokenizer(text, return_tensors="np", padding=True, truncation=True)
-        input_ids = mx.array(inputs["input_ids"])
-        attention_mask = mx.array(inputs["attention_mask"])
+        input_ids = tokenizer.encode(text, return_tensors="mlx")
 
-        # Get model output (hidden states)
+        # Get model output - mlx-embeddings provides text_embeds (mean pooled + normalized)
         outputs = model(input_ids)
 
-        # Mean pooling
-        embeddings = self._mean_pooling(outputs, attention_mask)
-
-        # Normalize
-        embeddings = embeddings / mx.linalg.norm(embeddings, axis=-1, keepdims=True)
-
-        # Convert to numpy
-        embedding = np.array(embeddings[0], dtype=np.float32)
+        # Extract normalized embeddings
+        embedding = np.array(outputs.text_embeds[0], dtype=np.float32)
         return embedding
 
     def embed_batch(self, texts: list[str]) -> list[np.ndarray]:
@@ -318,23 +297,17 @@ class MLXEmbeddingProvider(BaseEmbeddingProvider):
             return []
 
         model, tokenizer = self._get_model()
-        mx = self._mx
 
         # Tokenize batch
-        inputs = tokenizer(texts, return_tensors="np", padding=True, truncation=True)
-        input_ids = mx.array(inputs["input_ids"])
-        attention_mask = mx.array(inputs["attention_mask"])
+        inputs = tokenizer.batch_encode_plus(
+            texts, return_tensors="mlx", padding=True, truncation=True, max_length=512
+        )
 
-        # Get model output
-        outputs = model(input_ids)
+        # Get model output with attention mask for proper pooling
+        outputs = model(inputs["input_ids"], attention_mask=inputs["attention_mask"])
 
-        # Mean pooling
-        embeddings = self._mean_pooling(outputs, attention_mask)
-
-        # Normalize
-        embeddings = embeddings / mx.linalg.norm(embeddings, axis=-1, keepdims=True)
-
-        # Convert to numpy list
+        # Extract normalized embeddings
+        embeddings = outputs.text_embeds
         return [np.array(embeddings[i], dtype=np.float32) for i in range(len(texts))]
 
 

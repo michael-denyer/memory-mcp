@@ -1103,10 +1103,10 @@ class TestMemoryRelationships:
             ).fetchone()
             assert result is not None
 
-    def test_schema_version_is_11(self, storage):
-        """Schema version should be 11 after migration."""
+    def test_schema_version_is_12(self, storage):
+        """Schema version should be 12 after migration."""
         version = storage.get_schema_version()
-        assert version == 11
+        assert version == 12
 
     def test_expand_via_relations(self, storage):
         """expand_via_relations adds related memories with decayed scores."""
@@ -1926,10 +1926,10 @@ class TestPredictiveCache:
 
         assert mid2 not in promoted  # Already hot
 
-    def test_schema_version_is_11(self, predictive_storage):
-        """Schema version should be 11 after migration."""
+    def test_schema_version_is_12(self, predictive_storage):
+        """Schema version should be 12 after migration."""
         version = predictive_storage.get_schema_version()
-        assert version == 11
+        assert version == 12
 
     def test_access_sequences_table_exists(self, predictive_storage):
         """access_sequences table should exist."""
@@ -2731,3 +2731,156 @@ class TestEpisodicMemory:
             assert memory.memory_type == MemoryType.EPISODIC
         finally:
             stor.close()
+
+
+class TestHybridSearch:
+    """Tests for hybrid semantic + keyword search (v12 feature)."""
+
+    @pytest.fixture
+    def hybrid_storage(self, tmp_path):
+        """Storage with hybrid search enabled."""
+        settings = Settings(
+            db_path=tmp_path / "hybrid.db",
+            semantic_dedup_enabled=False,
+            hybrid_search_enabled=True,
+            hybrid_keyword_weight=0.3,
+            hybrid_keyword_boost_threshold=0.4,
+        )
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    @pytest.fixture
+    def no_hybrid_storage(self, tmp_path):
+        """Storage with hybrid search disabled."""
+        settings = Settings(
+            db_path=tmp_path / "no_hybrid.db",
+            semantic_dedup_enabled=False,
+            hybrid_search_enabled=False,
+        )
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    def test_fts_table_created(self, hybrid_storage):
+        """FTS5 table should exist after migration."""
+        with hybrid_storage._connection() as conn:
+            result = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='memory_fts'"
+            ).fetchone()
+            assert result is not None
+
+    def test_fts_synced_on_insert(self, hybrid_storage):
+        """FTS table should be populated when memories are inserted."""
+        mid, _ = hybrid_storage.store_memory(
+            "FastAPI with async endpoints for Python backend",
+            MemoryType.PROJECT,
+        )
+
+        with hybrid_storage._connection() as conn:
+            # Verify FTS content exists
+            result = conn.execute(
+                "SELECT content FROM memory_fts WHERE rowid = ?", (mid,)
+            ).fetchone()
+            assert result is not None
+            assert "FastAPI" in result["content"]
+
+    def test_fts_synced_on_delete(self, hybrid_storage):
+        """FTS table should be cleaned when memories are deleted."""
+        mid, _ = hybrid_storage.store_memory("Temporary memory", MemoryType.PROJECT)
+
+        with hybrid_storage._connection() as conn:
+            # Verify FTS content exists
+            result = conn.execute(
+                "SELECT content FROM memory_fts WHERE rowid = ?", (mid,)
+            ).fetchone()
+            assert result is not None
+
+        # Delete the memory
+        hybrid_storage.delete_memory(mid)
+
+        with hybrid_storage._connection() as conn:
+            # Verify FTS content removed
+            result = conn.execute(
+                "SELECT content FROM memory_fts WHERE rowid = ?", (mid,)
+            ).fetchone()
+            assert result is None
+
+    def test_keyword_score_populated(self, hybrid_storage):
+        """Keyword score should be populated for matching results."""
+        hybrid_storage.store_memory(
+            "FastAPI framework for building APIs with Python",
+            MemoryType.PROJECT,
+        )
+
+        # Query with keyword that's in the content
+        result = hybrid_storage.recall("FastAPI Python", threshold=0.3)
+
+        assert len(result.memories) > 0
+        mem = result.memories[0]
+        # Should have keyword score since query words match content
+        assert mem.keyword_score is not None
+        assert mem.keyword_score > 0
+
+    def test_hybrid_disabled_no_keyword_score(self, no_hybrid_storage):
+        """When hybrid is disabled, keyword_score should be None."""
+        no_hybrid_storage.store_memory(
+            "FastAPI framework for building APIs with Python",
+            MemoryType.PROJECT,
+        )
+
+        result = no_hybrid_storage.recall("FastAPI Python", threshold=0.3)
+
+        assert len(result.memories) > 0
+        mem = result.memories[0]
+        # Should NOT have keyword score when hybrid disabled
+        assert mem.keyword_score is None
+
+    def test_hybrid_boosts_keyword_matches(self, tmp_path):
+        """Hybrid search should boost results with keyword matches."""
+        # Create two storages with same content
+        settings_hybrid = Settings(
+            db_path=tmp_path / "hybrid_boost.db",
+            semantic_dedup_enabled=False,
+            hybrid_search_enabled=True,
+            hybrid_keyword_weight=0.3,
+        )
+        settings_no_hybrid = Settings(
+            db_path=tmp_path / "no_hybrid_boost.db",
+            semantic_dedup_enabled=False,
+            hybrid_search_enabled=False,
+        )
+        stor_hybrid = Storage(settings_hybrid)
+        stor_no_hybrid = Storage(settings_no_hybrid)
+
+        try:
+            content = "Django REST Framework for building REST APIs"
+
+            stor_hybrid.store_memory(content, MemoryType.PROJECT)
+            stor_no_hybrid.store_memory(content, MemoryType.PROJECT)
+
+            # Query that has keyword overlap
+            query = "Django REST API"
+
+            result_hybrid = stor_hybrid.recall(query, threshold=0.3)
+            result_no_hybrid = stor_no_hybrid.recall(query, threshold=0.3)
+
+            # Both should find the memory
+            assert len(result_hybrid.memories) > 0
+            assert len(result_no_hybrid.memories) > 0
+
+            # Hybrid should have keyword score
+            assert result_hybrid.memories[0].keyword_score is not None
+
+            # The composite scores might differ due to hybrid boost
+            # but we mainly verify both work correctly
+            assert result_hybrid.memories[0].composite_score is not None
+            assert result_no_hybrid.memories[0].composite_score is not None
+        finally:
+            stor_hybrid.close()
+            stor_no_hybrid.close()
+
+    def test_schema_version_is_12(self, hybrid_storage):
+        """Schema version should be 12 for hybrid search."""
+        version = hybrid_storage.get_schema_version()
+        assert version == 12

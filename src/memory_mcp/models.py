@@ -164,6 +164,7 @@ class Memory:
     recency_component: float | None = None  # recency_score * weight
     access_component: float | None = None  # access_score * weight
     trust_component: float | None = None  # trust * weight
+    keyword_score: float | None = None  # FTS keyword match score (hybrid search)
 
 
 @dataclass

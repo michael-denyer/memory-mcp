@@ -4,6 +4,30 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.2] - 2026-01-21
+
+### Added
+
+- **Hybrid search** - Combines semantic similarity with keyword matching for improved recall
+  - FTS5 full-text search table synced with memories via triggers
+  - Boosts results when queries use indirect phrasings (e.g., "FastAPI" matches "framework")
+  - Configurable via `MEMORY_MCP_HYBRID_SEARCH_ENABLED` (default: true)
+  - Adjustable keyword weight and boost threshold settings
+
+### Changed
+
+- Database schema version bumped to 12 (auto-migrates existing databases)
+
+## [0.4.1] - 2026-01-21
+
+### Fixed
+
+- Use full server name in mcp-name for registry validation
+
+### Added
+
+- Release skill for automated publishing workflow
+
 ## [0.4.0] - 2026-01-21
 
 ### Added
@@ -153,6 +177,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Hot cache: 20 items max, 3 access threshold, 14 day demotion
 - Retrieval: 0.7 confidence threshold, 5 result limit
 
+[0.4.2]: https://github.com/michael-denyer/memory-mcp/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/michael-denyer/memory-mcp/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/michael-denyer/memory-mcp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/michael-denyer/memory-mcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/michael-denyer/memory-mcp/compare/v0.1.0...v0.2.0

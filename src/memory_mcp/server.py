@@ -1,11 +1,18 @@
 """FastMCP server with memory tools and hot cache resource."""
 
+import os
+import uuid
 from typing import Annotated
 
 from fastmcp import FastMCP
 from pydantic import Field
 
-from memory_mcp.config import find_bootstrap_files, get_settings
+from memory_mcp.config import (
+    check_stop_hook_configured,
+    find_bootstrap_files,
+    get_hook_install_instructions,
+    get_settings,
+)
 from memory_mcp.helpers import (
     build_ranking_factors as _build_ranking_factors,
 )
@@ -89,6 +96,12 @@ mcp = FastMCP("memory-mcp")
 
 log.info("Memory MCP server initialized")
 
+# Warn if Stop hook not configured (pattern mining won't work without it)
+if settings.warn_missing_hook and settings.mining_enabled:
+    if not check_stop_hook_configured():
+        log.warning("Stop hook not configured - pattern mining will not auto-log outputs")
+        log.warning(get_hook_install_instructions())
+
 
 # ========== Helper Function Wrappers ==========
 # These wrap pure functions from helpers.py with module-level settings/storage
@@ -137,6 +150,26 @@ def get_auto_project_id() -> str | None:
     return get_current_project_id()
 
 
+# Session state for auto-session creation
+_current_session_id: str | None = None
+
+
+def get_current_session_id() -> str:
+    """Get or create the current server session ID.
+
+    Creates a session on first call, reusing it for all subsequent calls.
+    This enables zero-config session tracking - memories are automatically
+    associated with the current session without requiring explicit session_id.
+    """
+    global _current_session_id
+    if _current_session_id is None:
+        _current_session_id = str(uuid.uuid4())
+        project_path = os.getcwd()
+        storage.create_or_get_session(_current_session_id, project_path=project_path)
+        log.info("Auto-created session: {} for project: {}", _current_session_id, project_path)
+    return _current_session_id
+
+
 # ========== Cold Storage Tools ==========
 
 
@@ -183,12 +216,21 @@ def remember(
     # Auto-detect current project for project-aware memory
     project_id = get_auto_project_id()
 
+    # Use auto-session if not explicitly provided (zero-config session tracking)
+    log.debug(
+        "remember() session handling: input session_id={!r} (type={})",
+        session_id,
+        type(session_id).__name__,
+    )
+    effective_session_id = session_id or get_current_session_id()
+    log.debug("remember() effective_session_id={}", effective_session_id)
+
     memory_id, is_new = storage.store_memory(
         content=content,
         memory_type=mem_type,
         source=MemorySource.MANUAL,
         tags=tag_list,
-        session_id=session_id,
+        session_id=effective_session_id,
         project_id=project_id,
     )
 
@@ -858,7 +900,10 @@ def log_output(
             f"Content too long ({len(content)} chars). Max: {settings.max_content_length}"
         )
 
-    log_id = storage.log_output(content, session_id=session_id)
+    # Use auto-session if not explicitly provided (zero-config session tracking)
+    effective_session_id = session_id or get_current_session_id()
+
+    log_id = storage.log_output(content, session_id=effective_session_id)
     return success_response("Output logged", log_id=log_id)
 
 

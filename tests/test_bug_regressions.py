@@ -258,7 +258,7 @@ class TestSchemaVersioning:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(db_path=Path(tmpdir) / "new.db")
             storage = Storage(settings)
-            assert storage.get_schema_version() == 11  # v11: project awareness
+            assert storage.get_schema_version() == 12  # v12: hybrid search FTS5
             storage.close()
 
     def test_wal_mode_enabled(self):
@@ -522,22 +522,32 @@ class TestRecallCompositeScoring:
         mem = result.memories[0]
         assert mem.recency_score > 0.99  # Very close to 1.0 for fresh items
 
-    def test_composite_score_combines_factors(self, storage):
+    def test_composite_score_combines_factors(self):
         """Composite score should combine similarity, recency, and access."""
-        storage.store_memory("PostgreSQL database configuration", MemoryType.PROJECT)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings = Settings(
+                db_path=Path(tmpdir) / "composite.db",
+                semantic_dedup_enabled=False,
+                hybrid_search_enabled=False,  # Disable for pure composite score testing
+            )
+            storage = Storage(settings)
 
-        result = storage.recall("database config", threshold=0.3)
-        assert len(result.memories) > 0
+            storage.store_memory("PostgreSQL database configuration", MemoryType.PROJECT)
 
-        mem = result.memories[0]
-        # Composite should be weighted sum
-        expected = (
-            mem.similarity * storage.settings.recall_similarity_weight
-            + mem.recency_score * storage.settings.recall_recency_weight
-            + 0.0  # access_score is 0 for single-item recall
-        )
-        # Allow small floating point difference
-        assert abs(mem.composite_score - expected) < 0.01
+            result = storage.recall("database config", threshold=0.3)
+            assert len(result.memories) > 0
+
+            mem = result.memories[0]
+            # Composite should be weighted sum
+            expected = (
+                mem.similarity * storage.settings.recall_similarity_weight
+                + mem.recency_score * storage.settings.recall_recency_weight
+                + 0.0  # access_score is 0 for single-item recall
+            )
+            # Allow small floating point difference
+            assert abs(mem.composite_score - expected) < 0.01
+
+            storage.close()
 
     def test_results_ordered_by_composite_score(self):
         """Results should be ordered by composite score, not just similarity."""
@@ -648,6 +658,7 @@ class TestRecallCompositeScoring:
                 recall_recency_weight=0.2,
                 recall_access_weight=0.1,
                 recall_trust_weight=0.1,
+                hybrid_search_enabled=False,  # Disable hybrid search for pure weight testing
             )
             storage = Storage(settings)
 

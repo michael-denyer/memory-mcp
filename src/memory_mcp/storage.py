@@ -1491,6 +1491,65 @@ class Storage:
             return 0.0
         return min(1.0, access_count / max_access)
 
+    def _get_fts_matches(
+        self, query: str, conn: sqlite3.Connection, limit: int = 50
+    ) -> dict[int, float]:
+        """Get keyword matches from FTS5 with BM25 scores.
+
+        Returns dict mapping memory_id to normalized keyword score (0-1).
+        Used for hybrid search to boost semantically weak but keyword-relevant results.
+        """
+        # Check if FTS table exists
+        table_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_fts'"
+        ).fetchone()
+        if not table_exists:
+            return {}
+
+        # Escape FTS5 special characters and prepare query
+        # FTS5 uses prefix matching with * so we add that for flexibility
+        words = query.split()
+        if not words:
+            return {}
+
+        # Build query with OR logic (any word match)
+        # Escape double quotes in the query
+        escaped_words = [w.replace('"', '""') for w in words if len(w) >= 2]
+        if not escaped_words:
+            return {}
+
+        # Use OR matching - any keyword match is useful
+        fts_query = " OR ".join(f'"{w}"' for w in escaped_words)
+
+        try:
+            rows = conn.execute(
+                """
+                SELECT rowid, bm25(memory_fts) as score
+                FROM memory_fts
+                WHERE memory_fts MATCH ?
+                ORDER BY bm25(memory_fts)
+                LIMIT ?
+                """,
+                (fts_query, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            # FTS match failed (malformed query, etc)
+            return {}
+
+        if not rows:
+            return {}
+
+        # BM25 scores are negative (closer to 0 is better)
+        # Normalize to 0-1 range (best match = 1.0)
+        min_score = min(row["score"] for row in rows)
+        max_score = max(row["score"] for row in rows)
+        score_range = max_score - min_score if max_score != min_score else 1.0
+
+        return {
+            row["rowid"]: 1.0 - (row["score"] - min_score) / score_range if score_range else 1.0
+            for row in rows
+        }
+
     def _generate_recall_guidance(
         self,
         confidence: str,
@@ -1679,17 +1738,47 @@ class Storage:
 
             rows = conn.execute(query_sql, params).fetchall()
 
+            # Get FTS keyword matches for hybrid search
+            fts_matches: dict[int, float] = {}
+            if self.settings.hybrid_search_enabled:
+                fts_matches = self._get_fts_matches(query, conn, limit=effective_limit * 3)
+
             # Find max access count for normalization
             max_access = max((row["access_count"] for row in rows), default=1)
 
             # Convert distance to similarity and compute scores
             candidates = []
             gated_count = 0
+            keyword_weight = self.settings.hybrid_keyword_weight
+            keyword_boost_threshold = self.settings.hybrid_keyword_boost_threshold
 
             for row in rows:
                 similarity = 1 - row["distance"]  # cosine distance to similarity
+                memory_id = row["id"]
 
-                if similarity >= effective_threshold:
+                # Hybrid scoring: boost low-similarity results if they have keyword matches
+                # This helps catch cases like "FastAPI" matching "framework" queries
+                keyword_score = fts_matches.get(memory_id, 0.0)
+                effective_similarity = similarity
+
+                if self.settings.hybrid_search_enabled and keyword_score > 0:
+                    # Apply keyword boost inversely proportional to semantic similarity
+                    # Low semantic = more keyword influence, high semantic = less keyword influence
+                    if similarity < keyword_boost_threshold:
+                        # For low semantic matches, keyword score can significantly boost
+                        boost_factor = 1 - (similarity / keyword_boost_threshold)
+                        effective_similarity = (
+                            similarity * (1 - keyword_weight * boost_factor)
+                            + keyword_score * keyword_weight * boost_factor
+                        )
+                    else:
+                        # For high semantic matches, small keyword bonus
+                        effective_similarity = (
+                            similarity * (1 - keyword_weight * 0.3)
+                            + keyword_score * keyword_weight * 0.3
+                        )
+
+                if effective_similarity >= effective_threshold:
                     created_at = datetime.fromisoformat(row["created_at"])
                     last_accessed_str = row["last_accessed_at"]
                     last_accessed_at = (
@@ -1708,7 +1797,7 @@ class Storage:
                     )
 
                     score_breakdown = self._compute_composite_score(
-                        similarity,
+                        effective_similarity,
                         recency_score,
                         access_score,
                         trust_decayed,
@@ -1724,6 +1813,8 @@ class Storage:
                     memory.recency_component = score_breakdown.recency_component
                     memory.access_component = score_breakdown.access_component
                     memory.trust_component = score_breakdown.trust_component
+                    # Store keyword score for debugging/transparency
+                    memory.keyword_score = keyword_score if keyword_score > 0 else None
                     candidates.append(memory)
                 else:
                     gated_count += 1

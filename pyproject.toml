@@ -1,6 +1,6 @@
 [project]
 name = "hot-memory-mcp"
-version = "0.4.1"
+version = "0.4.2"
 description = "Engram-inspired memory MCP server with hot cache and pattern mining"
 readme = "README.md"
 license = "MIT"
@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mlx = ["mlx>=0.16", "mlx-lm>=0.1"]  # Apple Silicon acceleration
+mlx = ["mlx-embeddings>=0.0.5"]  # Apple Silicon acceleration for embeddings
 
 [project.scripts]
 memory-mcp = "memory_mcp.server:main"

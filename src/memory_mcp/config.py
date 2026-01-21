@@ -283,6 +283,12 @@ class Settings(BaseSettings):
         default=True, description="Include global (non-project) memories in results"
     )
 
+    # Hook configuration warnings
+    warn_missing_hook: bool = Field(
+        default=True,
+        description="Show warning on startup if Stop hook not configured (for pattern mining)",
+    )
+
     # Semantic clustering for display (RePo-inspired cognitive load reduction)
     clustering_display_enabled: bool = Field(
         default=True, description="Group similar memories in display contexts (hot cache, recall)"
@@ -294,6 +300,20 @@ class Settings(BaseSettings):
     clustering_min_size: int = Field(default=2, description="Minimum items to form a named cluster")
     clustering_max_clusters: int = Field(
         default=5, description="Maximum distinct clusters before remaining go to 'Other'"
+    )
+
+    # Hybrid search (combines semantic + keyword matching)
+    hybrid_search_enabled: bool = Field(
+        default=True,
+        description="Enable hybrid search combining semantic similarity with keyword matching",
+    )
+    hybrid_keyword_weight: float = Field(
+        default=0.3,
+        description="Weight for keyword score in hybrid ranking (0-1)",
+    )
+    hybrid_keyword_boost_threshold: float = Field(
+        default=0.4,
+        description="Semantic threshold below which keyword boost applies",
     )
 
     # Recall mode presets
@@ -362,3 +382,62 @@ def get_settings() -> Settings:
 def ensure_data_dir(settings: Settings) -> None:
     """Ensure data directory exists."""
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def check_stop_hook_configured() -> bool:
+    """Check if Claude Code Stop hook is configured for memory output logging.
+
+    Returns:
+        True if hook is configured, False otherwise.
+    """
+    import json
+
+    settings_path = Path.home() / ".claude" / "settings.json"
+    if not settings_path.exists():
+        return False
+
+    try:
+        with open(settings_path) as f:
+            settings = json.load(f)
+
+        hooks = settings.get("hooks", {})
+        stop_hooks = hooks.get("Stop", [])
+
+        # Check if any Stop hook references memory-mcp
+        for hook_group in stop_hooks:
+            for hook in hook_group.get("hooks", []):
+                command = hook.get("command", "")
+                if "memory" in command.lower() and "log" in command.lower():
+                    return True
+
+        return False
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
+def get_hook_install_instructions() -> str:
+    """Get instructions for installing the Stop hook."""
+
+    # Try to detect the memory-mcp install path
+    script_path = Path(__file__).parent.parent.parent / "hooks" / "memory-log-response.sh"
+    if not script_path.exists():
+        script_path = Path("<path-to-memory-mcp>") / "hooks" / "memory-log-response.sh"
+
+    return f"""Pattern mining requires a Claude Code hook to log outputs.
+
+To install, ask Claude: "Add the memory-mcp Stop hook to my settings"
+
+Or manually add to ~/.claude/settings.json:
+{{
+  "hooks": {{
+    "Stop": [{{
+      "matcher": "",
+      "hooks": [{{
+        "type": "command",
+        "command": "{script_path}"
+      }}]
+    }}]
+  }}
+}}
+
+To disable this warning, set MEMORY_MCP_WARN_MISSING_HOOK=false"""

@@ -12,7 +12,7 @@ from memory_mcp.logging import get_logger
 log = get_logger("migrations")
 
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA = """
 -- Schema version tracking
@@ -387,6 +387,64 @@ def migrate_v10_to_v11(conn: sqlite3.Connection) -> None:
     log.info("Added project awareness (project_id column and projects table)")
 
 
+def migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
+    """Add FTS5 full-text search for hybrid semantic+keyword search.
+
+    Creates an FTS5 virtual table for keyword-based matching, improving recall
+    for queries using indirect phrasings or named entities (e.g., "FastAPI"
+    won't semantically match "framework" but will keyword-match).
+    """
+    # Create FTS5 virtual table for memory content
+    conn.execute(
+        """
+        CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+            content,
+            content='memories',
+            content_rowid='id',
+            tokenize='porter unicode61 remove_diacritics 2'
+        )
+        """
+    )
+
+    # Populate FTS table with existing memories
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO memory_fts(rowid, content)
+        SELECT id, content FROM memories
+        """
+    )
+
+    # Create triggers to keep FTS in sync with memories table
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS memory_fts_insert AFTER INSERT ON memories BEGIN
+            INSERT INTO memory_fts(rowid, content) VALUES (new.id, new.content);
+        END
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS memory_fts_delete AFTER DELETE ON memories BEGIN
+            INSERT INTO memory_fts(memory_fts, rowid, content)
+            VALUES ('delete', old.id, old.content);
+        END
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TRIGGER IF NOT EXISTS memory_fts_update AFTER UPDATE OF content ON memories BEGIN
+            INSERT INTO memory_fts(memory_fts, rowid, content)
+            VALUES ('delete', old.id, old.content);
+            INSERT INTO memory_fts(rowid, content) VALUES (new.id, new.content);
+        END
+        """
+    )
+
+    log.info("Created memory_fts table and triggers for hybrid keyword search")
+
+
 # ========== Migration Runner ==========
 
 
@@ -412,6 +470,8 @@ def run_migrations(conn: sqlite3.Connection, from_version: int, settings: Settin
         migrate_v9_to_v10(conn)
     if from_version < 11:
         migrate_v10_to_v11(conn)
+    if from_version < 12:
+        migrate_v11_to_v12(conn)
 
 
 def check_schema_version(conn: sqlite3.Connection) -> None:
