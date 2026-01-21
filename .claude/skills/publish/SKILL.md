@@ -1,14 +1,21 @@
-# Release Skill
+---
+name: publish
+description: Publish a new version to PyPI, MCP Registry, and Homebrew. Use after /release to publish.
+disable-model-invocation: true
+argument-hint: "[patch|minor|major]"
+---
 
-Automates version bump, PyPI publish, and MCP registry publish.
+# Publish Skill
+
+Publishes to PyPI, MCP Registry, and Homebrew. Run `/release` first to prepare the code.
 
 ## Usage
 
 ```
-/release [patch|minor|major]
+/publish [patch|minor|major]
 ```
 
-Default is `patch` if not specified.
+Default is `patch` if not specified. The version type is passed as `$ARGUMENTS`.
 
 ## Steps
 
@@ -19,7 +26,7 @@ Default is `patch` if not specified.
 
 2. **Version bump**
    - Read current version from `pyproject.toml`
-   - Bump version according to semver (patch/minor/major)
+   - Bump version according to semver ($ARGUMENTS or default to patch)
    - Update version in:
      - `pyproject.toml`
      - `server.json` (both root version and package version)
@@ -50,26 +57,26 @@ Default is `patch` if not specified.
      ```
    - If not logged in, run `mcp-publisher login github` first
 
-7. **Summary**
+7. **Update Homebrew tap**
+   - Get new SHA256 from PyPI:
+     ```bash
+     curl -sL https://pypi.org/pypi/hot-memory-mcp/json | jq -r '.urls[] | select(.packagetype=="sdist") | .digests.sha256'
+     ```
+   - Clone tap repo:
+     ```bash
+     cd /tmp && git clone https://github.com/michael-denyer/homebrew-tap.git
+     ```
+   - Update `Formula/hot-memory-mcp.rb`:
+     - Update `url` with new version
+     - Update `sha256` with new hash
+   - Commit and push:
+     ```bash
+     cd /tmp/homebrew-tap && git add -A && git commit -m "chore: bump hot-memory-mcp to vX.Y.Z" && git push
+     ```
+
+8. **Summary**
    - Report success with links to:
      - GitHub release
-     - PyPI package
-     - MCP Registry entry
-
-## Example
-
-```
-User: /release patch
-Assistant: Releasing v0.4.2...
-- Tests passed
-- Version bumped: 0.4.1 -> 0.4.2
-- Committed and tagged
-- GitHub release created
-- PyPI publish complete
-- MCP Registry updated
-
-Links:
-- GitHub: https://github.com/michael-denyer/memory-mcp/releases/tag/v0.4.2
-- PyPI: https://pypi.org/project/hot-memory-mcp/0.4.2/
-- Registry: io.github.michael-denyer/hot-memory-mcp v0.4.2
-```
+     - PyPI package: https://pypi.org/project/hot-memory-mcp/
+     - MCP Registry: io.github.michael-denyer/hot-memory-mcp
+     - Homebrew: `brew tap michael-denyer/tap && brew install hot-memory-mcp`
