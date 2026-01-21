@@ -4,7 +4,7 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.4.0] - 2026-01-21
 
 ### Added
 
@@ -148,7 +148,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Hot cache: 20 items max, 3 access threshold, 14 day demotion
 - Retrieval: 0.7 confidence threshold, 5 result limit
 
-[Unreleased]: https://github.com/michael-denyer/memory-mcp/compare/v0.3.0...HEAD
+[0.4.0]: https://github.com/michael-denyer/memory-mcp/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/michael-denyer/memory-mcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/michael-denyer/memory-mcp/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/michael-denyer/memory-mcp/releases/tag/v0.1.0
