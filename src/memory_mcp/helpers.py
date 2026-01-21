@@ -4,11 +4,18 @@ This module contains utility functions used by server.py tools for
 validation, formatting, and response building.
 """
 
-import re
-from datetime import datetime, timezone
+from __future__ import annotations
 
-from memory_mcp.models import Memory, MemoryType
+import re
+from collections import Counter
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+from memory_mcp.models import DisplayCluster, Memory, MemoryType
 from memory_mcp.responses import FormattedMemory, error_response
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 def parse_memory_type(memory_type: str) -> MemoryType | None:
@@ -458,3 +465,149 @@ def get_salience_breakdown(
             "component": round(recency_score * recency_weight, 3),
         },
     }
+
+
+# ========== Semantic Clustering for Display (RePo-inspired) ==========
+
+
+def _generate_cluster_label(memories: list[Memory], max_words: int = 4) -> str:
+    """Generate a human-readable label from cluster contents.
+
+    Strategy:
+    1. Find common tags across members
+    2. Use most common tag as label
+    3. Fall back to memory type if no tags
+
+    Args:
+        memories: Memories in the cluster
+        max_words: Maximum words in the label
+
+    Returns:
+        Human-readable label (e.g., "Python Development", "Testing")
+    """
+    # Collect all tags and count frequency
+    tag_counts: Counter[str] = Counter()
+    for m in memories:
+        for tag in m.tags:
+            tag_counts[tag] += 1
+
+    if tag_counts:
+        # Use most common tag, title-cased
+        most_common = tag_counts.most_common(1)[0][0]
+        # Title-case and limit words
+        words = most_common.replace("-", " ").replace("_", " ").split()
+        label = " ".join(w.capitalize() for w in words[:max_words])
+        return label
+
+    # Fall back to memory type
+    type_counts: Counter[str] = Counter(m.memory_type.value for m in memories)
+    most_common_type = type_counts.most_common(1)[0][0]
+    return most_common_type.capitalize()
+
+
+def _compute_pairwise_similarity(emb_a: "np.ndarray", emb_b: "np.ndarray") -> float:
+    """Compute cosine similarity between two embeddings.
+
+    Args:
+        emb_a: First embedding vector (assumed normalized or will normalize)
+        emb_b: Second embedding vector
+
+    Returns:
+        Cosine similarity (0-1)
+    """
+    import numpy as np
+
+    norm_a = np.linalg.norm(emb_a)
+    norm_b = np.linalg.norm(emb_b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(emb_a, emb_b) / (norm_a * norm_b))
+
+
+def cluster_memories_for_display(
+    memories: list[Memory],
+    embeddings: dict[int, "np.ndarray"],
+    threshold: float = 0.70,
+    min_cluster_size: int = 2,
+    max_clusters: int = 5,
+) -> tuple[list[DisplayCluster], list[Memory]]:
+    """Cluster memories semantically for display.
+
+    Uses greedy clustering to group similar memories together,
+    reducing cognitive load (RePo research-inspired).
+
+    Algorithm:
+    1. Start with first memory as cluster seed
+    2. For each subsequent memory, check similarity to existing cluster centers
+    3. If similarity >= threshold, add to that cluster
+    4. Otherwise, start new cluster (up to max_clusters)
+    5. Remaining items go to unclustered list
+
+    Args:
+        memories: Memories to cluster (should be pre-sorted by score)
+        embeddings: Dict mapping memory_id to embedding vector
+        threshold: Similarity threshold for grouping (default 0.70)
+        min_cluster_size: Minimum items to form a named cluster
+        max_clusters: Maximum clusters before remaining go to 'Other'
+
+    Returns:
+        Tuple of (clusters, unclustered) where:
+        - clusters: List of DisplayCluster objects with label, members, similarity
+        - unclustered: List of memories not in any cluster
+    """
+    if not memories or not embeddings:
+        return [], list(memories)
+
+    # Build cluster assignments
+    # Each cluster is: [seed_memory_id, [member_memories], [similarities]]
+    clusters_raw: list[tuple[int, list[Memory], list[float]]] = []
+    unclustered: list[Memory] = []
+
+    for memory in memories:
+        if memory.id not in embeddings:
+            unclustered.append(memory)
+            continue
+
+        mem_embedding = embeddings[memory.id]
+        best_cluster_idx = -1
+        best_similarity = 0.0
+
+        # Find best matching cluster
+        for i, (seed_id, members, _) in enumerate(clusters_raw):
+            if seed_id not in embeddings:
+                continue
+            seed_embedding = embeddings[seed_id]
+            sim = _compute_pairwise_similarity(mem_embedding, seed_embedding)
+            if sim >= threshold and sim > best_similarity:
+                best_cluster_idx = i
+                best_similarity = sim
+
+        if best_cluster_idx >= 0:
+            # Add to existing cluster
+            clusters_raw[best_cluster_idx][1].append(memory)
+            clusters_raw[best_cluster_idx][2].append(best_similarity)
+        elif len(clusters_raw) < max_clusters:
+            # Start new cluster
+            clusters_raw.append((memory.id, [memory], [1.0]))
+        else:
+            # Max clusters reached, add to unclustered
+            unclustered.append(memory)
+
+    # Convert to DisplayCluster objects
+    clusters: list[DisplayCluster] = []
+    for seed_id, members, similarities in clusters_raw:
+        if len(members) < min_cluster_size:
+            # Too small, move to unclustered
+            unclustered.extend(members)
+        else:
+            avg_sim = sum(similarities) / len(similarities) if similarities else 0.0
+            label = _generate_cluster_label(members)
+            clusters.append(
+                DisplayCluster(
+                    label=label,
+                    members=members,  # Already sorted by original order (score)
+                    avg_similarity=round(avg_sim, 3),
+                )
+            )
+
+    return clusters, unclustered

@@ -1999,6 +1999,31 @@ class Storage:
         memories.sort(key=lambda m: m.hot_score or 0, reverse=True)
         return memories
 
+    def get_embeddings_for_memories(self, memory_ids: list[int]) -> dict[int, "np.ndarray"]:
+        """Get embeddings for a list of memory IDs.
+
+        Used for semantic clustering in display contexts.
+
+        Args:
+            memory_ids: List of memory IDs to fetch embeddings for.
+
+        Returns:
+            Dict mapping memory_id to embedding numpy array.
+        """
+        import numpy as np
+
+        if not memory_ids:
+            return {}
+
+        with self._connection() as conn:
+            placeholders = ",".join("?" * len(memory_ids))
+            rows = conn.execute(
+                f"SELECT rowid, embedding FROM memory_vectors WHERE rowid IN ({placeholders})",
+                memory_ids,
+            ).fetchall()
+
+            return {row["rowid"]: np.frombuffer(row["embedding"], dtype=np.float32) for row in rows}
+
     def record_hot_cache_hit(self) -> None:
         """Record a hot cache hit (resource was read with content)."""
         self._hot_cache_metrics.hits += 1

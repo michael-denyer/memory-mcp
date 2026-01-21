@@ -338,3 +338,21 @@ class ConsolidationCluster:
     avg_similarity: float  # Average pairwise similarity
     total_access_count: int  # Sum of access counts
     combined_tags: list[str]  # Union of all tags
+
+
+@dataclass
+class DisplayCluster:
+    """A semantic cluster for display purposes (RePo-inspired).
+
+    Used to group semantically similar memories in hot cache and recall
+    results to reduce cognitive load.
+    """
+
+    label: str  # Human-readable label (e.g., "Python Development")
+    members: list[Memory]  # Memories in this cluster (sorted by score)
+    avg_similarity: float  # Average pairwise similarity within cluster
+
+    @property
+    def size(self) -> int:
+        """Number of memories in this cluster."""
+        return len(self.members)

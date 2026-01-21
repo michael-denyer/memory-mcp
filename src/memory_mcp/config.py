@@ -283,6 +283,19 @@ class Settings(BaseSettings):
         default=True, description="Include global (non-project) memories in results"
     )
 
+    # Semantic clustering for display (RePo-inspired cognitive load reduction)
+    clustering_display_enabled: bool = Field(
+        default=True, description="Group similar memories in display contexts (hot cache, recall)"
+    )
+    clustering_display_threshold: float = Field(
+        default=0.70,
+        description="Similarity threshold for display clustering (lower than consolidation)",
+    )
+    clustering_min_size: int = Field(default=2, description="Minimum items to form a named cluster")
+    clustering_max_clusters: int = Field(
+        default=5, description="Maximum distinct clusters before remaining go to 'Other'"
+    )
+
     # Recall mode presets
     # Precision mode: high threshold, few results, prioritize similarity
     precision_threshold: float = Field(

@@ -10,6 +10,9 @@ from memory_mcp.helpers import (
     build_ranking_factors as _build_ranking_factors,
 )
 from memory_mcp.helpers import (
+    cluster_memories_for_display as _cluster_memories_for_display,
+)
+from memory_mcp.helpers import (
     format_memories_for_llm as _format_memories_for_llm,
 )
 from memory_mcp.helpers import (
@@ -32,7 +35,7 @@ from memory_mcp.logging import (
     record_store,
     update_hot_cache_stats,
 )
-from memory_mcp.models import Memory
+from memory_mcp.models import DisplayCluster, Memory
 from memory_mcp.project import detect_project, get_current_project_id
 from memory_mcp.responses import (
     AccessPatternResponse,
@@ -654,6 +657,44 @@ def _format_memory_list(memories: list[Memory], header: str) -> str:
     return "\n".join(lines)
 
 
+def _format_clustered_memory_list(
+    clusters: list[DisplayCluster],
+    unclustered: list[Memory],
+    header: str,
+) -> str:
+    """Format clustered memories as a resource string.
+
+    Semantic clustering groups related memories together to reduce
+    cognitive load (RePo research-inspired).
+
+    Args:
+        clusters: List of DisplayCluster objects
+        unclustered: Memories that didn't fit in any cluster
+        header: Header line for the resource
+
+    Returns:
+        Formatted string with headers for each cluster
+    """
+    max_chars = settings.hot_cache_display_max_chars
+    lines = [header]
+
+    for cluster in clusters:
+        lines.append(f"\n## {cluster.label} ({cluster.size} items)")
+        for m in cluster.members:
+            content = m.content[:max_chars] + "..." if len(m.content) > max_chars else m.content
+            tags_str = f" [{', '.join(m.tags[:3])}]" if m.tags else ""
+            lines.append(f"  - {content}{tags_str}")
+
+    if unclustered:
+        lines.append("\n## Other")
+        for m in unclustered:
+            content = m.content[:max_chars] + "..." if len(m.content) > max_chars else m.content
+            tags_str = f" [{', '.join(m.tags[:3])}]" if m.tags else ""
+            lines.append(f"  - {content}{tags_str}")
+
+    return "\n".join(lines)
+
+
 @mcp.resource("memory://hot-cache")
 def hot_cache_resource() -> str:
     """Auto-injectable system context with high-confidence patterns.
@@ -668,6 +709,9 @@ def hot_cache_resource() -> str:
 
     Project-aware: If project awareness is enabled, filters to current project
     plus global memories.
+
+    Semantic clustering: Groups related memories together to reduce
+    cognitive load (enabled by default, configure via settings).
     """
     # Get current project for project-aware hot cache
     project_id = get_auto_project_id()
@@ -684,6 +728,26 @@ def hot_cache_resource() -> str:
     header = "[MEMORY: Hot Cache - High-confidence patterns]"
     if project_id:
         header = f"[MEMORY: Hot Cache ({project_id}) - High-confidence patterns]"
+
+    # Apply semantic clustering if enabled and enough memories
+    if settings.clustering_display_enabled and len(hot_memories) >= 4:
+        memory_ids = [m.id for m in hot_memories]
+        embeddings = storage.get_embeddings_for_memories(memory_ids)
+
+        if embeddings:
+            clusters, unclustered = _cluster_memories_for_display(
+                memories=hot_memories,
+                embeddings=embeddings,
+                threshold=settings.clustering_display_threshold,
+                min_cluster_size=settings.clustering_min_size,
+                max_clusters=settings.clustering_max_clusters,
+            )
+
+            # Only use clustered format if we got meaningful clusters
+            if clusters:
+                return _format_clustered_memory_list(clusters, unclustered, header)
+
+    # Fall back to flat list
     return _format_memory_list(hot_memories, header)
 
 
@@ -697,6 +761,7 @@ def working_set_resource() -> str:
     3. Top salience hot items (to fill remaining slots)
 
     Smaller and more focused than hot-cache - designed for active work context.
+    Semantic clustering groups related items together.
     """
     if not settings.working_set_enabled:
         return "[MEMORY: Working set disabled]"
@@ -706,7 +771,26 @@ def working_set_resource() -> str:
     if not working_set:
         return "[MEMORY: Working set empty - no recent activity]"
 
-    return _format_memory_list(working_set, "[MEMORY: Working Set - Active context]")
+    header = "[MEMORY: Working Set - Active context]"
+
+    # Apply semantic clustering if enabled and enough memories
+    if settings.clustering_display_enabled and len(working_set) >= 4:
+        memory_ids = [m.id for m in working_set]
+        embeddings = storage.get_embeddings_for_memories(memory_ids)
+
+        if embeddings:
+            clusters, unclustered = _cluster_memories_for_display(
+                memories=working_set,
+                embeddings=embeddings,
+                threshold=settings.clustering_display_threshold,
+                min_cluster_size=settings.clustering_min_size,
+                max_clusters=settings.clustering_max_clusters,
+            )
+
+            if clusters:
+                return _format_clustered_memory_list(clusters, unclustered, header)
+
+    return _format_memory_list(working_set, header)
 
 
 @mcp.resource("memory://project-context")
