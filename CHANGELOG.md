@@ -4,6 +4,20 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.4] - 2026-01-21
+
+### Fixed
+
+- **Hook transcript extraction** - Fixed jq selector to use correct `.message.content` path for Claude Code transcript format. Previously logged raw JSON instead of extracted text.
+- **Pattern mining auto-approval** - Lowered `mining_auto_approve_confidence` default from 0.8 to 0.5 to match extractor defaults. Patterns meeting occurrence threshold now auto-approve as intended.
+
+## [0.4.3] - 2026-01-21
+
+### Fixed
+
+- Removed unused import in mining module
+- Use correct settings variable in mining provenance
+
 ## [0.4.2] - 2026-01-21
 
 ### Added
