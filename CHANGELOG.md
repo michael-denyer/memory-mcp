@@ -58,7 +58,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Merges near-duplicates, keeping best representative
   - `--dry-run` flag for preview, `--threshold` for custom similarity
 
-- **Unified salience score** - Engram-inspired metric for promotion/eviction decisions
+- **Unified salience score** - Engram-inspired metric for promotion decisions
   - Combines importance, trust, access count, and recency
   - Configurable weights for each component
   - Used for smarter hot cache promotion alongside access count threshold
@@ -82,8 +82,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Retrieval tracking to learn which memories are actually used
   - Memory consolidation infrastructure
 
-- **Per-result scoring components** for recall transparency
-  - Shows similarity, recency, access, and trust components in results
+- **Per-result scoring** for recall transparency
+  - Returns similarity, recency, and composite scores in results
   - Helps understand why memories are ranked the way they are
 
 - **Fine-grained trust management**
@@ -147,7 +147,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Link and unlink memories
 
 - **Trust management**
-  - strengthen_trust() and weaken_trust() tools
+  - validate_memory() and invalidate_memory() tools
   - Trust decay over time by memory type
 
 - **Session tracking** for provenance

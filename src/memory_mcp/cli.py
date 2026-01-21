@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from memory_mcp.config import find_bootstrap_files, get_settings
+from memory_mcp.project import get_current_project_id
 from memory_mcp.storage import MemorySource, MemoryType, Storage
 from memory_mcp.text_parsing import parse_content_into_chunks
 
@@ -132,6 +133,11 @@ def seed(ctx: click.Context, file: str, memory_type: str, promote: bool) -> None
     chunks = parse_content_into_chunks(content)
     created, skipped, errors = 0, 0, []
 
+    # Get project_id if project awareness is enabled
+    project_id = None
+    if settings.project_awareness_enabled:
+        project_id = get_current_project_id()
+
     storage = Storage(settings)
     try:
         for chunk in chunks:
@@ -143,6 +149,7 @@ def seed(ctx: click.Context, file: str, memory_type: str, promote: bool) -> None
                 content=chunk,
                 memory_type=mem_type,
                 source=MemorySource.MANUAL,
+                project_id=project_id,
             )
             if is_new:
                 created += 1
