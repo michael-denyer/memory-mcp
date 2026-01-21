@@ -291,15 +291,15 @@ class TestAutoBootstrap:
         settings = Settings(db_path=tmp_path / "test.db")
         test_storage = Storage(settings)
 
-        # Monkeypatch the server's storage and cwd
-        monkeypatch.setattr(server, "storage", test_storage)
+        # Monkeypatch the server.app's storage and cwd
+        monkeypatch.setattr(server.app, "storage", test_storage)
         monkeypatch.chdir(tmp_path)
 
         # Clear the bootstrap tracking set
-        server._auto_bootstrap_attempted.clear()
+        server.app._auto_bootstrap_attempted.clear()
 
         # Trigger auto-bootstrap
-        result = server._try_auto_bootstrap()
+        result = server.app._try_auto_bootstrap()
 
         assert result is True
 
@@ -321,15 +321,15 @@ class TestAutoBootstrap:
         settings = Settings(db_path=tmp_path / "test.db")
         test_storage = Storage(settings)
 
-        # Monkeypatch the server's storage and cwd (empty directory)
-        monkeypatch.setattr(server, "storage", test_storage)
+        # Monkeypatch the server.app's storage and cwd (empty directory)
+        monkeypatch.setattr(server.app, "storage", test_storage)
         monkeypatch.chdir(tmp_path)
 
         # Clear the bootstrap tracking set
-        server._auto_bootstrap_attempted.clear()
+        server.app._auto_bootstrap_attempted.clear()
 
         # Trigger auto-bootstrap
-        result = server._try_auto_bootstrap()
+        result = server.app._try_auto_bootstrap()
 
         assert result is False
 
@@ -353,18 +353,18 @@ class TestAutoBootstrap:
         test_storage = Storage(settings)
 
         # Monkeypatch the server's storage and cwd
-        monkeypatch.setattr(server, "storage", test_storage)
+        monkeypatch.setattr(server.app, "storage", test_storage)
         monkeypatch.chdir(tmp_path)
 
         # Clear the bootstrap tracking set
-        server._auto_bootstrap_attempted.clear()
+        server.app._auto_bootstrap_attempted.clear()
 
         # First call should bootstrap
-        result1 = server._try_auto_bootstrap()
+        result1 = server.app._try_auto_bootstrap()
         assert result1 is True
 
         # Second call should return False (already attempted)
-        result2 = server._try_auto_bootstrap()
+        result2 = server.app._try_auto_bootstrap()
         assert result2 is False
 
         test_storage.close()
@@ -383,11 +383,11 @@ class TestAutoBootstrap:
         test_storage = Storage(settings)
 
         # Monkeypatch the server's storage and cwd
-        monkeypatch.setattr(server, "storage", test_storage)
+        monkeypatch.setattr(server.app, "storage", test_storage)
         monkeypatch.chdir(tmp_path)
 
         # Clear the bootstrap tracking set
-        server._auto_bootstrap_attempted.clear()
+        server.app._auto_bootstrap_attempted.clear()
 
         # Call the underlying function (not the FastMCP FunctionResource wrapper)
         # The actual function is stored in hot_cache_resource.fn

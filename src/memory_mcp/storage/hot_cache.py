@@ -1,0 +1,304 @@
+"""Hot cache mixin for Storage class."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from memory_mcp.logging import get_logger
+from memory_mcp.models import (
+    AuditOperation,
+    HotCacheMetrics,
+    Memory,
+    PromotionSource,
+)
+
+if TYPE_CHECKING:
+    pass
+
+log = get_logger("storage.hot_cache")
+
+
+class HotCacheMixin:
+    """Mixin providing hot cache methods for Storage."""
+
+    def get_hot_memories(self, project_id: str | None = None) -> list[Memory]:
+        """Get all memories in hot cache, ordered by hot_score descending.
+
+        Args:
+            project_id: Optional project filter. If provided and project_filter_hot_cache
+                is enabled, returns only memories for this project (+ global if
+                project_include_global is enabled).
+        """
+        memories = []
+        with self._connection() as conn:
+            # Build query with optional project filter
+            if project_id and self.settings.project_filter_hot_cache:
+                if self.settings.project_include_global:
+                    query = """
+                        SELECT * FROM memories
+                        WHERE is_hot = 1 AND (project_id = ? OR project_id IS NULL)
+                    """
+                else:
+                    query = "SELECT * FROM memories WHERE is_hot = 1 AND project_id = ?"
+                rows = conn.execute(query, (project_id,)).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM memories WHERE is_hot = 1").fetchall()
+
+            for row in rows:
+                memories.append(self._row_to_memory(row, conn))
+
+        # Sort by hot_score descending (highest score first)
+        memories.sort(key=lambda m: m.hot_score or 0, reverse=True)
+        return memories
+
+    def get_embeddings_for_memories(self, memory_ids: list[int]) -> dict[int, np.ndarray]:
+        """Get embeddings for a list of memory IDs.
+
+        Used for semantic clustering in display contexts.
+
+        Args:
+            memory_ids: List of memory IDs to fetch embeddings for.
+
+        Returns:
+            Dict mapping memory_id to embedding numpy array.
+        """
+        if not memory_ids:
+            return {}
+
+        with self._connection() as conn:
+            placeholders = ",".join("?" * len(memory_ids))
+            rows = conn.execute(
+                f"SELECT rowid, embedding FROM memory_vectors WHERE rowid IN ({placeholders})",
+                memory_ids,
+            ).fetchall()
+
+            return {row["rowid"]: np.frombuffer(row["embedding"], dtype=np.float32) for row in rows}
+
+    def record_hot_cache_hit(self) -> None:
+        """Record a hot cache hit (resource was read with content)."""
+        self._hot_cache_metrics.hits += 1
+
+    def record_hot_cache_miss(self) -> None:
+        """Record a hot cache miss (resource was read but empty)."""
+        self._hot_cache_metrics.misses += 1
+
+    def get_hot_cache_metrics(self) -> HotCacheMetrics:
+        """Get current hot cache metrics."""
+        return self._hot_cache_metrics
+
+    def get_hot_cache_stats(self) -> dict:
+        """Get hot cache statistics including metrics and computed values."""
+        hot_memories = self.get_hot_memories()
+        metrics = self._hot_cache_metrics.to_dict()
+
+        # Compute average hot score
+        avg_score = 0.0
+        if hot_memories:
+            scores = [m.hot_score for m in hot_memories if m.hot_score is not None]
+            avg_score = sum(scores) / len(scores) if scores else 0.0
+
+        return {
+            **metrics,
+            "current_count": len(hot_memories),
+            "max_items": self.settings.hot_cache_max_items,
+            "avg_hot_score": round(avg_score, 3),
+            "pinned_count": sum(1 for m in hot_memories if m.is_pinned),
+        }
+
+    def _find_eviction_candidate(self, conn: sqlite3.Connection) -> int | None:
+        """Find the lowest-scoring non-pinned hot memory for eviction."""
+        rows = conn.execute(
+            """
+            SELECT id, access_count, last_accessed_at
+            FROM memories
+            WHERE is_hot = 1 AND is_pinned = 0
+            """
+        ).fetchall()
+
+        if not rows:
+            return None
+
+        # Compute scores and find minimum
+        def compute_score(row: sqlite3.Row) -> tuple[int, float]:
+            last_accessed = row["last_accessed_at"]
+            last_accessed_dt = datetime.fromisoformat(last_accessed) if last_accessed else None
+            score = self._compute_hot_score(row["access_count"], last_accessed_dt)
+            return (row["id"], score)
+
+        candidates = [compute_score(row) for row in rows]
+        return min(candidates, key=lambda x: x[1])[0]
+
+    def promote_to_hot(
+        self,
+        memory_id: int,
+        promotion_source: PromotionSource = PromotionSource.MANUAL,
+        pin: bool = False,
+    ) -> bool:
+        """Promote a memory to hot cache with score-based eviction.
+
+        Args:
+            memory_id: ID of memory to promote
+            promotion_source: How the memory is being promoted
+            pin: If True, memory won't be auto-evicted
+
+        Returns:
+            True if promoted successfully
+        """
+        with self.transaction() as conn:
+            # Check if already hot
+            existing = conn.execute(
+                "SELECT is_hot FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+            if not existing:
+                return False
+            if existing["is_hot"]:
+                # Already hot, just update pinned status if requested
+                if pin:
+                    conn.execute("UPDATE memories SET is_pinned = 1 WHERE id = ?", (memory_id,))
+                return True
+
+            # Check hot cache limit
+            hot_count = conn.execute("SELECT COUNT(*) FROM memories WHERE is_hot = 1").fetchone()[0]
+
+            if hot_count >= self.settings.hot_cache_max_items:
+                # Find lowest-scoring non-pinned memory to evict
+                evict_id = self._find_eviction_candidate(conn)
+                if evict_id is None:
+                    log.warning(
+                        "Cannot promote memory id={}: hot cache full and all items pinned",
+                        memory_id,
+                    )
+                    return False
+
+                conn.execute(
+                    "UPDATE memories SET is_hot = 0, promotion_source = NULL WHERE id = ?",
+                    (evict_id,),
+                )
+                self._hot_cache_metrics.evictions += 1
+                log.debug("Evicted memory id={} from hot cache (lowest score)", evict_id)
+
+            # Promote the memory
+            cursor = conn.execute(
+                """
+                UPDATE memories
+                SET is_hot = 1, is_pinned = ?, promotion_source = ?
+                WHERE id = ?
+                """,
+                (int(pin), promotion_source.value, memory_id),
+            )
+            promoted = cursor.rowcount > 0
+            if promoted:
+                self._hot_cache_metrics.promotions += 1
+                log.info(
+                    "Promoted memory id={} to hot cache (source={}, pinned={})",
+                    memory_id,
+                    promotion_source.value,
+                    pin,
+                )
+            return promoted
+
+    def demote_from_hot(self, memory_id: int) -> bool:
+        """Remove a memory from hot cache (ignores pinned status)."""
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """UPDATE memories
+                   SET is_hot = 0, is_pinned = 0, promotion_source = NULL
+                   WHERE id = ?""",
+                (memory_id,),
+            )
+            demoted = cursor.rowcount > 0
+            if demoted:
+                self._record_audit(
+                    conn,
+                    AuditOperation.DEMOTE_MEMORY,
+                    target_type="memory",
+                    target_id=memory_id,
+                )
+                log.info("Demoted memory id={} from hot cache", memory_id)
+            return demoted
+
+    def demote_stale_hot_memories(self) -> list[int]:
+        """Demote hot memories that haven't been accessed in demotion_days.
+
+        Skips pinned memories. Called during maintenance if auto_demote is enabled.
+        Uses created_at as fallback when last_accessed_at is NULL (newly promoted).
+
+        Returns list of demoted memory IDs.
+        """
+        if not self.settings.auto_demote:
+            return []
+
+        demoted_ids = []
+        cutoff = f"-{self.settings.demotion_days} days"
+
+        with self._connection() as conn:
+            # Find stale non-pinned hot memories
+            # Use COALESCE to fall back to created_at for newly promoted memories
+            rows = conn.execute(
+                """
+                SELECT id FROM memories
+                WHERE is_hot = 1
+                  AND is_pinned = 0
+                  AND COALESCE(last_accessed_at, created_at) < datetime('now', ?)
+                """,
+                (cutoff,),
+            ).fetchall()
+
+            stale_ids = [row["id"] for row in rows]
+
+        # Demote each (outside the read transaction)
+        for memory_id in stale_ids:
+            if self.demote_from_hot(memory_id):
+                demoted_ids.append(memory_id)
+                log.info(
+                    "Auto-demoted stale memory id={} (not accessed in {} days)",
+                    memory_id,
+                    self.settings.demotion_days,
+                )
+
+        # Record summary audit entry for batch demotion
+        if demoted_ids:
+            with self.transaction() as conn:
+                self._record_audit(
+                    conn,
+                    AuditOperation.DEMOTE_STALE,
+                    details=json.dumps(
+                        {
+                            "count": len(demoted_ids),
+                            "memory_ids": demoted_ids,
+                            "demotion_days": self.settings.demotion_days,
+                        }
+                    ),
+                )
+
+        return demoted_ids
+
+    def pin_memory(self, memory_id: int) -> bool:
+        """Pin a hot memory so it won't be auto-evicted."""
+        with self.transaction() as conn:
+            # Only pin if already in hot cache
+            cursor = conn.execute(
+                "UPDATE memories SET is_pinned = 1 WHERE id = ? AND is_hot = 1",
+                (memory_id,),
+            )
+            pinned = cursor.rowcount > 0
+            if pinned:
+                log.info("Pinned memory id={}", memory_id)
+            return pinned
+
+    def unpin_memory(self, memory_id: int) -> bool:
+        """Unpin a memory, making it eligible for auto-eviction."""
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE memories SET is_pinned = 0 WHERE id = ?",
+                (memory_id,),
+            )
+            unpinned = cursor.rowcount > 0
+            if unpinned:
+                log.info("Unpinned memory id={}", memory_id)
+            return unpinned
