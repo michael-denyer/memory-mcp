@@ -16,12 +16,15 @@ log = get_logger("storage.output_logging")
 class OutputLoggingMixin:
     """Mixin providing output logging methods for Storage."""
 
-    def log_output(self, content: str, session_id: str | None = None) -> int:
+    def log_output(
+        self, content: str, session_id: str | None = None, project_id: str | None = None
+    ) -> int:
         """Log an output for pattern mining.
 
         Args:
             content: The output content to log.
             session_id: Optional session ID for provenance tracking.
+            project_id: Optional project ID for project-scoped mining.
 
         Raises:
             ValidationError: If content is empty or exceeds max length.
@@ -31,8 +34,8 @@ class OutputLoggingMixin:
 
         with self.transaction() as conn:
             cursor = conn.execute(
-                "INSERT INTO output_log (content, session_id) VALUES (?, ?)",
-                (content, session_id),
+                "INSERT INTO output_log (content, session_id, project_id) VALUES (?, ?, ?)",
+                (content, session_id, project_id),
             )
 
             # Update session log count if session_id provided (upsert creates if needed)
@@ -54,17 +57,36 @@ class OutputLoggingMixin:
             )
             return log_id
 
-    def get_recent_outputs(self, hours: int = 24) -> list[tuple[int, str, datetime]]:
-        """Get recent output logs."""
+    def get_recent_outputs(
+        self, hours: int = 24, project_id: str | None = None
+    ) -> list[tuple[int, str, datetime]]:
+        """Get recent output logs, optionally filtered by project.
+
+        Args:
+            hours: How many hours back to look.
+            project_id: If provided, only return logs from this project.
+                        If None, returns all logs (backwards compatible).
+        """
         with self._connection() as conn:
-            rows = conn.execute(
-                """
-                SELECT id, content, timestamp FROM output_log
-                WHERE timestamp > datetime('now', ?)
-                ORDER BY timestamp DESC
-                """,
-                (f"-{hours} hours",),
-            ).fetchall()
+            if project_id:
+                rows = conn.execute(
+                    """
+                    SELECT id, content, timestamp FROM output_log
+                    WHERE timestamp > datetime('now', ?)
+                      AND project_id = ?
+                    ORDER BY timestamp DESC
+                    """,
+                    (f"-{hours} hours", project_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, content, timestamp FROM output_log
+                    WHERE timestamp > datetime('now', ?)
+                    ORDER BY timestamp DESC
+                    """,
+                    (f"-{hours} hours",),
+                ).fetchall()
 
             return [
                 (row["id"], row["content"], datetime.fromisoformat(row["timestamp"]))

@@ -887,6 +887,19 @@ class TestExtractApiEndpoints:
         assert len(patterns) >= 1
         assert patterns[0].pattern_type == PatternType.API_ENDPOINT
 
+    def test_endpoint_format_is_correct(self):
+        """Extracted endpoints should have 'METHOD /path' format, not duplicate path.
+
+        Regression test: Previously the regex captured both the full match and path,
+        resulting in malformed outputs like 'GET /USERS /USERS'.
+        """
+        text = "GET /users"
+        patterns = extract_api_endpoints(text)
+        assert len(patterns) >= 1
+        # Should be "GET /users", NOT "GET /USERS /USERS"
+        assert patterns[0].pattern == "GET /users"
+        assert "/users /users" not in patterns[0].pattern.lower()
+
     def test_post_endpoint(self):
         """Extract POST endpoints."""
         text = "POST /api/v1/items"
