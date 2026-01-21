@@ -44,6 +44,8 @@ The system learns what you use and automatically promotes it. No manual curation
 
 🤖 **Self-organizing** — Learns what you use. Auto-promotes frequent patterns. Auto-demotes stale ones.
 
+🗂️ **Project-aware** — Memories auto-tagged by git repo. Switch projects, get relevant context automatically.
+
 📦 **Local & private** — All data in SQLite. No cloud. No API keys. Works offline.
 
 🍎 **Apple Silicon optimized** — MLX backend auto-detected on M-series Macs for faster embeddings.
@@ -144,6 +146,7 @@ Memories used 3+ times automatically promote to hot cache. Unused memories demot
 |---|------------|--------|
 | **Hot cache** | Auto-injected, 0ms | Most require tool calls |
 | **Self-organizing** | Learns from usage | Manual curation |
+| **Project-aware** | Auto-isolates by git repo | Manual tagging |
 | **Pattern mining** | Extracts from outputs | Not available |
 | **Setup** | One command, local SQLite | Often needs cloud/services |
 
