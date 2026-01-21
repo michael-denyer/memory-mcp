@@ -49,9 +49,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **Research-inspired memory features**
-  - Importance scoring at admission time (MemGPT-inspired)
-  - Retrieval tracking to learn which memories are actually used (RAG-inspired)
-  - Memory consolidation infrastructure (MemoryBank-inspired)
+  - Importance scoring at admission time
+  - Retrieval tracking to learn which memories are actually used
+  - Memory consolidation infrastructure
 
 - **Per-result scoring components** for recall transparency
   - Shows similarity, recency, access, and trust components in results
