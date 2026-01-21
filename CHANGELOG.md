@@ -39,6 +39,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Configurable weights for each component
   - Used for smarter hot cache promotion alongside access count threshold
 
+- **Semantic clustering for display** - RePo-inspired cognitive load reduction
+  - Groups similar memories in hot cache and working set displays
+  - Auto-generates human-readable cluster labels from tags
+  - Configurable threshold (0.70 default), max clusters (5), and min size (2)
+
 ### Changed
 
 - Hot cache promotion now considers both access count threshold AND salience score
