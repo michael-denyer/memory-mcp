@@ -40,7 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Enhanced pattern mining** - Expanded from 5 to 16 pattern types for better extraction coverage
   - New extractors: decisions, architecture, tech stack, explanations, config, dependencies, API endpoints
   - NER-based entity extraction (person, organization, location) when `transformers` is installed
-  - Auto-enables NER with `pip install hot-memory-mcp[ner]` - no config needed
+  - Auto-enables NER with `uv tool install hot-memory-mcp[ner]` - no config needed
 
 - **Bootstrap context preservation** - Markdown files now preserve section context in chunks
   - Chunks include source file and section: `[CLAUDE.md > Testing] Use pytest for tests`
