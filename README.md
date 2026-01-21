@@ -56,13 +56,10 @@ The system learns what you use and automatically promotes it. No manual curation
 
 ```bash
 # uv (recommended)
-uv tool install memory-mcp
+uv tool install hot-memory-mcp
 
 # pip
-pip install memory-mcp
-
-# Homebrew (macOS)
-brew install memory-mcp
+pip install hot-memory-mcp
 
 # From source
 git clone https://github.com/michael-denyer/memory-mcp.git
@@ -71,8 +68,8 @@ cd memory-mcp && uv sync
 
 **Apple Silicon?** Add MLX support for faster embeddings:
 ```bash
-uv tool install memory-mcp[mlx]
-# or: pip install memory-mcp[mlx]
+uv tool install hot-memory-mcp[mlx]
+# or: pip install hot-memory-mcp[mlx]
 ```
 
 ### Configure
