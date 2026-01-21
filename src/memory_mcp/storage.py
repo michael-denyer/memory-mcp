@@ -98,8 +98,6 @@ log = get_logger("storage")
 class ValidationError(ValueError):
     """Raised when input validation fails."""
 
-    pass
-
 
 class Storage:
     """SQLite storage manager with thread-safe connection handling."""
@@ -847,6 +845,7 @@ class Storage:
         is_hot: bool = False,
         source_log_id: int | None = None,
         session_id: str | None = None,
+        project_id: str | None = None,
     ) -> tuple[int, bool]:
         """Store a new memory with embedding.
 
@@ -858,6 +857,7 @@ class Storage:
             is_hot: Whether to add to hot cache immediately
             source_log_id: For mined memories, the originating output_log ID
             session_id: Conversation session ID for provenance tracking
+            project_id: Project ID for project-aware filtering (e.g., "github/owner/repo")
 
         Returns:
             Tuple of (memory_id, is_new) where is_new indicates if a new
@@ -953,9 +953,10 @@ class Storage:
                 """
                 INSERT INTO memories (
                     content, content_hash, memory_type, source, is_hot,
-                    trust_score, importance_score, source_log_id, extracted_at, session_id
+                    trust_score, importance_score, source_log_id, extracted_at,
+                    session_id, project_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING id
                 """,
                 (
@@ -969,6 +970,7 @@ class Storage:
                     source_log_id,
                     extracted_at,
                     session_id,
+                    project_id,
                 ),
             )
             memory_id = cursor.fetchone()[0]
@@ -976,6 +978,10 @@ class Storage:
             # Update session memory count if session provided
             if session_id:
                 self._update_session_activity(conn, session_id, memory_delta=1)
+
+            # Track project for project-aware features
+            if project_id:
+                self._track_project(conn, project_id)
 
             # Insert embedding only for new memories
             conn.execute(
@@ -991,10 +997,11 @@ class Storage:
                 )
 
             log.info(
-                "Stored new memory id={} type={} trust={}",
+                "Stored new memory id={} type={} trust={} project={}",
                 memory_id,
                 memory_type.value,
                 trust_score,
+                project_id,
             )
 
             return memory_id, True
@@ -1086,6 +1093,7 @@ class Storage:
         extracted_at_str = self._get_row_value(row, "extracted_at")
         extracted_at = datetime.fromisoformat(extracted_at_str) if extracted_at_str else None
         session_id = self._get_row_value(row, "session_id")
+        project_id = self._get_row_value(row, "project_id")
 
         hot_score = self._compute_hot_score(row["access_count"], last_accessed_dt)
         salience_score = self._compute_salience_score(
@@ -1110,6 +1118,7 @@ class Storage:
             source_log_id=source_log_id,
             extracted_at=extracted_at,
             session_id=session_id,
+            project_id=project_id,
             similarity=similarity,
             hot_score=hot_score,
             salience_score=salience_score,
@@ -1586,6 +1595,7 @@ class Storage:
         mode: RecallMode | None = None,
         memory_types: list[MemoryType] | None = None,
         expand_relations: bool | None = None,
+        project_id: str | None = None,
     ) -> RecallResult:
         """Semantic search with confidence gating and composite ranking.
 
@@ -1596,6 +1606,8 @@ class Storage:
             mode: Recall mode preset (precision, balanced, exploratory)
             memory_types: Filter to specific memory types
             expand_relations: Expand results via knowledge graph (default from config)
+            project_id: Filter to specific project (also includes global memories
+                if project_include_global is enabled)
 
         Results are ranked by composite score combining:
         - Semantic similarity (weight varies by mode)
@@ -1613,65 +1625,57 @@ class Storage:
         query_embedding = self._embedding_engine.embed(query)
 
         with self._connection() as conn:
-            # Build query with optional type filter
+            # Build query with optional type and project filters
             # Include all Memory fields for accurate response mapping
+            base_select = """
+                SELECT
+                    m.id,
+                    m.content,
+                    m.content_hash,
+                    m.memory_type,
+                    m.source,
+                    m.is_hot,
+                    m.is_pinned,
+                    m.promotion_source,
+                    m.access_count,
+                    m.last_accessed_at,
+                    m.created_at,
+                    m.trust_score,
+                    m.source_log_id,
+                    m.extracted_at,
+                    m.session_id,
+                    m.project_id,
+                    vec_distance_cosine(v.embedding, ?) as distance
+                FROM memory_vectors v
+                JOIN memories m ON m.id = v.rowid
+            """
+
+            # Build WHERE conditions
+            conditions = []
+            params: list = [query_embedding.tobytes()]
+
             if memory_types:
                 type_placeholders = ",".join("?" * len(memory_types))
-                type_values = [t.value for t in memory_types]
-                query_sql = f"""
-                    SELECT
-                        m.id,
-                        m.content,
-                        m.content_hash,
-                        m.memory_type,
-                        m.source,
-                        m.is_hot,
-                        m.is_pinned,
-                        m.promotion_source,
-                        m.access_count,
-                        m.last_accessed_at,
-                        m.created_at,
-                        m.trust_score,
-                        m.source_log_id,
-                        m.extracted_at,
-                        m.session_id,
-                        vec_distance_cosine(v.embedding, ?) as distance
-                    FROM memory_vectors v
-                    JOIN memories m ON m.id = v.rowid
-                    WHERE m.memory_type IN ({type_placeholders})
-                    ORDER BY distance ASC
-                    LIMIT ?
-                """
-                params = (
-                    query_embedding.tobytes(),
-                    *type_values,
-                    effective_limit * 3,
-                )
-            else:
-                query_sql = """
-                    SELECT
-                        m.id,
-                        m.content,
-                        m.content_hash,
-                        m.memory_type,
-                        m.source,
-                        m.is_hot,
-                        m.is_pinned,
-                        m.promotion_source,
-                        m.access_count,
-                        m.last_accessed_at,
-                        m.created_at,
-                        m.trust_score,
-                        m.source_log_id,
-                        m.extracted_at,
-                        m.session_id,
-                        vec_distance_cosine(v.embedding, ?) as distance
-                    FROM memory_vectors v
-                    JOIN memories m ON m.id = v.rowid
-                    ORDER BY distance ASC
-                    LIMIT ?
-                """
-                params = (query_embedding.tobytes(), effective_limit * 3)
+                conditions.append(f"m.memory_type IN ({type_placeholders})")
+                params.extend([t.value for t in memory_types])
+
+            # Project filtering: include project-specific + global (NULL project_id)
+            if project_id:
+                if self.settings.project_include_global:
+                    conditions.append("(m.project_id = ? OR m.project_id IS NULL)")
+                else:
+                    conditions.append("m.project_id = ?")
+                params.append(project_id)
+
+            # Build final query
+            where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+            query_sql = f"""
+                {base_select}
+                {where_clause}
+                ORDER BY distance ASC
+                LIMIT ?
+            """
+            params.append(effective_limit * 3)
 
             rows = conn.execute(query_sql, params).fetchall()
 
@@ -1965,11 +1969,29 @@ class Storage:
 
     # ========== Hot Cache ==========
 
-    def get_hot_memories(self) -> list[Memory]:
-        """Get all memories in hot cache, ordered by hot_score descending."""
+    def get_hot_memories(self, project_id: str | None = None) -> list[Memory]:
+        """Get all memories in hot cache, ordered by hot_score descending.
+
+        Args:
+            project_id: Optional project filter. If provided and project_filter_hot_cache
+                is enabled, returns only memories for this project (+ global if
+                project_include_global is enabled).
+        """
         memories = []
         with self._connection() as conn:
-            rows = conn.execute("SELECT * FROM memories WHERE is_hot = 1").fetchall()
+            # Build query with optional project filter
+            if project_id and self.settings.project_filter_hot_cache:
+                if self.settings.project_include_global:
+                    query = """
+                        SELECT * FROM memories
+                        WHERE is_hot = 1 AND (project_id = ? OR project_id IS NULL)
+                    """
+                else:
+                    query = "SELECT * FROM memories WHERE is_hot = 1 AND project_id = ?"
+                rows = conn.execute(query, (project_id,)).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM memories WHERE is_hot = 1").fetchall()
+
             for row in rows:
                 memories.append(self._row_to_memory(row, conn))
 
@@ -2022,19 +2044,14 @@ class Storage:
             return None
 
         # Compute scores and find minimum
-        candidates = []
-        for row in rows:
+        def compute_score(row: sqlite3.Row) -> tuple[int, float]:
             last_accessed = row["last_accessed_at"]
             last_accessed_dt = datetime.fromisoformat(last_accessed) if last_accessed else None
             score = self._compute_hot_score(row["access_count"], last_accessed_dt)
-            candidates.append((row["id"], score))
+            return (row["id"], score)
 
-        if not candidates:
-            return None
-
-        # Return ID with lowest score
-        candidates.sort(key=lambda x: x[1])
-        return candidates[0][0]
+        candidates = [compute_score(row) for row in rows]
+        return min(candidates, key=lambda x: x[1])[0]
 
     def promote_to_hot(
         self,
@@ -3269,6 +3286,26 @@ class Storage:
                 log_count = log_count + excluded.log_count
             """,
             (session_id, memory_delta, log_delta),
+        )
+
+    def _track_project(
+        self,
+        conn: sqlite3.Connection,
+        project_id: str,
+        name: str | None = None,
+        path: str | None = None,
+    ) -> None:
+        """Track a project for project awareness. Creates or updates last_accessed_at."""
+        conn.execute(
+            """
+            INSERT INTO projects (id, name, path)
+            VALUES (?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                last_accessed_at = CURRENT_TIMESTAMP,
+                name = COALESCE(excluded.name, projects.name),
+                path = COALESCE(excluded.path, projects.path)
+            """,
+            (project_id, name, path),
         )
 
     def create_or_get_session(

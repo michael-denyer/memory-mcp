@@ -268,6 +268,21 @@ class Settings(BaseSettings):
         default=3, description="Predicted memories to include in working set"
     )
 
+    # Project awareness (per-project memory isolation)
+    project_awareness_enabled: bool = Field(
+        default=True, description="Enable automatic project detection from git"
+    )
+    project_filter_recall: bool = Field(
+        default=True,
+        description="Filter recall results to current project (with global fallback)",
+    )
+    project_filter_hot_cache: bool = Field(
+        default=True, description="Filter hot cache to current project"
+    )
+    project_include_global: bool = Field(
+        default=True, description="Include global (non-project) memories in results"
+    )
+
     # Recall mode presets
     # Precision mode: high threshold, few results, prioritize similarity
     precision_threshold: float = Field(

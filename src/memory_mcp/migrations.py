@@ -12,7 +12,7 @@ from memory_mcp.logging import get_logger
 log = get_logger("migrations")
 
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 -- Schema version tracking
@@ -141,13 +141,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_vectors USING vec0(
 class SchemaVersionError(Exception):
     """Raised when database schema version is incompatible."""
 
-    pass
-
 
 class EmbeddingDimensionError(Exception):
     """Raised when embedding dimension doesn't match stored vectors."""
-
-    pass
 
 
 # ========== Migration Helper Functions ==========
@@ -237,15 +233,13 @@ def migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
         """
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_relationships_from "
-        "ON memory_relationships(from_memory_id)"
+        "CREATE INDEX IF NOT EXISTS idx_relationships_from ON memory_relationships(from_memory_id)"
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_relationships_to ON memory_relationships(to_memory_id)"
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_relationships_type "
-        "ON memory_relationships(relation_type)"
+        "CREATE INDEX IF NOT EXISTS idx_relationships_type ON memory_relationships(relation_type)"
     )
     log.info("Created memory_relationships table for knowledge graph")
 
@@ -365,6 +359,34 @@ def migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
     log.info("Added importance_score column and retrieval_events table")
 
 
+def migrate_v10_to_v11(conn: sqlite3.Connection) -> None:
+    """Add project awareness - project_id column and index."""
+    # Add project_id column to memories (NULL = global/no project)
+    add_column_if_missing(conn, "memories", "project_id", "TEXT")
+
+    # Create index for project-based queries
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_id)")
+
+    # Create projects table for tracking project metadata
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            path TEXT,
+            last_accessed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_path ON projects(path)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_projects_last_accessed ON projects(last_accessed_at)"
+    )
+
+    log.info("Added project awareness (project_id column and projects table)")
+
+
 # ========== Migration Runner ==========
 
 
@@ -388,6 +410,8 @@ def run_migrations(conn: sqlite3.Connection, from_version: int, settings: Settin
         migrate_v8_to_v9(conn)
     if from_version < 10:
         migrate_v9_to_v10(conn)
+    if from_version < 11:
+        migrate_v10_to_v11(conn)
 
 
 def check_schema_version(conn: sqlite3.Connection) -> None:

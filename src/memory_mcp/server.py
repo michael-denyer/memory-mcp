@@ -33,6 +33,7 @@ from memory_mcp.logging import (
     update_hot_cache_stats,
 )
 from memory_mcp.models import Memory
+from memory_mcp.project import detect_project, get_current_project_id
 from memory_mcp.responses import (
     AccessPatternResponse,
     AuditEntryResponse,
@@ -126,6 +127,13 @@ def get_similarity_confidence(similarity: float | None) -> str:
     )
 
 
+def get_auto_project_id() -> str | None:
+    """Get the current project ID if project awareness is enabled."""
+    if not settings.project_awareness_enabled:
+        return None
+    return get_current_project_id()
+
+
 # ========== Cold Storage Tools ==========
 
 
@@ -169,19 +177,26 @@ def remember(
     if mem_type is None:
         return invalid_memory_type_error()
 
+    # Auto-detect current project for project-aware memory
+    project_id = get_auto_project_id()
+
     memory_id, is_new = storage.store_memory(
         content=content,
         memory_type=mem_type,
         source=MemorySource.MANUAL,
         tags=tag_list,
         session_id=session_id,
+        project_id=project_id,
     )
 
     # Record metrics (merged=False since we can't detect semantic merges at this level)
     record_store(memory_type=mem_type.value, merged=not is_new, contradictions=0)
 
     if is_new:
-        return success_response(f"Stored as memory #{memory_id}", memory_id=memory_id)
+        msg = f"Stored as memory #{memory_id}"
+        if project_id:
+            msg += f" (project: {project_id})"
+        return success_response(msg, memory_id=memory_id, project_id=project_id)
     else:
         return success_response(
             f"Memory #{memory_id} already exists (access count incremented, tags merged)",
@@ -276,12 +291,16 @@ def recall(
     if threshold is not None:
         threshold = max(0.0, min(1.0, threshold))
 
+    # Get current project for project-aware recall (if enabled)
+    project_id = get_auto_project_id() if settings.project_filter_recall else None
+
     log.debug(
-        "recall() called: query='{}' mode={} limit={} threshold={}",
+        "recall() called: query='{}' mode={} limit={} threshold={} project={}",
         query[:50],
         mode,
         limit,
         threshold,
+        project_id,
     )
 
     result = storage.recall(
@@ -291,6 +310,7 @@ def recall(
         mode=recall_mode,
         memory_types=memory_types,
         expand_relations=expand_relations,
+        project_id=project_id,
     )
 
     # Record metrics
@@ -645,18 +665,26 @@ def hot_cache_resource() -> str:
     directory, auto-bootstraps from README.md, CLAUDE.md, etc.
 
     Records hit/miss metrics for observability (see hot_cache_status).
+
+    Project-aware: If project awareness is enabled, filters to current project
+    plus global memories.
     """
-    hot_memories = storage.get_hot_memories()
+    # Get current project for project-aware hot cache
+    project_id = get_auto_project_id()
+    hot_memories = storage.get_hot_memories(project_id=project_id)
 
     if not hot_memories and _try_auto_bootstrap():
-        hot_memories = storage.get_hot_memories()
+        hot_memories = storage.get_hot_memories(project_id=project_id)
 
     if not hot_memories:
         storage.record_hot_cache_miss()
         return "[MEMORY: Hot cache empty - no frequently-accessed patterns yet]"
 
     storage.record_hot_cache_hit()
-    return _format_memory_list(hot_memories, "[MEMORY: Hot Cache - High-confidence patterns]")
+    header = "[MEMORY: Hot Cache - High-confidence patterns]"
+    if project_id:
+        header = f"[MEMORY: Hot Cache ({project_id}) - High-confidence patterns]"
+    return _format_memory_list(hot_memories, header)
 
 
 @mcp.resource("memory://working-set")
@@ -679,6 +707,47 @@ def working_set_resource() -> str:
         return "[MEMORY: Working set empty - no recent activity]"
 
     return _format_memory_list(working_set, "[MEMORY: Working Set - Active context]")
+
+
+@mcp.resource("memory://project-context")
+def project_context_resource() -> str:
+    """Project-specific memory context for the current git repository.
+
+    Returns:
+    - Current project ID (from git remote URL)
+    - Project-specific hot cache memories
+    - Recent project activity
+
+    Use this to understand what memories are associated with the current project.
+    """
+    project = detect_project()
+
+    if not project:
+        return "[MEMORY: No git project detected - memories will be global]"
+
+    # Get project-specific hot memories
+    hot_memories = storage.get_hot_memories(project_id=project.id)
+
+    lines = [
+        f"[MEMORY: Project Context - {project.name}]",
+        f"Project ID: {project.id}",
+        f"Path: {project.path}",
+    ]
+
+    if project.remote_url:
+        lines.append(f"Remote: {project.remote_url}")
+
+    lines.append(f"Hot memories: {len(hot_memories)}")
+
+    if hot_memories:
+        lines.append("")
+        lines.append("Recent hot memories:")
+        max_chars = settings.hot_cache_display_max_chars
+        for m in hot_memories[:5]:  # Show top 5
+            content = m.content[:max_chars] + "..." if len(m.content) > max_chars else m.content
+            lines.append(f"  - {content}")
+
+    return "\n".join(lines)
 
 
 # ========== Mining Tools ==========
@@ -1982,22 +2051,6 @@ def retrieval_quality_stats(
 # ========== Memory Consolidation (MemoryBank-inspired) ==========
 
 
-def _parse_memory_type_for_consolidation(
-    memory_type: str | None,
-) -> tuple[MemoryType | None, dict | None]:
-    """Parse memory type string for consolidation tools.
-
-    Returns:
-        Tuple of (parsed MemoryType or None, error response dict or None)
-    """
-    if not memory_type:
-        return None, None
-    mem_type = parse_memory_type(memory_type)
-    if mem_type is None:
-        return None, error_response(f"Invalid memory_type. Use: {[t.value for t in MemoryType]}")
-    return mem_type, None
-
-
 @mcp.tool
 def preview_consolidation(
     memory_type: str | None = None,
@@ -2013,9 +2066,11 @@ def preview_consolidation(
     Returns:
         Preview of clusters and potential space savings
     """
-    mem_type, err = _parse_memory_type_for_consolidation(memory_type)
-    if err:
-        return err
+    mem_type = None
+    if memory_type:
+        mem_type = parse_memory_type(memory_type)
+        if mem_type is None:
+            return invalid_memory_type_error()
 
     result = storage.preview_consolidation(memory_type=mem_type)
     return success_response(
@@ -2042,9 +2097,11 @@ def run_consolidation(
     Returns:
         Consolidation results (clusters processed, memories deleted)
     """
-    mem_type, err = _parse_memory_type_for_consolidation(memory_type)
-    if err:
-        return err
+    mem_type = None
+    if memory_type:
+        mem_type = parse_memory_type(memory_type)
+        if mem_type is None:
+            return invalid_memory_type_error()
 
     result = storage.run_consolidation(memory_type=mem_type, dry_run=dry_run)
 

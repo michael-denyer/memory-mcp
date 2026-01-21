@@ -300,6 +300,15 @@ Environment variables (prefix `MEMORY_MCP_`):
 | `WORKING_SET_ENABLED` | `true` | Enable memory://working-set resource |
 | `WORKING_SET_MAX_ITEMS` | `10` | Maximum items in working set |
 
+### Project Awareness
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROJECT_AWARENESS_ENABLED` | `true` | Auto-detect git project for memories |
+| `PROJECT_FILTER_RECALL` | `true` | Filter recall to current project |
+| `PROJECT_FILTER_HOT_CACHE` | `true` | Filter hot cache to current project |
+| `PROJECT_INCLUDE_GLOBAL` | `true` | Include global memories with project |
+
 ## MCP Resources
 
 The server exposes two MCP resources for instant memory access:
@@ -321,6 +330,14 @@ Session-aware active memory context (Engram-inspired). Provides contextually rel
 3. Top salience hot items (to fill remaining slots)
 
 Smaller and more focused than hot-cache (~10 items) - designed for active work context.
+
+### Project Context (`memory://project-context`)
+
+Shows the current project (detected from git) and its associated memories:
+
+- Project ID (e.g., `github/owner/repo`)
+- Project-specific hot cache memories
+- Useful for debugging project awareness
 
 ### Enabling Auto-Injection
 

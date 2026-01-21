@@ -28,6 +28,7 @@ class MemoryResponse(BaseModel):
     source_log_id: int | None = None
     extracted_at: str | None = None
     session_id: str | None = None  # Conversation session this came from
+    project_id: str | None = None  # Project this memory belongs to (e.g., "github/owner/repo")
     # Computed scores
     similarity: float | None = None
     hot_score: float | None = None
@@ -355,6 +356,7 @@ def memory_to_response(m: Memory) -> MemoryResponse:
         source_log_id=m.source_log_id,
         extracted_at=m.extracted_at.isoformat() if m.extracted_at else None,
         session_id=m.session_id,
+        project_id=m.project_id,
         similarity=m.similarity,
         hot_score=m.hot_score,
         salience_score=m.salience_score,

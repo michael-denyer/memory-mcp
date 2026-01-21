@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Project awareness** - Memories are automatically tagged with the current git project
+  - Auto-detects project from git remote URL (e.g., `github/owner/repo`)
+  - Recall and hot cache filter to current project + global memories
+  - `memory://project-context` MCP resource shows project-specific context
+  - Configurable via `MEMORY_MCP_PROJECT_AWARENESS_ENABLED` (default: true)
+  - Seamless switching between projects - each sees its own relevant memories
+
 - **Episodic memory type** - New `EPISODIC` memory type for session-bound short-term context
   - `end_session()` tool to consolidate episodic memories at session end
   - Promotes top memories by salience score to PROJECT or PATTERN type

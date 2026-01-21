@@ -150,6 +150,7 @@ class Memory:
     source_log_id: int | None = None  # For mined memories: originating log
     extracted_at: datetime | None = None  # When pattern was extracted
     session_id: str | None = None  # Conversation session this came from
+    project_id: str | None = None  # Project this memory belongs to (e.g., "github/owner/repo")
     # Computed scores (populated during search/recall)
     similarity: float | None = None  # Populated during search
     hot_score: float | None = None  # Computed score for LRU ranking
