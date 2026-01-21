@@ -495,7 +495,7 @@ uv run memory-mcp 2>&1 | head -50
 
 **Apple Silicon Users**: Install with MLX support for faster embeddings:
 ```bash
-pip install memory-mcp[mlx]
+uv tool install hot-memory-mcp[mlx]
 ```
 
 ## Example Usage

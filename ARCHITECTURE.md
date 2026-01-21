@@ -117,18 +117,51 @@ graph TB
 
 ```
 src/memory_mcp/
-├── server.py       # MCP tools and resources - the API layer
-├── storage.py      # SQLite operations, vector search, caching logic
-├── responses.py    # Pydantic response models for MCP tools
-├── models.py       # Enums and dataclasses (domain models)
-├── migrations.py   # Database schema and version migrations
-├── mining.py       # Pattern extraction from outputs
-├── config.py       # Settings with environment variable loading
-├── cli.py          # CLI commands for hooks and administration
-├── embeddings.py   # Embedding providers (sentence-transformers, MLX)
-├── text_parsing.py # Content chunking for seeding
-├── logging.py      # Structured logging configuration
-└── metrics.py      # Metrics collection and observability
+├── server/             # MCP server package
+│   ├── __init__.py     # Exports main(), mcp app
+│   ├── app.py          # FastMCP setup, resources, lifespan
+│   └── tools/          # Tool implementations by domain
+│       ├── cold_storage.py   # remember, recall, forget, list
+│       ├── hot_cache.py      # promote, demote, pin, unpin
+│       ├── mining.py         # log_output, run_mining, review
+│       ├── seeding.py        # seed_from_text, bootstrap_project
+│       ├── trust.py          # validate_memory, invalidate_memory
+│       ├── relationships.py  # link/unlink_memories, get_related
+│       ├── contradictions.py # find/mark/resolve contradictions
+│       ├── sessions.py       # session lifecycle tools
+│       ├── maintenance.py    # db_maintenance, cleanup, info
+│       ├── predictions.py    # access_patterns, predict_next
+│       ├── retrieval.py      # mark_memory_used, quality stats
+│       └── consolidation.py  # preview/run consolidation
+├── storage/            # Storage package
+│   ├── __init__.py     # Exports Storage class
+│   ├── core.py         # Storage class, transactions, schema
+│   ├── memory_crud.py  # store_memory, delete_memory, get_memory
+│   ├── search.py       # recall, vector search, scoring
+│   ├── hot_cache.py    # promote, demote, eviction logic
+│   ├── trust.py        # adjust_trust, get_trust_history
+│   ├── relationships.py # link_memories, knowledge graph
+│   ├── contradictions.py # find/resolve contradictions
+│   ├── sessions.py     # session lifecycle, episodic memory
+│   ├── mining_store.py # pattern storage operations
+│   ├── consolidation.py # memory merging logic
+│   ├── retrieval.py    # RAG quality tracking
+│   ├── maintenance.py  # cleanup, rebuild, vacuum
+│   ├── audit.py        # audit history logging
+│   ├── seeding.py      # bootstrap, seed operations
+│   ├── output_logging.py # output log for mining
+│   └── salience.py     # salience score computation
+├── mining.py           # Pattern extraction algorithms
+├── config.py           # Settings with environment variable loading
+├── cli.py              # CLI commands for hooks and administration
+├── embeddings.py       # Embedding providers (sentence-transformers, MLX)
+├── responses.py        # Pydantic response models for MCP tools
+├── models.py           # Enums and dataclasses (domain models)
+├── migrations.py       # Database schema and version migrations
+├── helpers.py          # Helper functions for tools
+├── text_parsing.py     # Content chunking for seeding
+├── logging.py          # Structured logging configuration
+└── metrics.py          # Metrics collection and observability
 ```
 
 ### Module Dependencies
@@ -137,13 +170,13 @@ src/memory_mcp/
 graph TB
     subgraph API["API Layer"]
         direction LR
-        server[server.py]
+        server[server/]
         cli[cli.py]
     end
 
     subgraph Core["Core Layer"]
         direction LR
-        storage[storage.py]
+        storage[storage/]
         mining[mining.py]
     end
 
@@ -176,8 +209,8 @@ graph TB
 
 | Module | Responsibility |
 |--------|----------------|
-| `server.py` | MCP tools/resources, request validation, response construction |
-| `storage.py` | Data persistence, vector operations, business logic |
+| `server/` | MCP tools/resources, request validation, response construction |
+| `storage/` | Data persistence, vector operations, business logic |
 | `responses.py` | Pydantic models for tool return types |
 | `models.py` | Domain enums (MemoryType, TrustReason) and dataclasses (Memory, Session) |
 | `migrations.py` | Database schema definition and version migrations |
@@ -188,10 +221,10 @@ graph TB
 
 ### Why This Structure?
 
-1. **Separated concerns**: Models, responses, and migrations extracted for clarity
-2. **Thin server layer**: Adapts storage operations to MCP protocol
+1. **Single responsibility**: Each mixin handles one domain (trust, search, hot cache, etc.)
+2. **Thin server layer**: Tool modules adapt storage operations to MCP protocol
 3. **Swappable embeddings**: Backend detection allows hardware optimization
-4. **Backwards-compatible imports**: Re-exports preserve existing import paths
+4. **Backwards-compatible imports**: Package `__init__.py` re-exports preserve existing import paths
 
 ## Key Design Decisions
 
