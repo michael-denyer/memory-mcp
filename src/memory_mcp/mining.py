@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
-from memory_mcp.config import get_settings
 from memory_mcp.embeddings import content_hash
 from memory_mcp.project import get_current_project_id
 from memory_mcp.storage import Storage
@@ -263,8 +262,7 @@ def run_mining(storage: Storage, hours: int = 24) -> dict:
 
                 # Get project_id if project awareness is enabled
                 project_id = None
-                mining_settings = get_settings()
-                if mining_settings.project_awareness_enabled:
+                if settings.project_awareness_enabled:
                     project_id = get_current_project_id()
 
                 memory_id, _ = storage.store_memory(
