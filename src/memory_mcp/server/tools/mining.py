@@ -42,8 +42,11 @@ def log_output(
     # Use auto-session if not explicitly provided (zero-config session tracking)
     effective_session_id = session_id or get_current_session_id()
 
-    log_id = storage.log_output(content, session_id=effective_session_id)
-    return success_response("Output logged", log_id=log_id)
+    # Get project_id for project-scoped mining
+    project_id = get_auto_project_id()
+
+    log_id = storage.log_output(content, session_id=effective_session_id, project_id=project_id)
+    return success_response("Output logged", log_id=log_id, project_id=project_id)
 
 
 @mcp.tool
@@ -148,6 +151,8 @@ def run_mining(
 
     Extracts patterns (imports, facts, commands, code) from logged outputs
     and updates the mined_patterns table with occurrence counts.
+
+    Mining is project-scoped: only logs from the current project are processed.
     """
     log.info("run_mining() called: hours={}", hours)
     if not settings.mining_enabled:
@@ -155,7 +160,10 @@ def run_mining(
 
     from memory_mcp.mining import run_mining as _run_mining
 
-    result = _run_mining(storage, hours=hours)
+    # Get project_id for project-scoped mining
+    project_id = get_auto_project_id()
+
+    result = _run_mining(storage, hours=hours, project_id=project_id)
     log.info(
         "Mining complete: {} outputs processed, {} patterns found",
         result["outputs_processed"],

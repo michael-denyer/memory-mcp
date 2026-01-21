@@ -107,6 +107,32 @@ def test_output_logging(storage):
     assert outputs[0][1] == "Some output content"
 
 
+def test_output_logging_project_scoped(storage):
+    """Test that output logs can be filtered by project_id.
+
+    This prevents cross-project pattern leakage where logs from one
+    project could be mined and auto-approved into a different project.
+    """
+    # Log outputs from two different projects
+    storage.log_output("Project A content", project_id="project-a")
+    storage.log_output("Project B content", project_id="project-b")
+    storage.log_output("No project content")  # No project
+
+    # Get all outputs (backwards compatible)
+    all_outputs = storage.get_recent_outputs(hours=1)
+    assert len(all_outputs) == 3
+
+    # Get only project A outputs
+    a_outputs = storage.get_recent_outputs(hours=1, project_id="project-a")
+    assert len(a_outputs) == 1
+    assert a_outputs[0][1] == "Project A content"
+
+    # Get only project B outputs
+    b_outputs = storage.get_recent_outputs(hours=1, project_id="project-b")
+    assert len(b_outputs) == 1
+    assert b_outputs[0][1] == "Project B content"
+
+
 def test_mined_patterns(storage):
     """Test mined pattern storage."""
     pattern_id = storage.upsert_mined_pattern("import numpy as np", "import")
@@ -1103,10 +1129,10 @@ class TestMemoryRelationships:
             ).fetchone()
             assert result is not None
 
-    def test_schema_version_is_12(self, storage):
-        """Schema version should be 12 after migration."""
+    def test_schema_version_is_13(self, storage):
+        """Schema version should be 13 after migration."""
         version = storage.get_schema_version()
-        assert version == 12
+        assert version == 13
 
     def test_expand_via_relations(self, storage):
         """expand_via_relations adds related memories with decayed scores."""
@@ -1953,10 +1979,10 @@ class TestPredictiveCache:
 
         assert mid2 not in promoted  # Already hot
 
-    def test_schema_version_is_12(self, predictive_storage):
-        """Schema version should be 12 after migration."""
+    def test_schema_version_is_13(self, predictive_storage):
+        """Schema version should be 13 after migration."""
         version = predictive_storage.get_schema_version()
-        assert version == 12
+        assert version == 13
 
     def test_access_sequences_table_exists(self, predictive_storage):
         """access_sequences table should exist."""
@@ -2966,7 +2992,7 @@ class TestHybridSearch:
             stor_hybrid.close()
             stor_no_hybrid.close()
 
-    def test_schema_version_is_12(self, hybrid_storage):
-        """Schema version should be 12 for hybrid search."""
+    def test_schema_version_is_13(self, hybrid_storage):
+        """Schema version should be 13 for hybrid search."""
         version = hybrid_storage.get_schema_version()
-        assert version == 12
+        assert version == 13

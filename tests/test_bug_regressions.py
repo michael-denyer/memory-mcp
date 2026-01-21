@@ -258,7 +258,7 @@ class TestSchemaVersioning:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(db_path=Path(tmpdir) / "new.db")
             storage = Storage(settings)
-            assert storage.get_schema_version() == 12  # v12: hybrid search FTS5
+            assert storage.get_schema_version() == 13  # v13: project-scoped mining
             storage.close()
 
     def test_wal_mode_enabled(self):

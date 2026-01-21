@@ -623,10 +623,11 @@ def extract_config(text: str) -> list[ExtractedPattern]:
     patterns = []
 
     config_patterns = [
-        # Configuration statements
-        r"(?:configured|set up|defaults?)\s+to\s+(.{5,100})",
-        # Dependencies and requirements
-        r"(?:requires|depends on|needs)\s+(.{5,100})",
+        # Defaults statements - only capture numeric/safe values
+        # Match "The timeout defaults to 30 seconds"
+        r"(?:the\s+)?(\w+)\s+defaults?\s+to\s+(\d+\s*\w*)",
+        # Dependencies and requirements (safe - describes relationships not values)
+        r"(?:requires|depends on|needs)\s+([A-Za-z][\w\s]{4,50})",
         # Specific settings (safe numeric values only)
         r"(?:port|timeout|limit|max|min|size|threshold)\s+(?:is|=|:)\s*(\d+\w*)",
         # File paths (no env var values)
@@ -639,6 +640,9 @@ def extract_config(text: str) -> list[ExtractedPattern]:
                 groups = [g for g in match.groups() if g]
                 if groups:
                     content = " ".join(groups).strip()
+                    # SECURITY: Skip if content might contain secrets
+                    if _may_contain_secrets(content):
+                        continue
                     if 3 < len(content) < 150:
                         patterns.append(
                             ExtractedPattern(content, PatternType.CONFIG, confidence=0.65)
@@ -722,7 +726,8 @@ def extract_api_endpoints(text: str) -> list[ExtractedPattern]:
 
     endpoint_patterns = [
         # HTTP method + path: GET /users, POST /api/data
-        r"((?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+['\"]?(/[\w\-{}/:.?&=]+)['\"]?)",
+        # Groups: 1=method, 2=path (not wrapping both in another group)
+        r"(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+['\"]?(/[\w\-{}/:.?&=]+)['\"]?",
         # FastAPI/Flask decorators: @app.get("/path"), @router.post("/path")
         r"@[\w.]+\.(get|post|put|delete|patch)\s*\(\s*['\"]([^'\"]+)['\"]",
         # Express.js style: app.get('/path', ...)
@@ -799,13 +804,19 @@ def extract_patterns(text: str, ner_confidence: float = 0.7) -> list[ExtractedPa
     return list(seen.values())
 
 
-def run_mining(storage: Storage, hours: int = 24) -> dict:
+def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None) -> dict:
     """Run pattern mining on recent outputs.
+
+    Args:
+        storage: Storage instance.
+        hours: How many hours of logs to process.
+        project_id: If provided, only mine logs from this project.
+                    This prevents cross-project pattern leakage.
 
     Returns statistics about patterns found, updated, and auto-approved.
     High-confidence patterns meeting thresholds are auto-approved and promoted.
     """
-    outputs = storage.get_recent_outputs(hours=hours)
+    outputs = storage.get_recent_outputs(hours=hours, project_id=project_id)
     settings = storage.settings
 
     total_patterns = 0

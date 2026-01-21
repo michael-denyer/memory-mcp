@@ -12,7 +12,7 @@ from memory_mcp.logging import get_logger
 log = get_logger("migrations")
 
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA = """
 -- Schema version tracking
@@ -445,6 +445,22 @@ def migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
     log.info("Created memory_fts table and triggers for hybrid keyword search")
 
 
+def migrate_v12_to_v13(conn: sqlite3.Connection) -> None:
+    """Add project_id to output_log for project-scoped mining.
+
+    Without this, mining would process logs from all projects regardless
+    of which project is currently active, potentially leaking patterns
+    across project boundaries.
+    """
+    # Add project_id column to output_log
+    add_column_if_missing(conn, "output_log", "project_id", "TEXT")
+
+    # Create index for project-based filtering
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_output_log_project ON output_log(project_id)")
+
+    log.info("Added project_id to output_log for project-scoped mining")
+
+
 # ========== Migration Runner ==========
 
 
@@ -472,6 +488,8 @@ def run_migrations(conn: sqlite3.Connection, from_version: int, settings: Settin
         migrate_v10_to_v11(conn)
     if from_version < 12:
         migrate_v11_to_v12(conn)
+    if from_version < 13:
+        migrate_v12_to_v13(conn)
 
 
 def check_schema_version(conn: sqlite3.Connection) -> None:

@@ -4,6 +4,24 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1] - 2026-01-21
+
+### Fixed
+
+- **Project-scoped mining** - Mining now respects project boundaries
+  - Output logs store `project_id` for filtering (schema v13)
+  - `run_mining` only processes logs from current project
+  - Prevents cross-project pattern leakage and auto-approval
+
+- **API endpoint extraction** - Fixed malformed "GET /path /path" patterns
+  - Regex was capturing both full match and path, causing duplication
+  - Now correctly produces "GET /path" format
+
+- **Config extraction security** - Hardened against secret leakage
+  - Added `_may_contain_secrets()` filter to config pattern extraction
+  - Tightened regex patterns to capture only safe descriptive values
+  - Prevents sensitive data from being auto-approved to hot cache
+
 ## [0.5.0] - 2026-01-21
 
 ### Changed
