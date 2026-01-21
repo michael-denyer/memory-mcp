@@ -3749,6 +3749,13 @@ class Storage:
 
         tag_list = tags or []
 
+        # Get project_id if project awareness is enabled
+        project_id = None
+        if self.settings.project_awareness_enabled:
+            from memory_mcp.project import get_current_project_id
+
+            project_id = get_current_project_id()
+
         files_found = len(file_paths)
 
         for path in file_paths:
@@ -3803,6 +3810,7 @@ class Storage:
                         memory_type=memory_type,
                         source=MemorySource.MANUAL,
                         tags=tag_list,
+                        project_id=project_id,
                     )
                 except ValidationError as e:
                     errors.append(f"{path.name}: {e}")

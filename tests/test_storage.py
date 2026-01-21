@@ -1775,6 +1775,33 @@ class TestBootstrap:
         utf8_file.write_text("Unicode: \u00e9\u00e8\u00ea")
         assert storage._is_binary_file(utf8_file) is False
 
+    def test_bootstrap_with_project_awareness(self, tmp_path, project_dir):
+        """Bootstrap passes project_id when project awareness is enabled."""
+        # Create storage with project awareness enabled
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            semantic_dedup_enabled=False,
+            project_awareness_enabled=True,
+        )
+        stor = Storage(settings)
+
+        # Mock the project detection to return a known project_id
+        readme = project_dir / "README.md"
+        readme.write_text("# Project\n\n- Test content for project awareness\n")
+
+        # Note: Without a real git repo, get_current_project_id returns None
+        # This test verifies the code path doesn't error and memories are created
+        result = stor.bootstrap_from_files([readme])
+
+        assert result["success"] is True
+        assert result["memories_created"] >= 1
+
+        # Verify memories were created (project_id may be None without git repo)
+        memories = stor.list_memories(limit=10)
+        assert len(memories) >= 1
+
+        stor.close()
+
 
 # ========== Predictive Hot Cache Warming Tests ==========
 

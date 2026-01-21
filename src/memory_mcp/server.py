@@ -964,11 +964,15 @@ def approve_candidate(
     if mem_type is None:
         return invalid_memory_type_error()
 
+    # Use project_id for project-aware memory
+    project_id = get_auto_project_id()
+
     memory_id, is_new = storage.store_memory(
         content=candidate.pattern,
         memory_type=mem_type,
         source=MemorySource.MINED,
         tags=tags or [],
+        project_id=project_id,
     )
 
     storage.promote_to_hot(memory_id)
@@ -1057,6 +1061,9 @@ def seed_from_text(
     chunks = parse_content_into_chunks(content)
     created, skipped, errors = 0, 0, []
 
+    # Use project_id for project-aware memory
+    project_id = get_auto_project_id()
+
     for chunk in chunks:
         if len(chunk) > settings.max_content_length:
             errors.append(f"Chunk too long ({len(chunk)} chars), skipped")
@@ -1066,6 +1073,7 @@ def seed_from_text(
             content=chunk,
             memory_type=mem_type,
             source=MemorySource.MANUAL,
+            project_id=project_id,
         )
         if is_new:
             created += 1
