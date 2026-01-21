@@ -54,7 +54,7 @@ def mock_embedding_engine():
     with (
         patch("memory_mcp.embeddings.get_embedding_engine", MockEmbeddingEngine),
         patch("memory_mcp.embeddings.EmbeddingEngine", MockEmbeddingEngine),
-        patch("memory_mcp.storage.EmbeddingEngine", MockEmbeddingEngine),
+        patch("memory_mcp.storage.core.EmbeddingEngine", MockEmbeddingEngine),
     ):
         yield
 

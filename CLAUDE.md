@@ -75,10 +75,10 @@ flowchart LR
 
 ## Key Files
 
-| File | Purpose |
+| Path | Purpose |
 |------|---------|
-| `src/memory_mcp/server.py` | MCP tools and resources |
-| `src/memory_mcp/storage.py` | SQLite + vector operations |
+| `src/memory_mcp/server/` | MCP server package (tools, resources) |
+| `src/memory_mcp/storage/` | Storage package (SQLite, vectors, hot cache) |
 | `src/memory_mcp/mining.py` | Pattern extraction |
 | `src/memory_mcp/cli.py` | CLI commands for hooks |
 | `src/memory_mcp/config.py` | Settings and bootstrap file detection |
@@ -86,7 +86,13 @@ flowchart LR
 
 ## Key Features by Version
 
-### v0.3.0 (Current)
+### v0.5.0 (Current)
+- **Internal refactoring**: Split large modules into focused packages
+  - `storage/` with 16 mixin modules (CRUD, search, hot cache, trust, etc.)
+  - `server/` with 12 tool modules organized by domain
+  - No API changes - all imports remain backwards compatible
+
+### v0.3.0
 - **Salience Scoring**: Unified metric for promotion/eviction decisions
 - **Multi-Hop Recall**: `expand_relations` parameter for associative memory
 - **Working-Set Resource**: `memory://working-set` for session-aware context
@@ -94,7 +100,7 @@ flowchart LR
 - **Consolidation CLI**: `consolidate` command for memory deduplication
 - **Fine-Grained Trust**: Contextual reasons and audit trail
 
-### Earlier
+### v0.2.x
 - **Bootstrap**: `bootstrap_project` tool and `bootstrap` CLI command
 - **Knowledge Graph**: `link_memories`, `unlink_memories`, `get_related_memories`
 - **Trust Management**: `strengthen_trust`, `weaken_trust`

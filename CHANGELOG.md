@@ -4,6 +4,17 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] - 2026-01-21
+
+### Changed
+
+- **Major internal refactoring** - Split large monolithic modules into focused packages
+  - `storage.py` (4,577 lines) → `storage/` package with 16 mixin modules
+  - `server.py` (2,268 lines) → `server/` package with 12 tool modules
+  - No API changes - all imports remain backwards compatible
+  - Each module now follows single responsibility principle
+  - Easier to navigate, test, and maintain
+
 ## [0.4.5] - 2026-01-21
 
 ### Added

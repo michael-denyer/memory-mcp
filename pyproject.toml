@@ -1,6 +1,6 @@
 [project]
 name = "hot-memory-mcp"
-version = "0.4.5"
+version = "0.5.0"
 description = "Engram-inspired memory MCP server with hot cache and pattern mining"
 readme = "README.md"
 license = "MIT"
@@ -58,6 +58,16 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
+
+[tool.mypy]
+ignore_missing_imports = true
+no_strict_optional = true
+
+# Disable attribute checking for mixin classes - mypy can't understand
+# that mixins will be combined with Storage class at runtime
+[[tool.mypy.overrides]]
+module = "memory_mcp.storage.*"
+disable_error_code = ["attr-defined", "misc"]
 
 [dependency-groups]
 dev = [

@@ -35,6 +35,7 @@ class PromotionSource(str, Enum):
     AUTO_THRESHOLD = "auto_threshold"  # Auto-promoted based on access count
     MINED_APPROVED = "mined_approved"  # Approved from mining candidates
     PREDICTED = "predicted"  # Pre-warmed based on access pattern prediction
+    SESSION_END = "session_end"  # Promoted during session consolidation
 
 
 class RecallMode(str, Enum):
