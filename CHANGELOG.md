@@ -4,6 +4,40 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.5] - 2026-01-21
+
+### Added
+
+- **Enhanced pattern mining** - Expanded from 5 to 16 pattern types for better extraction coverage
+  - New extractors: decisions, architecture, tech stack, explanations, config, dependencies, API endpoints
+  - NER-based entity extraction (person, organization, location) when `transformers` is installed
+  - Auto-enables NER with `pip install hot-memory-mcp[ner]` - no config needed
+
+- **Bootstrap context preservation** - Markdown files now preserve section context in chunks
+  - Chunks include source file and section: `[CLAUDE.md > Testing] Use pytest for tests`
+  - Short fact-like items (`Port: 8080`) are preserved instead of being filtered
+  - Non-markdown files get source file prefix: `[README.txt] ...`
+
+### Fixed
+
+- **Project-aware deduplication** - Same content in different projects now stays separate
+  - Content hash includes project_id to prevent cross-project merging
+  - Semantic dedup search is now project-scoped
+
+- **Recency ranking** - Recall now uses `last_accessed_at` instead of `created_at`
+  - Recently accessed memories rank higher, improving relevance
+
+- **Secret detection in mining** - Config extraction no longer captures env var values
+  - Sensitive patterns (passwords, API keys, tokens) are filtered from auto-approval
+  - Only env var names are stored, never values
+
+- **NER context** - Named entities now include surrounding context for better recall
+  - Format: `...context... [Entity is a organization]` instead of bare entity
+
+- **Mining provenance** - Auto-approved patterns now preserve `source_log_id` for traceability
+
+- **Transaction nesting** - Fixed `clear_vectors` to avoid nested transactions
+
 ## [0.4.4] - 2026-01-21
 
 ### Fixed

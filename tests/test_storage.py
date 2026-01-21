@@ -2162,6 +2162,65 @@ class TestSemanticDeduplication:
         assert mid1 != mid2
         strict_storage.close()
 
+    def test_cross_project_same_content_stays_separate(self, tmp_path):
+        """Same content in different projects should create separate memories.
+
+        This tests the fix for project-aware dedup: previously, identical content
+        across projects would collide on the global content_hash UNIQUE constraint.
+        With project-scoped dedup, the same content can exist in multiple projects.
+        """
+        settings = Settings(
+            db_path=tmp_path / "cross_project.db",
+            project_awareness_enabled=True,
+            semantic_dedup_enabled=True,
+        )
+        storage = Storage(settings)
+
+        content = "This project uses FastAPI for the REST API"
+
+        # Store same content in two different projects
+        mid1, is_new1 = storage.store_memory(
+            content, MemoryType.PROJECT, project_id="github/owner/project-a"
+        )
+        mid2, is_new2 = storage.store_memory(
+            content, MemoryType.PROJECT, project_id="github/owner/project-b"
+        )
+
+        # Both should be new (different projects)
+        assert is_new1 is True
+        assert is_new2 is True
+        assert mid1 != mid2
+
+        # Verify both exist with correct project_ids
+        mem1 = storage.get_memory(mid1)
+        mem2 = storage.get_memory(mid2)
+        assert mem1.project_id == "github/owner/project-a"
+        assert mem2.project_id == "github/owner/project-b"
+
+        storage.close()
+
+    def test_same_project_same_content_merges(self, tmp_path):
+        """Same content in same project should merge (not duplicate)."""
+        settings = Settings(
+            db_path=tmp_path / "same_project.db",
+            project_awareness_enabled=True,
+            semantic_dedup_enabled=True,
+        )
+        storage = Storage(settings)
+
+        content = "This project uses FastAPI for the REST API"
+        project_id = "github/owner/project-a"
+
+        mid1, is_new1 = storage.store_memory(content, MemoryType.PROJECT, project_id=project_id)
+        mid2, is_new2 = storage.store_memory(content, MemoryType.PROJECT, project_id=project_id)
+
+        # Second should merge with first
+        assert is_new1 is True
+        assert is_new2 is False
+        assert mid1 == mid2
+
+        storage.close()
+
 
 # ========== Vector Rebuild Tests ==========
 

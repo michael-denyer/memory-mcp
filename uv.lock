@@ -889,7 +889,7 @@ wheels = [
 
 [[package]]
 name = "hot-memory-mcp"
-version = "0.4.4"
+version = "0.4.5"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -905,6 +905,9 @@ dependencies = [
 [package.optional-dependencies]
 mlx = [
     { name = "mlx-embeddings" },
+]
+ner = [
+    { name = "transformers" },
 ]
 
 [package.dev-dependencies]
@@ -926,8 +929,9 @@ requires-dist = [
     { name = "rich", specifier = ">=13.0,<14" },
     { name = "sentence-transformers", specifier = ">=3.0,<4" },
     { name = "sqlite-vec", specifier = ">=0.1,<1" },
+    { name = "transformers", marker = "extra == 'ner'", specifier = ">=4.0" },
 ]
-provides-extras = ["mlx"]
+provides-extras = ["mlx", "ner"]
 
 [package.metadata.requires-dev]
 dev = [

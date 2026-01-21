@@ -73,6 +73,12 @@ uv tool install hot-memory-mcp[mlx]
 # or: pip install hot-memory-mcp[mlx]
 ```
 
+**Want NER entity extraction?** Install with transformers support:
+```bash
+uv tool install hot-memory-mcp[ner]
+# or both: uv tool install hot-memory-mcp[mlx,ner]
+```
+
 ### Configure
 
 Add to your MCP client config (e.g., `~/.claude.json` for Claude Code):
