@@ -70,6 +70,11 @@ class Settings(BaseSettings):
         default=3, description="Minimum occurrences for auto-approval"
     )
 
+    # NER-based entity extraction (requires optional transformers dependency)
+    ner_confidence_threshold: float = Field(
+        default=0.7, description="Minimum confidence for NER entity extraction (0-1)"
+    )
+
     # Logging
     log_level: str = Field(default="INFO", description="Log level: DEBUG, INFO, WARNING, ERROR")
     log_format: str = Field(

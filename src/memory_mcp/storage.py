@@ -501,23 +501,33 @@ class Storage:
             "dimension": int(info["embedding_dim"]) if "embedding_dim" in info else None,
         }
 
+    def _set_embedding_model_info(
+        self, conn: sqlite3.Connection, model: str, dimension: int
+    ) -> None:
+        """Store embedding model info using existing connection.
+
+        Internal method that accepts an existing connection to avoid
+        nested transactions when called from within another transaction.
+        """
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO metadata (key, value)
+            VALUES ('embedding_model', ?)
+            """,
+            (model,),
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO metadata (key, value)
+            VALUES ('embedding_dim', ?)
+            """,
+            (str(dimension),),
+        )
+
     def set_embedding_model_info(self, model: str, dimension: int) -> None:
         """Store embedding model info for future validation."""
         with self.transaction() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO metadata (key, value)
-                VALUES ('embedding_model', ?)
-                """,
-                (model,),
-            )
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO metadata (key, value)
-                VALUES ('embedding_dim', ?)
-                """,
-                (str(dimension),),
-            )
+            self._set_embedding_model_info(conn, model, dimension)
 
     def validate_embedding_model(self, current_model: str, current_dim: int) -> dict:
         """Check if embedding model has changed since last use.
@@ -577,9 +587,9 @@ class Storage:
                 """
             )
 
-            # Update stored model info
+            # Update stored model info (using internal method to avoid nested transaction)
             model = self.settings.embedding_model
-            self.set_embedding_model_info(model, dim)
+            self._set_embedding_model_info(conn, model, dim)
 
             log.info("Cleared {} vectors, recreated table with dimension {}", count, dim)
 
@@ -723,6 +733,7 @@ class Storage:
         conn: sqlite3.Connection,
         embedding: np.ndarray,
         threshold: float,
+        project_id: str | None = None,
     ) -> tuple[int, float] | None:
         """Find the most similar existing memory above threshold.
 
@@ -730,20 +741,35 @@ class Storage:
             conn: Database connection
             embedding: Embedding of new content
             threshold: Minimum similarity to consider a duplicate
+            project_id: Project ID for project-scoped dedup (None = global)
 
         Returns:
             Tuple of (memory_id, similarity) if found, None otherwise.
         """
-        row = conn.execute(
-            """
-            SELECT m.id, vec_distance_cosine(v.embedding, ?) as distance
-            FROM memory_vectors v
-            JOIN memories m ON m.id = v.rowid
-            ORDER BY distance ASC
-            LIMIT 1
-            """,
-            (embedding.tobytes(),),
-        ).fetchone()
+        # Project-scoped dedup when project awareness is enabled
+        if self.settings.project_awareness_enabled and project_id:
+            row = conn.execute(
+                """
+                SELECT m.id, vec_distance_cosine(v.embedding, ?) as distance
+                FROM memory_vectors v
+                JOIN memories m ON m.id = v.rowid
+                WHERE m.project_id = ?
+                ORDER BY distance ASC
+                LIMIT 1
+                """,
+                (embedding.tobytes(), project_id),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT m.id, vec_distance_cosine(v.embedding, ?) as distance
+                FROM memory_vectors v
+                JOIN memories m ON m.id = v.rowid
+                ORDER BY distance ASC
+                LIMIT 1
+                """,
+                (embedding.tobytes(),),
+            ).fetchone()
 
         if row is None:
             return None
@@ -875,7 +901,12 @@ class Storage:
         self._validate_content(content)
         tags = self._validate_tags(tags)
 
-        hash_val = content_hash(content)
+        # Project-scoped hash when project awareness is enabled
+        # This allows same content to exist in different projects
+        if self.settings.project_awareness_enabled and project_id:
+            hash_val = content_hash(f"{project_id}:{content}")
+        else:
+            hash_val = content_hash(content)
 
         # Trust score based on source type
         trust_scores = {
@@ -897,10 +928,18 @@ class Storage:
             )
 
         with self.transaction() as conn:
-            # Check if memory already exists
-            existing = conn.execute(
-                "SELECT id FROM memories WHERE content_hash = ?", (hash_val,)
-            ).fetchone()
+            # Check if memory already exists (project-scoped when filtering enabled)
+            if self.settings.project_awareness_enabled and project_id:
+                # Project-scoped dedup: same content in different projects = different memories
+                existing = conn.execute(
+                    "SELECT id FROM memories WHERE content_hash = ? AND project_id = ?",
+                    (hash_val, project_id),
+                ).fetchone()
+            else:
+                # Global dedup: same content anywhere = same memory
+                existing = conn.execute(
+                    "SELECT id FROM memories WHERE content_hash = ?", (hash_val,)
+                ).fetchone()
 
             if existing:
                 # Update existing memory - merge tags, increment access
@@ -937,7 +976,7 @@ class Storage:
             # Semantic deduplication: check for very similar existing memories
             if self.settings.semantic_dedup_enabled:
                 similar = self._find_semantic_duplicate(
-                    conn, embedding, self.settings.semantic_dedup_threshold
+                    conn, embedding, self.settings.semantic_dedup_threshold, project_id
                 )
                 if similar:
                     existing_id, similarity = similar
@@ -1442,13 +1481,20 @@ class Storage:
                 access_weight=self.settings.recall_access_weight,
             )
 
-    def _compute_recency_score(self, created_at: datetime) -> float:
+    def _compute_recency_score(
+        self, created_at: datetime, last_accessed_at: datetime | None = None
+    ) -> float:
         """Compute recency score (0-1) with exponential decay.
 
-        Returns 1.0 for just-created items, decaying to 0.5 at half-life.
+        Uses last_accessed_at when available, falling back to created_at.
+        This ensures frequently-used memories maintain high recency scores,
+        even if created long ago.
+
+        Returns 1.0 for just-accessed/created items, decaying to 0.5 at half-life.
         """
         halflife_days = self.settings.recall_recency_halflife_days
-        days_old = (datetime.now() - created_at).total_seconds() / 86400
+        reference_time = last_accessed_at if last_accessed_at else created_at
+        days_old = (datetime.now() - reference_time).total_seconds() / 86400
         return 2 ** (-days_old / halflife_days)
 
     def _compute_trust_decay(
@@ -1507,7 +1553,8 @@ class Storage:
             return {}
 
         # Escape FTS5 special characters and prepare query
-        # FTS5 uses prefix matching with * so we add that for flexibility
+        # Note: We use exact word matching (no * suffix) for precision
+        # FTS5's Porter stemmer already handles word variations
         words = query.split()
         if not words:
             return {}
@@ -1784,7 +1831,7 @@ class Storage:
                     last_accessed_at = (
                         datetime.fromisoformat(last_accessed_str) if last_accessed_str else None
                     )
-                    recency_score = self._compute_recency_score(created_at)
+                    recency_score = self._compute_recency_score(created_at, last_accessed_at)
                     access_score = self._compute_access_score(row["access_count"], max_access)
 
                     # Compute trust with time decay (refreshed by access, per-type rate)
@@ -3738,7 +3785,7 @@ class Storage:
                 - errors: List of error messages
                 - message: Human-readable summary
         """
-        from memory_mcp.text_parsing import parse_content_into_chunks
+        from memory_mcp.text_parsing import parse_content_into_chunks, parse_markdown_with_context
 
         # Track results with explicit types to satisfy mypy
         errors: list[str] = []
@@ -3794,8 +3841,12 @@ class Storage:
 
             files_processed += 1
 
-            # Parse into chunks
-            chunks = parse_content_into_chunks(content)
+            # Parse into chunks (use markdown-aware parser for .md files)
+            source_name = path.name
+            if path.suffix.lower() in (".md", ".markdown"):
+                chunks = parse_markdown_with_context(content, source_name=source_name)
+            else:
+                chunks = parse_content_into_chunks(content, source_name=source_name)
 
             for chunk in chunks:
                 # Skip chunks that are too long

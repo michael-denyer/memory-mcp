@@ -1,22 +1,84 @@
 """Pattern mining from output logs."""
 
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from memory_mcp.embeddings import content_hash
 from memory_mcp.project import get_current_project_id
 from memory_mcp.storage import Storage
 
+# Patterns that indicate potentially sensitive content - never auto-approve
+SENSITIVE_PATTERNS = (
+    # Credential keywords
+    r"password\s*[:=]",
+    r"passwd\s*[:=]",
+    r"secret\s*[:=]",
+    r"token\s*[:=]",
+    r"api[_-]?key\s*[:=]",
+    r"auth[_-]?token\s*[:=]",
+    r"private[_-]?key\s*[:=]",
+    r"encryption[_-]?key\s*[:=]",
+    # Connection strings with credentials
+    r"://\w+:\w+@",  # user:pass@host in URLs
+    r"mongodb\+srv://.*:.*@",
+    r"postgres://.*:.*@",
+    r"mysql://.*:.*@",
+    # AWS/cloud credentials
+    r"AKIA[0-9A-Z]{16}",  # AWS access key
+    r"aws_secret",
+    r"gcp_key",
+    r"azure_key",
+    # Bearer tokens
+    r"bearer\s+[a-zA-Z0-9\-_\.]+",
+    # Base64-encoded secrets (long random strings)
+    r"[a-zA-Z0-9+/]{40,}={0,2}",  # Likely base64 encoded secret
+)
+
+# Compile for efficiency
+_SENSITIVE_REGEX = re.compile("|".join(SENSITIVE_PATTERNS), re.IGNORECASE)
+
+
+def _may_contain_secrets(text: str) -> bool:
+    """Check if text may contain sensitive information.
+
+    Used to prevent auto-approval of patterns that might contain secrets.
+    """
+    return bool(_SENSITIVE_REGEX.search(text))
+
+
+# Global lazy-loaded NER pipeline
+_ner_pipeline: Any = None
+
 
 class PatternType(str, Enum):
     """Types of patterns that can be mined."""
 
+    # Original types
     IMPORT = "import"  # Import statements
     FACT = "fact"  # "This project uses X" statements
     COMMAND = "command"  # Shell commands
     CODE = "code"  # Code snippets
     CODE_BLOCK = "code_block"  # Fenced code blocks from markdown
+
+    # Enhanced regex types
+    DECISION = "decision"  # Architecture/design decisions
+    ARCHITECTURE = "architecture"  # System architecture descriptions
+    TECH_STACK = "tech_stack"  # Technology mentions with context
+    EXPLANATION = "explanation"  # Rationale and reasoning
+    CONFIG = "config"  # Configuration facts
+
+    # NER entity types (from DistilBERT-NER)
+    ENTITY_PERSON = "entity_person"  # Person names
+    ENTITY_ORG = "entity_org"  # Organization names
+    ENTITY_LOCATION = "entity_location"  # Location names
+    ENTITY_MISC = "entity_misc"  # Miscellaneous entities
+
+    # Additional high-value pattern types
+    DEPENDENCY = "dependency"  # Package dependencies with versions
+    API_ENDPOINT = "api_endpoint"  # REST/HTTP endpoints
 
 
 # Common CLI tool prefixes for command extraction
@@ -35,6 +97,28 @@ COMMAND_PREFIXES = (
     "go",
 )
 
+# Env var names containing these substrings are considered sensitive and never extracted
+SENSITIVE_ENV_NAMES = (
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "key",
+    "api_key",
+    "apikey",
+    "auth",
+    "credential",
+    "private",
+    "encryption",
+    "signing",
+    "database_url",
+    "db_url",
+    "connection_string",
+    "dsn",
+    "uri",
+)
+
 
 @dataclass
 class ExtractedPattern:
@@ -43,6 +127,132 @@ class ExtractedPattern:
     pattern: str
     pattern_type: PatternType
     confidence: float = 0.5  # Extraction confidence (0-1)
+
+
+# ========== NER Pipeline (Lazy-Loaded) ==========
+
+
+def _get_ner_pipeline() -> Any:
+    """Lazy-load NER pipeline. Auto-downloads model on first use (~250MB).
+
+    Returns the pipeline if transformers is installed, None otherwise.
+    """
+    global _ner_pipeline
+    if _ner_pipeline is None:
+        try:
+            from transformers import pipeline
+
+            # Suppress verbose transformers logging
+            logging.getLogger("transformers").setLevel(logging.ERROR)
+
+            # Model auto-downloads on first use
+            _ner_pipeline = pipeline(
+                "ner",
+                model="dslim/bert-base-NER",
+                aggregation_strategy="average",  # Combine subword tokens for multiword entities
+            )
+        except ImportError:
+            _ner_pipeline = False  # Mark as unavailable
+    return _ner_pipeline if _ner_pipeline else None
+
+
+def _split_into_chunks(text: str, max_length: int = 512) -> list[str]:
+    """Split text into chunks for NER processing.
+
+    BERT models have a max token limit (~512). We split on sentence
+    boundaries to avoid cutting entities.
+    """
+    # Simple sentence splitting (could be improved with nltk)
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    chunks = []
+    current_chunk = ""
+
+    for sentence in sentences:
+        if len(current_chunk) + len(sentence) < max_length:
+            current_chunk += " " + sentence if current_chunk else sentence
+        else:
+            if current_chunk:
+                chunks.append(current_chunk)
+            current_chunk = sentence[:max_length]  # Truncate long sentences
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks if chunks else [text[:max_length]]
+
+
+def extract_entities_ner(text: str, min_confidence: float = 0.7) -> list[ExtractedPattern]:
+    """Extract named entities using DistilBERT-NER if available.
+
+    Extracts Person, Organization, Location, and Miscellaneous entities
+    with confidence scores from the NER model. Includes surrounding context
+    to make entities more useful for recall.
+
+    Falls back to empty list if transformers is not installed.
+    """
+    ner = _get_ner_pipeline()
+    if ner is None:
+        return []  # NER not available, will fall back to regex
+
+    patterns = []
+    seen_entities: set[str] = set()
+
+    # Map NER labels to our pattern types and human-readable descriptions
+    label_map = {
+        "PER": (PatternType.ENTITY_PERSON, "person"),
+        "ORG": (PatternType.ENTITY_ORG, "organization"),
+        "LOC": (PatternType.ENTITY_LOCATION, "location"),
+        "MISC": (PatternType.ENTITY_MISC, "entity"),
+    }
+
+    # Process in chunks to handle long text
+    for chunk in _split_into_chunks(text, max_length=512):
+        try:
+            entities = ner(chunk)
+        except Exception:
+            continue  # Skip chunks that fail
+
+        for entity in entities:
+            word = entity.get("word", "").strip()
+            score = entity.get("score", 0)
+            label = entity.get("entity_group", "")
+            start = entity.get("start", 0)
+            end = entity.get("end", len(word))
+
+            # Filter by confidence and minimum length
+            if score < min_confidence or len(word) < 2:
+                continue
+
+            # Skip common false positives
+            if word.lower() in {"the", "a", "an", "this", "that", "it", "i", "we", "you"}:
+                continue
+
+            # Deduplicate (case-insensitive) - keep first occurrence with best context
+            word_lower = word.lower()
+            if word_lower in seen_entities:
+                continue
+            seen_entities.add(word_lower)
+
+            pattern_type, type_label = label_map.get(label, (PatternType.ENTITY_MISC, "entity"))
+
+            # Extract surrounding context (sentence or ~40 chars each side)
+            # This makes the entity more useful for recall
+            context_start = max(0, start - 40)
+            context_end = min(len(chunk), end + 40)
+            context = chunk[context_start:context_end].strip()
+            # Clean up - normalize whitespace and trim to sentence boundaries if possible
+            context = " ".join(context.split())
+
+            # If context is too short, just use entity with type annotation
+            if len(context) < len(word) + 10:
+                pattern_text = f"{word} ({type_label})"
+            else:
+                pattern_text = f"...{context}... [{word} is a {type_label}]"
+
+            # Convert numpy float to Python float for SQLite compatibility
+            patterns.append(ExtractedPattern(pattern_text, pattern_type, confidence=float(score)))
+
+    return patterns
 
 
 # ========== Pattern Extractors ==========
@@ -182,21 +392,403 @@ def extract_code_blocks(text: str) -> list[ExtractedPattern]:
     return patterns
 
 
+# ========== Enhanced Regex Extractors ==========
+
+# Known technologies for tech stack extraction (case-insensitive)
+KNOWN_TECH = {
+    "frameworks": [
+        "fastapi",
+        "django",
+        "flask",
+        "react",
+        "vue",
+        "angular",
+        "express",
+        "nextjs",
+        "nuxt",
+        "svelte",
+        "rails",
+        "spring",
+        "laravel",
+        "gin",
+        "echo",
+        "fiber",
+        "actix",
+        "axum",
+        "rocket",
+    ],
+    "databases": [
+        "postgresql",
+        "postgres",
+        "mysql",
+        "mongodb",
+        "redis",
+        "sqlite",
+        "dynamodb",
+        "cassandra",
+        "elasticsearch",
+        "neo4j",
+        "supabase",
+        "firestore",
+        "cockroachdb",
+        "mariadb",
+    ],
+    "tools": [
+        "docker",
+        "kubernetes",
+        "k8s",
+        "terraform",
+        "ansible",
+        "jenkins",
+        "github actions",
+        "gitlab ci",
+        "circleci",
+        "aws",
+        "gcp",
+        "azure",
+        "vercel",
+        "netlify",
+        "heroku",
+        "cloudflare",
+    ],
+    "languages": [
+        "python",
+        "javascript",
+        "typescript",
+        "rust",
+        "go",
+        "java",
+        "kotlin",
+        "swift",
+        "ruby",
+        "php",
+        "c#",
+        "c++",
+        "scala",
+        "elixir",
+    ],
+}
+
+# Flatten for easy lookup
+ALL_TECH: set[str] = set()
+for category in KNOWN_TECH.values():
+    ALL_TECH.update(t.lower() for t in category)
+
+
+def extract_decisions(text: str) -> list[ExtractedPattern]:
+    """Extract architecture and design decision statements."""
+    patterns = []
+
+    decision_patterns = [
+        # Active decisions
+        r"(?:decided|chose|went with|settled on|opted for)\s+(.{10,150})",
+        # Comparisons
+        r"(?:instead of|rather than)\s+(\w+).{0,30}?(?:use|chose|using)\s+(.{5,100})",
+        # Trade-offs
+        r"(?:trade-?off|compromise)[:.]?\s*(.{10,200})",
+        # Deliberate choices
+        r"(?:we|I)\s+(?:will|should|need to)\s+(?:use|implement|build)\s+(.{10,100})",
+    ]
+
+    for pattern in decision_patterns:
+        try:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                # Combine all groups (handles multi-group patterns like "instead of X, use Y")
+                groups = [g for g in match.groups() if g]
+                if groups:
+                    content = " → ".join(groups).strip()
+                    if 10 < len(content) < 200:
+                        patterns.append(
+                            ExtractedPattern(content, PatternType.DECISION, confidence=0.8)
+                        )
+        except re.error:
+            continue
+
+    return patterns
+
+
+def extract_architecture(text: str) -> list[ExtractedPattern]:
+    """Extract system architecture descriptions."""
+    patterns = []
+
+    arch_patterns = [
+        # Component responsibilities
+        r"(?:the\s+)?(\w+(?:\s+\w+)?)\s+(?:uses|runs on|is built with|is powered by)\s+(.{5,100})",
+        r"(?:the\s+)?(\w+(?:\s+\w+)?)\s+(?:handles|manages|is responsible for)\s+(.{5,100})",
+        # Communication patterns
+        r"(\w+)\s+(?:communicates|connects|talks)\s+(?:with|to|via)\s+(\w+(?:\s+\w+)?)",
+        # Architecture style mentions
+        r"(?:uses?|following|implementing)\s+(?:a\s+)?(\w+)\s+(?:architecture|pattern|approach)",
+        # Data flow
+        r"data\s+(?:flows?|is sent|goes)\s+(?:from|to|through)\s+(.{5,100})",
+    ]
+
+    for pattern in arch_patterns:
+        try:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                # Combine all groups into a meaningful statement
+                groups = [g for g in match.groups() if g]
+                if groups:
+                    content = " ".join(groups).strip()
+                    if 10 < len(content) < 200:
+                        patterns.append(
+                            ExtractedPattern(content, PatternType.ARCHITECTURE, confidence=0.75)
+                        )
+        except re.error:
+            continue
+
+    return patterns
+
+
+def extract_tech_stack(text: str) -> list[ExtractedPattern]:
+    """Extract technology mentions with context.
+
+    Only extracts tech when there's surrounding context to avoid
+    over-matching casual mentions.
+    """
+    patterns = []
+    seen: set[str] = set()
+
+    # Build regex pattern from known tech
+    tech_pattern = "|".join(re.escape(t) for t in sorted(ALL_TECH, key=len, reverse=True))
+
+    # Context patterns that indicate meaningful tech usage
+    context_patterns = [
+        rf"(?:uses?|using|built with|powered by|runs? on|based on|written in)\s+({tech_pattern})",
+        rf"(?:chose|selected|picked|went with|decided on)\s+({tech_pattern})",  # Decision verbs
+        rf"({tech_pattern})\s+(?:handles?|manages?|provides?|supports?|server|client|app)",
+        rf"({tech_pattern})\s*(?:v?\d+\.[\d.]+|\d+)",  # With version (optional space)
+        rf"(?:the|our|this)\s+({tech_pattern})\s+(?:app|api|server|service|project)",
+    ]
+
+    for pattern in context_patterns:
+        try:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                tech = match.group(1).lower()
+                if tech not in seen:
+                    seen.add(tech)
+                    # Get surrounding context (up to 50 chars each side)
+                    start = max(0, match.start() - 30)
+                    end = min(len(text), match.end() + 30)
+                    context = text[start:end].strip()
+                    # Clean up context
+                    context = " ".join(context.split())
+                    if len(context) > 10:
+                        patterns.append(
+                            ExtractedPattern(context, PatternType.TECH_STACK, confidence=0.85)
+                        )
+        except re.error:
+            continue
+
+    return patterns
+
+
+def extract_explanations(text: str) -> list[ExtractedPattern]:
+    """Extract rationale and reasoning statements."""
+    patterns = []
+
+    explanation_patterns = [
+        # Because clauses
+        r"(.{10,100}?)\s+because\s+(.{10,150})",
+        # Purpose clauses
+        r"(.{10,100})\s+(?:in order to|so that|which allows|which enables)\s+(.{10,150})",
+        # Explicit reasons
+        r"(?:the reason (?:is|was)|this is why|that's why)[:\s]+(.{10,200})",
+        # Necessity
+        r"(?:this|it|we)\s+(?:need|require|must)\s+(.{10,150})\s+(?:to|for|because)",
+    ]
+
+    for pattern in explanation_patterns:
+        try:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                groups = [g for g in match.groups() if g]
+                if groups:
+                    content = " ... ".join(groups).strip()
+                    if 20 < len(content) < 300:
+                        patterns.append(
+                            ExtractedPattern(content, PatternType.EXPLANATION, confidence=0.6)
+                        )
+        except re.error:
+            continue
+
+    return patterns
+
+
+def extract_config(text: str) -> list[ExtractedPattern]:
+    """Extract configuration facts and settings.
+
+    SECURITY: Env var values are NOT extracted to avoid storing secrets.
+    Only env var names and non-sensitive config facts are captured.
+    """
+    patterns = []
+
+    config_patterns = [
+        # Configuration statements
+        r"(?:configured|set up|defaults?)\s+to\s+(.{5,100})",
+        # Dependencies and requirements
+        r"(?:requires|depends on|needs)\s+(.{5,100})",
+        # Specific settings (safe numeric values only)
+        r"(?:port|timeout|limit|max|min|size|threshold)\s+(?:is|=|:)\s*(\d+\w*)",
+        # File paths (no env var values)
+        r"(?:stored|saved|located|found)\s+(?:in|at)\s+([/~][\w./\-]+)",
+    ]
+
+    for pattern in config_patterns:
+        try:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                groups = [g for g in match.groups() if g]
+                if groups:
+                    content = " ".join(groups).strip()
+                    if 3 < len(content) < 150:
+                        patterns.append(
+                            ExtractedPattern(content, PatternType.CONFIG, confidence=0.65)
+                        )
+        except re.error:
+            continue
+
+    # Extract env var NAMES only (never values) for documentation purposes
+    # Pattern: set/export VAR_NAME=... -> only extract "VAR_NAME is configured"
+    env_var_pattern = r"(?:set|export)\s+([A-Z_][A-Z0-9_]+)\s*="
+    for match in re.finditer(env_var_pattern, text):
+        var_name = match.group(1)
+        # Skip if it looks sensitive
+        if any(sensitive in var_name.lower() for sensitive in SENSITIVE_ENV_NAMES):
+            continue
+        # Store only the fact that this env var exists, not its value
+        patterns.append(
+            ExtractedPattern(
+                f"{var_name} environment variable is configured",
+                PatternType.CONFIG,
+                confidence=0.5,  # Lower confidence since we don't have the value
+            )
+        )
+
+    return patterns
+
+
+def extract_dependencies(text: str) -> list[ExtractedPattern]:
+    """Extract package dependencies with version constraints.
+
+    Captures patterns like:
+    - requires python>=3.10
+    - uses sqlalchemy==2.0.0
+    - dependency: fastapi~=0.100
+    """
+    patterns = []
+    seen: set[str] = set()
+
+    # Package with optional extras and version constraint
+    pkg_pattern = r"[\w\-]+(?:\[[\w,]+\])?\s*[~=<>!]+\s*[\d.]+"
+    dependency_patterns = [
+        # Python-style: requires package>=version
+        rf"(?:requires?|needs?|depends on|dependency:?)\s*({pkg_pattern})",
+        # requirements.txt style: package==version
+        rf"^({pkg_pattern})",
+        # pip install style
+        rf"pip install[^\n]*?({pkg_pattern})",
+        # pyproject.toml style: "package>=version"
+        rf'"({pkg_pattern})"',
+    ]
+
+    for pattern in dependency_patterns:
+        try:
+            for match in re.finditer(pattern, text, re.MULTILINE | re.IGNORECASE):
+                groups = [g for g in match.groups() if g]
+                if groups:
+                    content = "".join(groups).strip()
+                    # Normalize spacing
+                    content = re.sub(r"\s+", "", content)
+                    if content not in seen and len(content) > 5:
+                        seen.add(content)
+                        patterns.append(
+                            ExtractedPattern(content, PatternType.DEPENDENCY, confidence=0.85)
+                        )
+        except re.error:
+            continue
+
+    return patterns
+
+
+def extract_api_endpoints(text: str) -> list[ExtractedPattern]:
+    """Extract REST/HTTP API endpoints.
+
+    Captures patterns like:
+    - GET /users/{id}
+    - @router.post("/data")
+    - app.get("/api/v1/items")
+    """
+    patterns = []
+    seen: set[str] = set()
+
+    endpoint_patterns = [
+        # HTTP method + path: GET /users, POST /api/data
+        r"((?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+['\"]?(/[\w\-{}/:.?&=]+)['\"]?)",
+        # FastAPI/Flask decorators: @app.get("/path"), @router.post("/path")
+        r"@[\w.]+\.(get|post|put|delete|patch)\s*\(\s*['\"]([^'\"]+)['\"]",
+        # Express.js style: app.get('/path', ...)
+        r"app\.(get|post|put|delete|patch)\s*\(\s*['\"]([^'\"]+)['\"]",
+        # OpenAPI/Swagger paths
+        r"['\"](/(?:api/)?v\d+/[\w\-{}/]+)['\"]:\s*\{",
+    ]
+
+    for pattern in endpoint_patterns:
+        try:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                groups = [g for g in match.groups() if g]
+                if not groups:
+                    continue
+
+                # Combine method + path or just path
+                if len(groups) >= 2:
+                    content = f"{groups[0].upper()} {groups[1]}"
+                else:
+                    content = groups[0]
+
+                if content not in seen and len(content) > 3:
+                    seen.add(content)
+                    patterns.append(
+                        ExtractedPattern(content, PatternType.API_ENDPOINT, confidence=0.9)
+                    )
+        except re.error:
+            continue
+
+    return patterns
+
+
 # ========== Main Mining Function ==========
 
 
 PATTERN_EXTRACTORS = [
+    # Original extractors
     extract_imports,
     extract_facts,
     extract_commands,
     extract_code_patterns,
     extract_code_blocks,
+    # Enhanced regex extractors
+    extract_decisions,
+    extract_architecture,
+    extract_tech_stack,
+    extract_explanations,
+    extract_config,
+    # High-value extractors
+    extract_dependencies,
+    extract_api_endpoints,
 ]
 
 
-def extract_patterns(text: str) -> list[ExtractedPattern]:
-    """Extract all patterns from text, deduplicated by pattern content."""
+def extract_patterns(text: str, ner_confidence: float = 0.7) -> list[ExtractedPattern]:
+    """Extract all patterns from text, deduplicated by pattern content.
+
+    Args:
+        text: Text to extract patterns from.
+        ner_confidence: Minimum confidence for NER entity extraction.
+    """
+    # Run all regex extractors
     all_patterns = [pattern for extractor in PATTERN_EXTRACTORS for pattern in extractor(text)]
+
+    # Run NER extractor with configurable threshold
+    all_patterns.extend(extract_entities_ner(text, min_confidence=ner_confidence))
 
     # Deduplicate while preserving order (first occurrence wins)
     seen: dict[str, ExtractedPattern] = {}
@@ -222,7 +814,7 @@ def run_mining(storage: Storage, hours: int = 24) -> dict:
     auto_approved = 0
 
     for log_id, content, _ in outputs:
-        patterns = extract_patterns(content)
+        patterns = extract_patterns(content, ner_confidence=settings.ner_confidence_threshold)
         total_patterns += len(patterns)
 
         for pattern in patterns:
@@ -253,6 +845,10 @@ def run_mining(storage: Storage, hours: int = 24) -> dict:
                 candidate.confidence >= settings.mining_auto_approve_confidence
                 and candidate.occurrence_count >= settings.mining_auto_approve_occurrences
             ):
+                # SECURITY: Skip patterns that might contain sensitive data
+                if _may_contain_secrets(candidate.pattern):
+                    continue
+
                 # Auto-approve: store as memory and promote to hot cache
                 mem_type = MemoryType.PATTERN
                 if candidate.pattern_type == "fact":
@@ -271,6 +867,7 @@ def run_mining(storage: Storage, hours: int = 24) -> dict:
                     source=MemorySource.MINED,
                     tags=["auto-approved"],
                     project_id=project_id,
+                    source_log_id=candidate.source_log_id,  # Preserve provenance
                 )
                 storage.promote_to_hot(memory_id)
                 storage.delete_mined_pattern(candidate.id)
