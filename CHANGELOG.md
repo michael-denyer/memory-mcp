@@ -4,6 +4,29 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.3] - 2026-01-22
+
+### Added
+
+- **ML-based category classification** - Uses embedding similarity to category prototypes instead of regex
+  - Categories: antipattern, landmine, decision, convention, preference, lesson, constraint, architecture, context, bug, todo
+  - Hybrid approach: ML first, falls back to regex for explicit patterns
+  - Configurable via `ML_CLASSIFICATION_ENABLED` (default: true) and `ML_CLASSIFICATION_THRESHOLD` (default: 0.40)
+
+- **Category-aware hot cache thresholds** - High-value categories promoted faster
+  - `antipattern` and `landmine` categories get 0.3 salience threshold (vs 0.5 default)
+  - Temporal-scope-aware demotion: durable categories (2x), stable (1x), transient (0.5x)
+
+- **Feedback nudge in hot cache** - Hot cache resource now includes memory IDs and a hint to call `mark_memory_used(memory_id)` when a memory was helpful
+
+- **Web dashboard fixes** - Fixed hot cache stats display (`current_count` vs `count`) and pinned status
+
+### Changed
+
+- **NER now standard dependency** - `transformers` moved from optional `[ner]` to core dependencies
+  - NER entity extraction enabled by default during pattern mining
+  - Can be disabled via `NER_ENABLED=false`
+
 ## [0.5.1] - 2026-01-21
 
 ### Fixed

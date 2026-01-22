@@ -1,7 +1,7 @@
 <!-- Hot cache list partial - refreshable via HTMX -->
 {% if memories %}
     {% for memory in memories %}
-        {% set is_pinned = memory.id in pinned_ids %}
+        {% set is_pinned = memory.is_pinned %}
         {% include "partials/hot_item.html" %}
     {% endfor %}
 {% else %}

@@ -12,7 +12,7 @@ from memory_mcp.logging import get_logger
 log = get_logger("migrations")
 
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 SCHEMA = """
 -- Schema version tracking
@@ -461,6 +461,22 @@ def migrate_v12_to_v13(conn: sqlite3.Connection) -> None:
     log.info("Added project_id to output_log for project-scoped mining")
 
 
+def migrate_v13_to_v14(conn: sqlite3.Connection) -> None:
+    """Add category column for memory subcategorization.
+
+    Allows subcategories within memory types, e.g.:
+    - project + category="decision" for design decisions
+    - project + category="architecture" for architecture notes
+    - pattern + category="import" for import patterns
+    """
+    add_column_if_missing(conn, "memories", "category", "TEXT")
+
+    # Create index for category-based filtering
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category)")
+
+    log.info("Added category column for memory subcategorization")
+
+
 # ========== Migration Runner ==========
 
 
@@ -490,6 +506,8 @@ def run_migrations(conn: sqlite3.Connection, from_version: int, settings: Settin
         migrate_v11_to_v12(conn)
     if from_version < 13:
         migrate_v12_to_v13(conn)
+    if from_version < 14:
+        migrate_v13_to_v14(conn)
 
 
 def check_schema_version(conn: sqlite3.Connection) -> None:

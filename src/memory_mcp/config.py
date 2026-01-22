@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     auto_demote: bool = Field(
         default=True, description="Auto-demote stale hot memories during maintenance"
     )
+    auto_bootstrap: bool = Field(
+        default=False,
+        description="Auto-bootstrap from markdown files when hot cache is empty",
+    )
     hot_cache_display_max_chars: int = Field(
         default=150,
         description="Max chars per item in hot cache resource (truncates for context efficiency)",
@@ -71,6 +75,9 @@ class Settings(BaseSettings):
     )
 
     # NER-based entity extraction (requires optional transformers dependency)
+    ner_enabled: bool = Field(
+        default=True, description="Enable NER entity extraction during pattern mining"
+    )
     ner_confidence_threshold: float = Field(
         default=0.7, description="Minimum confidence for NER entity extraction (0-1)"
     )
@@ -220,6 +227,16 @@ class Settings(BaseSettings):
     )
     importance_entity_weight: float = Field(
         default=0.3, description="Weight for entity density in importance score"
+    )
+
+    # ML-based category classification
+    ml_classification_enabled: bool = Field(
+        default=True,
+        description="Use ML (embedding similarity) for category inference instead of regex",
+    )
+    ml_classification_threshold: float = Field(
+        default=0.40,
+        description="Minimum similarity to category prototype for ML classification",
     )
 
     # Retrieval quality tracking (RAG-inspired)

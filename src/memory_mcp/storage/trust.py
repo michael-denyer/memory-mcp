@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from memory_mcp.logging import get_logger
 from memory_mcp.models import (
@@ -13,9 +12,6 @@ from memory_mcp.models import (
     TrustEvent,
     TrustReason,
 )
-
-if TYPE_CHECKING:
-    pass
 
 log = get_logger("storage.trust")
 
@@ -215,8 +211,11 @@ class TrustMixin:
         Auto-promotes if:
         - auto_promote is enabled in settings
         - memory is not already hot
-        - salience_score >= salience_promotion_threshold (Engram-inspired)
+        - salience_score >= threshold (category-aware: lower for antipattern/landmine)
         - OR access_count >= promotion_threshold (legacy fallback)
+
+        High-value categories (antipattern, landmine) use lower thresholds
+        so critical warnings surface early in plans.
 
         Returns True if memory was promoted.
         """
@@ -225,7 +224,8 @@ class TrustMixin:
 
         with self._connection() as conn:
             row = conn.execute(
-                """SELECT is_hot, access_count, trust_score, importance_score, last_accessed_at
+                """SELECT is_hot, access_count, trust_score, importance_score,
+                          last_accessed_at, category
                    FROM memories WHERE id = ?""",
                 (memory_id,),
             ).fetchone()
@@ -238,12 +238,21 @@ class TrustMixin:
             last_accessed_dt = (
                 datetime.fromisoformat(row["last_accessed_at"]) if row["last_accessed_at"] else None
             )
+            category = row["category"]
 
             salience = self._compute_salience_score(
                 importance_score, trust_score, row["access_count"], last_accessed_dt
             )
 
-            meets_salience_threshold = salience >= self.settings.salience_promotion_threshold
+            # Category-aware threshold: high-value categories (antipattern, landmine)
+            # have lower thresholds to promote more eagerly
+            from memory_mcp.helpers import get_promotion_salience_threshold
+
+            effective_threshold = get_promotion_salience_threshold(
+                category, self.settings.salience_promotion_threshold
+            )
+
+            meets_salience_threshold = salience >= effective_threshold
             meets_access_threshold = row["access_count"] >= self.settings.promotion_threshold
 
             if not (meets_salience_threshold or meets_access_threshold):
@@ -252,9 +261,10 @@ class TrustMixin:
             promoted = self.promote_to_hot(memory_id, PromotionSource.AUTO_THRESHOLD)
             if promoted:
                 log.info(
-                    "Auto-promoted memory id={} (salience={:.3f}, access_count={})",
+                    "Auto-promoted memory id={} (salience={:.3f}, threshold={:.3f}, category={})",
                     memory_id,
                     salience,
-                    row["access_count"],
+                    effective_threshold,
+                    category,
                 )
             return promoted

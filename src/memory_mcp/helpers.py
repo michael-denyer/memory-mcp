@@ -226,6 +226,240 @@ def build_ranking_factors(
     return f"{prefix} | {base}" if prefix else base
 
 
+# ========== Category Inference ==========
+
+# Pattern definitions for auto-detecting memory categories
+# Focus on HIGH-VALUE categories that capture non-discoverable context
+# Excludes: import, command, config, api (these are already in the codebase)
+#
+# Temporal scope labels:
+#   [durable]    - Long-lived knowledge, rarely changes (architecture, conventions)
+#   [stable]     - Stable but may evolve over time (decisions, preferences)
+#   [transient]  - Short-lived, session or task-specific (context, todo, bug)
+_CATEGORY_PATTERNS: dict[str, list[str]] = {
+    "antipattern": [
+        # [durable] Negative guidance - what NOT to do (surface early in plans)
+        r"\bdon't\s+(use|do|try|call|create|add|put)\b",
+        r"\bnever\s+(use|do|try|call|create|add|put)\b",
+        r"\bavoid\s+(using|doing|calling)\b",
+        r"\b(bad|wrong|incorrect)\s+(way|approach|pattern)\b",
+        r"\b(anti-?pattern|code smell)\b",
+        r"\bdon't\b.*\binstead\b",
+        r"\b(deprecated|obsolete|legacy)\b",
+        r"\bshould\s+(not|never)\b",
+    ],
+    "landmine": [
+        # [durable] Critical warnings about things that can break silently
+        r"\b(warning|careful|watch out|beware|danger)\b",
+        r"\bdon't\s+(forget|miss|skip|ignore)\b",
+        r"\b(gotcha|pitfall|trap|landmine|caveat)\b",
+        r"\b(easy to|easily)\s+(miss|forget|overlook|break)\b",
+        r"\b(silently|quietly)\s+(fail|break|ignore)\b",
+        r"\b(subtle|hidden|tricky)\s+(bug|issue|problem)\b",
+    ],
+    "decision": [
+        # [stable] Why we chose X over Y - rationale persists even if choice changes
+        r"\b(decided|chose|chosen|picked|selected|opted)\b",
+        r"\b(decision|choice):\s",
+        r"\b(because|reason|rationale|why)\b.*\b(chose|use|picked|decided)\b",
+        r"\b(over|instead of|rather than)\b",
+        r"\bwe (went with|will use|are using)\b",
+        r"\btrade-?off",
+    ],
+    "convention": [
+        # [durable] Project rules, standards, and workflow patterns
+        r"\b(convention|standard|rule|guideline)\b",
+        r"\b(always|never)\s+(use|do|name|put|run)\b",
+        r"\b(naming|coding|style)\s+(convention|pattern|standard)\b",
+        r"\bwe (always|never)\b",
+        r"\bthe (rule|norm|standard|process|workflow) is\b",
+        r"\b(consistent|consistency)\b",
+        r"\b(first|then|after|before)\s+(you|we|i)\s+(should|need|must)\b",
+    ],
+    "preference": [
+        # [stable] User/team preferences and recommendations
+        r"\b(prefer|like|want|favor)\s+(to|using|that)\b",
+        r"\b(recommend|suggest|advise|propose)\b",
+        r"\bshould (use|consider|try|avoid)\b",
+        r"\bbest practice\b",
+        r"\b(better|worse) (to|than)\b",
+        r"\b(ideal|optimal)ly?\b",
+        r"\bmy (style|approach|preference)\b",
+    ],
+    "lesson": [
+        # [stable] Learnings and discoveries - knowledge that persists
+        r"\b(learned|realized|discovered|found out)\b",
+        r"\b(turns out|it appears|apparently)\b",
+        r"\b(insight|takeaway|lesson)\b",
+        r"\b(didn't know|now know|now understand)\b",
+        r"\bin hindsight\b",
+    ],
+    "constraint": [
+        # [stable] Limitations and requirements - may change with versions/updates
+        r"\b(must|cannot|can't|won't|unable)\b",
+        r"\b(limitation|restriction|requirement)\b",
+        r"\b(blocked by|depends on|requires)\b",
+        r"\b(incompatible|unsupported)\b",
+        r"\b(only works|doesn't work)\b",
+        r"\b(mandatory|required|necessary)\b",
+    ],
+    "architecture": [
+        # [durable] System design and structure - core knowledge
+        r"\b(architecture|design|pattern|structure)\b",
+        r"\b(component|module|layer|service)\b.*\b(responsible|handles|manages)\b",
+        r"\bdata flow\b",
+        r"\b(API|endpoint|route)s?\b.*\b(design|structure)\b",
+        r"\b(schema|model)s?\b",
+    ],
+    "context": [
+        # [transient] Background for current task/session
+        r"\b(background|context|history)\b",
+        r"\b(for reference|fyi|note that)\b",
+        r"\b(previously|earlier|before this)\b",
+        r"\b(the situation|the state|currently)\b",
+        r"\b(at the time|back when)\b",
+        r"\b(because|since|therefore|thus|hence)\b",
+        r"\bthe reason\b",
+    ],
+    "bug": [
+        # [transient] Issues and workarounds - resolved once fixed
+        r"\b(bug|issue|error|problem|fix|fixed)\b",
+        r"\b(workaround|hack)\b",
+        r"\b(broke|broken|fails?|failed)\b",
+    ],
+    "todo": [
+        # [transient] Future work - completed or abandoned
+        r"\b(TODO|FIXME|HACK|XXX)\b",
+        r"\bneed to\b",
+        r"\bshould (add|fix|update|implement)\b",
+    ],
+}
+
+# Map categories to temporal scope for retention/decay decisions
+CATEGORY_TEMPORAL_SCOPE: dict[str, str] = {
+    "antipattern": "durable",  # "Don't do X" persists - surface early in plans
+    "landmine": "durable",  # Critical warnings persist
+    "decision": "stable",  # Rationale persists even if choice changes
+    "convention": "durable",  # Project rules rarely change
+    "preference": "stable",  # May evolve but core preferences persist
+    "lesson": "stable",  # Knowledge that persists
+    "constraint": "stable",  # May change with versions
+    "architecture": "durable",  # Core system knowledge
+    "context": "transient",  # Session/task-specific
+    "bug": "transient",  # Resolved once fixed
+    "todo": "transient",  # Completed or abandoned
+}
+
+
+def get_temporal_scope(category: str | None) -> str:
+    """Get temporal scope for a category.
+
+    Args:
+        category: Category string or None
+
+    Returns:
+        'durable', 'stable', or 'transient' (default for unknown/None)
+    """
+    if category is None:
+        return "stable"  # Default for uncategorized
+    return CATEGORY_TEMPORAL_SCOPE.get(category, "stable")
+
+
+# High-value categories that should be promoted more eagerly
+# These contain critical warnings or "don't do X" guidance
+_HIGH_VALUE_CATEGORIES = {"antipattern", "landmine"}
+
+
+def get_promotion_salience_threshold(category: str | None, default_threshold: float) -> float:
+    """Get salience threshold for auto-promotion based on category.
+
+    High-value categories (antipattern, landmine) use a lower threshold
+    so they get promoted to hot cache quickly and surface early in plans.
+
+    Args:
+        category: Memory category or None
+        default_threshold: Default salience threshold from settings
+
+    Returns:
+        Salience threshold to use for promotion decision
+    """
+    if category in _HIGH_VALUE_CATEGORIES:
+        # Lower threshold for high-value warnings (30% vs default 50%)
+        return min(0.3, default_threshold * 0.6)
+    return default_threshold
+
+
+def get_demotion_multiplier(category: str | None) -> float:
+    """Get demotion time multiplier based on category's temporal scope.
+
+    Durable memories resist demotion longer, transient memories demote faster.
+
+    Args:
+        category: Memory category or None
+
+    Returns:
+        Multiplier for demotion_days setting (e.g., 2.0 = twice as long)
+    """
+    scope = get_temporal_scope(category)
+    multipliers = {
+        "durable": 2.0,  # 14 days -> 28 days
+        "stable": 1.0,  # 14 days -> 14 days
+        "transient": 0.5,  # 14 days -> 7 days
+    }
+    return multipliers.get(scope, 1.0)
+
+
+def infer_category(content: str) -> str | None:
+    """Infer category from content using pattern matching.
+
+    Scans content for language patterns indicating category type.
+    Returns the category with most matches, or None if no strong signal.
+
+    Args:
+        content: Memory content to analyze
+
+    Returns:
+        Category string (e.g., 'decision', 'architecture') or None
+    """
+    scores: dict[str, int] = {}
+
+    for category, patterns in _CATEGORY_PATTERNS.items():
+        score = 0
+        for pattern in patterns:
+            if re.search(pattern, content, re.IGNORECASE | re.MULTILINE):
+                score += 1
+        if score > 0:
+            scores[category] = score
+
+    if not scores:
+        return None
+
+    # Return category with highest score, with tie-breaker for more specific categories
+    # Priority: negative guidance first (surface early), then critical, then general
+    priority = [
+        "antipattern",  # "Don't do X" - surface early in plans
+        "landmine",  # Critical: things that can break silently
+        "decision",  # Why we chose X over Y
+        "convention",  # Project rules and standards
+        "preference",  # User/team preferences and recommendations
+        "lesson",  # Learnings and discoveries
+        "constraint",  # Limitations and requirements
+        "architecture",  # System design
+        "context",  # Background and reasoning
+        "todo",  # Future work
+        "bug",  # Issues (most generic)
+    ]
+    max_score = max(scores.values())
+    candidates = [cat for cat, score in scores.items() if score == max_score]
+
+    # Pick highest priority among tied candidates
+    for cat in priority:
+        if cat in candidates:
+            return cat
+
+    return candidates[0] if candidates else None
+
+
 # ========== Importance Scoring (MemGPT-inspired) ==========
 
 # Pattern definitions for importance scoring

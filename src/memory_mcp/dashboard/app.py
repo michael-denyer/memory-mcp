@@ -63,14 +63,23 @@ TYPE_COLORS = {
 }
 
 
-def get_type_badge_class(memory_type: str) -> str:
+def get_type_value(memory_type: MemoryType | str) -> str:
+    """Extract string value from MemoryType enum or pass through string."""
+    if hasattr(memory_type, "value"):
+        return memory_type.value
+    return str(memory_type)
+
+
+def get_type_badge_class(memory_type: MemoryType | str) -> str:
     """Get Tailwind classes for a memory type badge."""
-    return TYPE_COLORS.get(memory_type, TYPE_COLORS["project"])[1]
+    type_str = get_type_value(memory_type)
+    return TYPE_COLORS.get(type_str, TYPE_COLORS["project"])[1]
 
 
-# Add template globals
+# Add template globals and filters
 templates.env.globals["get_type_badge_class"] = get_type_badge_class
 templates.env.globals["format_bytes"] = format_bytes
+templates.env.filters["type_value"] = get_type_value
 
 
 # ============================================================================
@@ -286,15 +295,10 @@ async def api_hot_cache_list(request: Request) -> HTMLResponse:
     s = get_storage()
     hot_memories = s.get_hot_memories()
 
-    # Check which are pinned
-    hot_stats = s.get_hot_cache_stats()
-    pinned_ids = set(hot_stats.get("pinned_ids", []))
-
     return templates.TemplateResponse(
         "partials/hot_list.html",
         {
             "request": request,
             "memories": hot_memories,
-            "pinned_ids": pinned_ids,
         },
     )

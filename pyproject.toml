@@ -1,6 +1,6 @@
 [project]
 name = "hot-memory-mcp"
-version = "0.5.2"
+version = "0.5.3"
 description = "Engram-inspired memory MCP server with hot cache and pattern mining"
 readme = "README.md"
 license = "MIT"
@@ -29,11 +29,11 @@ dependencies = [
     "fastapi>=0.100,<1",  # Web dashboard
     "uvicorn[standard]>=0.20,<1",  # ASGI server for dashboard
     "jinja2>=3.0,<4",  # Template engine for dashboard
+    "transformers>=4.0,<5",  # NER-based entity extraction for pattern mining
 ]
 
 [project.optional-dependencies]
 mlx = ["mlx-embeddings>=0.0.5"]  # Apple Silicon acceleration for embeddings
-ner = ["transformers>=4.0"]  # NER-based entity extraction for pattern mining
 
 [project.scripts]
 memory-mcp = "memory_mcp.server:main"

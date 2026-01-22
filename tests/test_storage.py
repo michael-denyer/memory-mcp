@@ -1129,10 +1129,10 @@ class TestMemoryRelationships:
             ).fetchone()
             assert result is not None
 
-    def test_schema_version_is_13(self, storage):
-        """Schema version should be 13 after migration."""
+    def test_schema_version_is_14(self, storage):
+        """Schema version should be 14 after migration."""
         version = storage.get_schema_version()
-        assert version == 13
+        assert version == 14
 
     def test_expand_via_relations(self, storage):
         """expand_via_relations adds related memories with decayed scores."""
@@ -1979,10 +1979,10 @@ class TestPredictiveCache:
 
         assert mid2 not in promoted  # Already hot
 
-    def test_schema_version_is_13(self, predictive_storage):
-        """Schema version should be 13 after migration."""
+    def test_schema_version_is_14(self, predictive_storage):
+        """Schema version should be 14 after migration."""
         version = predictive_storage.get_schema_version()
-        assert version == 13
+        assert version == 14
 
     def test_access_sequences_table_exists(self, predictive_storage):
         """access_sequences table should exist."""
@@ -2992,7 +2992,7 @@ class TestHybridSearch:
             stor_hybrid.close()
             stor_no_hybrid.close()
 
-    def test_schema_version_is_13(self, hybrid_storage):
-        """Schema version should be 13 for hybrid search."""
+    def test_schema_version_is_14(self, hybrid_storage):
+        """Schema version should be 14 for hybrid search."""
         version = hybrid_storage.get_schema_version()
-        assert version == 13
+        assert version == 14

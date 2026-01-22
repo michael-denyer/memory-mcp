@@ -129,8 +129,14 @@ def _try_auto_bootstrap() -> bool:
 
     Returns True if bootstrap was attempted and created memories.
     Only runs once per working directory per session.
+    Disabled by default (auto_bootstrap=False) since markdown files are often
+    redundant with what's already in the codebase/context.
     """
     from pathlib import Path
+
+    # Check if auto-bootstrap is enabled (disabled by default)
+    if not settings.auto_bootstrap:
+        return False
 
     cwd = os.getcwd()
 
@@ -164,12 +170,13 @@ def _try_auto_bootstrap() -> bool:
     return False
 
 
-def _format_memory_list(memories: list[Memory], header: str) -> str:
+def _format_memory_list(memories: list[Memory], header: str, include_ids: bool = False) -> str:
     """Format a list of memories as a resource string.
 
     Args:
         memories: List of Memory objects to format
         header: Header line for the resource (e.g., "[MEMORY: Hot Cache]")
+        include_ids: If True, include memory IDs for feedback tracking
 
     Returns:
         Formatted string with header and memory items
@@ -180,7 +187,8 @@ def _format_memory_list(memories: list[Memory], header: str) -> str:
     for m in memories:
         content = m.content[:max_chars] + "..." if len(m.content) > max_chars else m.content
         tags_str = f" [{', '.join(m.tags[:3])}]" if m.tags else ""
-        lines.append(f"- {content}{tags_str}")
+        id_prefix = f"[id:{m.id}] " if include_ids else ""
+        lines.append(f"- {id_prefix}{content}{tags_str}")
 
     return "\n".join(lines)
 
@@ -189,6 +197,7 @@ def _format_clustered_memory_list(
     clusters: list[DisplayCluster],
     unclustered: list[Memory],
     header: str,
+    include_ids: bool = False,
 ) -> str:
     """Format clustered memories as a resource string.
 
@@ -199,6 +208,7 @@ def _format_clustered_memory_list(
         clusters: List of DisplayCluster objects
         unclustered: Memories that didn't fit in any cluster
         header: Header line for the resource
+        include_ids: If True, include memory IDs for feedback tracking
 
     Returns:
         Formatted string with headers for each cluster
@@ -211,14 +221,16 @@ def _format_clustered_memory_list(
         for m in cluster.members:
             content = m.content[:max_chars] + "..." if len(m.content) > max_chars else m.content
             tags_str = f" [{', '.join(m.tags[:3])}]" if m.tags else ""
-            lines.append(f"  - {content}{tags_str}")
+            id_prefix = f"[id:{m.id}] " if include_ids else ""
+            lines.append(f"  - {id_prefix}{content}{tags_str}")
 
     if unclustered:
         lines.append("\n## Other")
         for m in unclustered:
             content = m.content[:max_chars] + "..." if len(m.content) > max_chars else m.content
             tags_str = f" [{', '.join(m.tags[:3])}]" if m.tags else ""
-            lines.append(f"  - {content}{tags_str}")
+            id_prefix = f"[id:{m.id}] " if include_ids else ""
+            lines.append(f"  - {id_prefix}{content}{tags_str}")
 
     return "\n".join(lines)
 
@@ -260,6 +272,12 @@ def hot_cache_resource() -> str:
     if project_id:
         header = f"[MEMORY: Hot Cache ({project_id}) - High-confidence patterns]"
 
+    # Feedback nudge to help improve memory ranking
+    feedback_hint = (
+        "\n(If a memory above was helpful, call mark_memory_used(memory_id) "
+        "to improve future recall.)\n"
+    )
+
     # Apply semantic clustering if enabled and enough memories
     if settings.clustering_display_enabled and len(hot_memories) >= 4:
         memory_ids = [m.id for m in hot_memories]
@@ -276,10 +294,13 @@ def hot_cache_resource() -> str:
 
             # Only use clustered format if we got meaningful clusters
             if clusters:
-                return _format_clustered_memory_list(clusters, unclustered, header)
+                return (
+                    _format_clustered_memory_list(clusters, unclustered, header, include_ids=True)
+                    + feedback_hint
+                )
 
     # Fall back to flat list
-    return _format_memory_list(hot_memories, header)
+    return _format_memory_list(hot_memories, header, include_ids=True) + feedback_hint
 
 
 @mcp.resource("memory://working-set")

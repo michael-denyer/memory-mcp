@@ -5,8 +5,13 @@
         <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 mb-2">
                 <span class="px-2 py-0.5 text-xs font-medium rounded border {{ get_type_badge_class(memory.memory_type) }}">
-                    {{ memory.memory_type }}
+                    {{ memory.memory_type|type_value }}
                 </span>
+                {% if memory.category %}
+                <span class="px-1.5 py-0.5 text-xs bg-gray-600/50 text-gray-300 rounded">
+                    {{ memory.category }}
+                </span>
+                {% endif %}
                 {% if is_pinned %}
                 <span class="px-2 py-0.5 text-xs font-medium rounded border bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
                     pinned
