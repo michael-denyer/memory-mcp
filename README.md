@@ -22,20 +22,27 @@ Memory MCP learns what matters and keeps it ready — instant recall for the stu
 
 ## The Problem
 
-Every new chat starts from scratch. You repeat yourself. Context balloons. Tool calls add latency.
+Every new chat starts from scratch. You explain your architecture *again*. You paste the same patterns *again*. Your context window bloats with repetition.
 
-**Memory MCP fixes this.** It gives Claude persistent memory with a two-tier architecture: a hot cache for instant access to frequently-used knowledge, and cold storage with semantic search for everything else.
+Other memory solutions help, but they still require tool calls for every lookup — adding latency and eating into Claude's thinking budget.
 
-The system learns what you use and automatically promotes it. No manual curation required.
+**Memory MCP fixes this with a two-tier architecture:**
+
+1. **Hot cache (0ms)** — Frequently-used knowledge is auto-injected into context *before Claude even starts thinking*. No tool call needed.
+2. **Cold storage (~50ms)** — Everything else, searchable by meaning via semantic similarity.
+
+The system learns what you use and automatically promotes it. Your most valuable knowledge becomes instantly available. No manual curation required.
 
 ## Before & After
 
 | 😤 Without Memory MCP | 🎯 With Memory MCP |
 |----------------------|-------------------|
-| "Let me explain our architecture again..." | Project facts persist forever |
-| Copy-paste the same patterns | Patterns auto-promoted to instant access |
+| "Let me explain our architecture again..." | Project facts persist and isolate per repo |
+| Copy-paste the same patterns every session | Patterns auto-promoted to instant access |
 | 500k+ token context windows | Hot cache keeps it lean (~20 items) |
-| Tool call latency on every lookup | Hot cache: **0ms** — already in context |
+| Tool call latency on every memory lookup | Hot cache: **0ms** — already in context |
+| Stale information lingers forever | Trust scoring demotes outdated facts |
+| Flat list of disconnected facts | Knowledge graph connects related concepts |
 
 ## Key Features
 
@@ -73,11 +80,13 @@ uv tool install hot-memory-mcp[mlx]
 # or: pip install hot-memory-mcp[mlx]
 ```
 
-**Want NER entity extraction?** Install with transformers support:
+**Want smarter entity extraction?** Install with NER (Named Entity Recognition) support:
 ```bash
 uv tool install hot-memory-mcp[ner]
 # or both: uv tool install hot-memory-mcp[mlx,ner]
 ```
+
+NER automatically identifies and tags entities in your memories — people, organizations, locations, dates, code references — making recall more precise. Without NER, pattern mining still works but relies on keyword matching.
 
 ### Configure
 
@@ -146,13 +155,19 @@ Memories used 3+ times automatically promote to hot cache. Unused memories demot
 
 ## What Makes It Different
 
-| | Memory MCP | Others |
-|---|------------|--------|
-| **Hot cache** | Auto-injected, 0ms | Most require tool calls |
-| **Self-organizing** | Learns from usage | Manual curation |
-| **Project-aware** | Auto-isolates by git repo | Manual tagging |
-| **Pattern mining** | Extracts from outputs | Not available |
-| **Setup** | One command, local SQLite | Often needs cloud/services |
+Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's **hot cache bypasses this entirely** — your most-used knowledge is already in context when Claude starts thinking.
+
+| | Memory MCP | Generic Memory Servers |
+|---|------------|------------------------|
+| **Hot cache** | Auto-injected at 0ms latency | Every lookup = tool call = latency |
+| **Self-organizing** | Learns what you use, promotes automatically | Manual curation required |
+| **Project-aware** | Auto-isolates by git repo | One big pile of memories |
+| **Knowledge graph** | Connect related concepts, multi-hop recall | Flat list of facts |
+| **Pattern mining** | Learns from Claude's outputs | Not available |
+| **Trust scoring** | Confidence decays, outdated info sinks | All memories equal |
+| **Setup** | One command, local SQLite, no API keys | Often needs cloud setup |
+
+**The Engram Insight**: Human memory doesn't search — frequently-used patterns are *already there*. That's what hot cache does for Claude.
 
 ---
 
