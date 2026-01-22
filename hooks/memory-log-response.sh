@@ -27,6 +27,9 @@
 
 set -e
 
+# Ensure common user-level bin paths are available when run from VS Code
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 # Check for required dependencies
 if ! command -v jq &> /dev/null; then
     echo "Error: jq is required but not installed." >&2
@@ -35,7 +38,36 @@ if ! command -v jq &> /dev/null; then
 fi
 
 # Extract transcript path from hook input (stdin)
-TRANSCRIPT_PATH=$(jq -r '.transcript_path // empty')
+# Read stdin once so we can parse it multiple ways
+HOOK_INPUT="$(cat)"
+if [ -z "$HOOK_INPUT" ]; then
+    exit 0
+fi
+
+TRANSCRIPT_PATH=$(printf '%s' "$HOOK_INPUT" | jq -r '(.transcript_path // .transcriptPath // .transcript.path // empty)' 2>/dev/null || true)
+
+# Fallback: derive transcript path from session + project info if provided
+if [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
+    SESSION_ID=$(printf '%s' "$HOOK_INPUT" | jq -r '(.session_id // .sessionId // .session.id // empty)' 2>/dev/null || true)
+    PROJECT_PATH=$(printf '%s' "$HOOK_INPUT" | jq -r '(.project_path // .projectPath // .project.path // .cwd // .workspace_path // .rootPath // empty)' 2>/dev/null || true)
+
+    if [ -n "$SESSION_ID" ]; then
+        if [ -n "$PROJECT_PATH" ]; then
+            PROJECT_SLUG="$(printf '%s' "$PROJECT_PATH" | sed 's#/#-#g')"
+            CANDIDATE="$HOME/.claude/projects/$PROJECT_SLUG/$SESSION_ID.jsonl"
+            if [ -f "$CANDIDATE" ]; then
+                TRANSCRIPT_PATH="$CANDIDATE"
+            fi
+        fi
+
+        if [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
+            CANDIDATE="$(find "$HOME/.claude/projects" -name "$SESSION_ID.jsonl" -print -quit 2>/dev/null || true)"
+            if [ -n "$CANDIDATE" ] && [ -f "$CANDIDATE" ]; then
+                TRANSCRIPT_PATH="$CANDIDATE"
+            fi
+        fi
+    fi
+fi
 
 if [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
     # No transcript available, exit silently
@@ -50,7 +82,7 @@ fi
 
 # Extract the last assistant message with text content from the transcript
 # Transcript format: JSONL with {message: {role: "assistant", content: [{type: "text", text: "..."}]}}
-LAST_RESPONSE=$(tail -100 "$TRANSCRIPT_PATH" 2>/dev/null | \
+LAST_RESPONSE=$(tail -200 "$TRANSCRIPT_PATH" 2>/dev/null | \
     jq -rs '
         [.[] | select(.message.role? == "assistant") | select(.message.content[]?.type == "text")]
         | last
@@ -71,6 +103,19 @@ if [ ${#LAST_RESPONSE} -lt 50 ]; then
 fi
 
 # Log the response using memory-mcp-cli
-# Use uv run to ensure we're using the right environment
+# Prefer uv if available, otherwise fall back to direct CLI
 cd "$MEMORY_MCP_DIR"
-echo "$LAST_RESPONSE" | uv run memory-mcp-cli log-output 2>/dev/null || true
+LOG_CMD=()
+if command -v uv &> /dev/null; then
+    LOG_CMD=(uv run memory-mcp-cli log-output)
+elif command -v memory-mcp-cli &> /dev/null; then
+    LOG_CMD=(memory-mcp-cli log-output)
+elif [ -x "$HOME/.local/bin/memory-mcp-cli" ]; then
+    LOG_CMD=("$HOME/.local/bin/memory-mcp-cli" log-output)
+fi
+
+if [ ${#LOG_CMD[@]} -eq 0 ]; then
+    exit 0
+fi
+
+echo "$LAST_RESPONSE" | "${LOG_CMD[@]}" 2>/dev/null || true
