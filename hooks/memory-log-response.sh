@@ -132,6 +132,7 @@ elif [ -x "$HOME/.local/bin/memory-mcp-cli" ]; then
 fi
 
 if [ ${#MINE_CMD[@]} -gt 0 ]; then
-    # Run mining in background to not block the hook
-    nohup "${MINE_CMD[@]}" > /dev/null 2>&1 &
+    # Run mining in foreground so output is visible
+    LOG_FILE="${MEMORY_MCP_DIR}/.mining-hook.log"
+    "${MINE_CMD[@]}" >> "$LOG_FILE" 2>&1
 fi

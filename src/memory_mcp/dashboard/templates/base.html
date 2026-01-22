@@ -47,10 +47,15 @@
         /* HTMX loading indicator */
         .htmx-request .htmx-indicator {
             opacity: 1;
+            display: inline;
         }
         .htmx-indicator {
             opacity: 0;
+            display: none;
             transition: opacity 200ms ease-in;
+        }
+        .htmx-request .mining-idle {
+            display: none;
         }
 
         /* Fade out animation for deleted items */

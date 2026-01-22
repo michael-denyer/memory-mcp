@@ -211,6 +211,7 @@ class TrustMixin:
         Auto-promotes if:
         - auto_promote is enabled in settings
         - memory is not already hot
+        - category is eligible for promotion (command, snippet never promoted)
         - salience_score >= threshold (category-aware: lower for antipattern/landmine)
         - OR access_count >= promotion_threshold (legacy fallback)
         - AND helpfulness check passes (if enough retrievals):
@@ -219,6 +220,9 @@ class TrustMixin:
 
         High-value categories (antipattern, landmine) use lower thresholds
         so critical warnings surface early in plans.
+
+        Low-value categories (command, snippet) are never promoted since they're
+        easily discoverable or have low recall value.
 
         Returns True if memory was promoted.
         """
@@ -236,12 +240,24 @@ class TrustMixin:
             if not row or row["is_hot"]:
                 return False
 
+            category = row["category"]
+
+            # Check if category is eligible for promotion
+            from memory_mcp.helpers import should_promote_category
+
+            if not should_promote_category(category):
+                log.debug(
+                    "Skipped promotion for memory id={} (category={} not eligible)",
+                    memory_id,
+                    category,
+                )
+                return False
+
             trust_score = row["trust_score"] or 1.0
             importance_score = row["importance_score"] or 0.5
             last_accessed_dt = (
                 datetime.fromisoformat(row["last_accessed_at"]) if row["last_accessed_at"] else None
             )
-            category = row["category"]
 
             salience = self._compute_salience_score(
                 importance_score, trust_score, row["access_count"], last_accessed_dt
