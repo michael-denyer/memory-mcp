@@ -12,24 +12,12 @@ from memory_mcp.storage import MemorySource, MemoryType
 from memory_mcp.text_parsing import parse_content_into_chunks
 
 
-@mcp.tool
-def seed_from_text(
-    content: Annotated[str, Field(description="Text content to parse and seed memories from")],
-    memory_type: Annotated[
-        str, Field(description="Memory type for all extracted items")
-    ] = "project",
-    promote_to_hot: Annotated[bool, Field(description="Promote all to hot cache")] = False,
+def _seed_from_text_impl(
+    content: str,
+    memory_type: str = "project",
+    promote_to_hot: bool = False,
 ) -> SeedResult:
-    """Seed memories from text content.
-
-    Parses the content into individual memories (one per paragraph or list item)
-    and stores them. Useful for initial setup or bulk import.
-
-    Content is split on:
-    - Double newlines (paragraphs)
-    - Lines starting with '- ' or '* ' (list items)
-    - Lines starting with numbers like '1. ' (numbered lists)
-    """
+    """Implementation for seeding memories from text content."""
     mem_type = parse_memory_type(memory_type)
     if mem_type is None:
         return SeedResult(memories_created=0, memories_skipped=0, errors=["Invalid memory_type"])
@@ -63,6 +51,27 @@ def seed_from_text(
 
 
 @mcp.tool
+def seed_from_text(
+    content: Annotated[str, Field(description="Text content to parse and seed memories from")],
+    memory_type: Annotated[
+        str, Field(description="Memory type for all extracted items")
+    ] = "project",
+    promote_to_hot: Annotated[bool, Field(description="Promote all to hot cache")] = False,
+) -> SeedResult:
+    """Seed memories from text content.
+
+    Parses the content into individual memories (one per paragraph or list item)
+    and stores them. Useful for initial setup or bulk import.
+
+    Content is split on:
+    - Double newlines (paragraphs)
+    - Lines starting with '- ' or '* ' (list items)
+    - Lines starting with numbers like '1. ' (numbered lists)
+    """
+    return _seed_from_text_impl(content, memory_type, promote_to_hot)
+
+
+@mcp.tool
 def seed_from_file(
     file_path: Annotated[str, Field(description="Path to file to import")],
     memory_type: Annotated[str, Field(description="Memory type for content")] = "project",
@@ -93,7 +102,9 @@ def seed_from_file(
     except OSError as e:
         return SeedResult(memories_created=0, memories_skipped=0, errors=[f"Read error: {e}"])
 
-    return seed_from_text(content=content, memory_type=memory_type, promote_to_hot=promote_to_hot)
+    return _seed_from_text_impl(
+        content=content, memory_type=memory_type, promote_to_hot=promote_to_hot
+    )
 
 
 def _empty_bootstrap_response(

@@ -158,26 +158,158 @@ log_output("uv run pytest -v")
 
 ---
 
-### Phase 8: Maintenance
+### Phase 8: Seeding & Bootstrap
 
-**8.1 Stats & Observability**:
+**8.1 Seed from Text**:
+```
+seed_from_text("- Item one\n- Item two\n- Item three", memory_type="project")
+```
+Verify 3 memories created.
+
+**8.2 Seed from File** (creates temp file):
+- `seed_from_file(file_path, memory_type="reference")`
+
+**8.3 Bootstrap Project**:
+- `bootstrap_project(root_path=".", promote_to_hot=false)`
+- Verify it finds CLAUDE.md, README.md, etc.
+
+---
+
+### Phase 9: Predictive Cache
+
+**9.1 Check Status**:
+- `predictive_cache_status()` → shows if enabled
+
+**9.2 Access Patterns**:
+- `access_patterns(limit=5)` → learned patterns
+
+**9.3 Predict Next** (needs existing access history):
+- `predict_next(memory_id)` → predicted memories
+
+**9.4 Warm Cache**:
+- `warm_cache(memory_id)` → pre-promote predicted
+
+---
+
+### Phase 10: Retrieval Quality
+
+**10.1 Mark Memory Used**:
+- `mark_memory_used(memory_id, feedback="helpful")`
+
+**10.2 Retrieval Stats**:
+- `retrieval_quality_stats()` → global stats
+- `retrieval_quality_stats(memory_id=X)` → per-memory
+
+---
+
+### Phase 11: Maintenance & DB Info
+
+**11.1 Stats & Observability**:
 - `memory_stats()`
 - `hot_cache_status()`
 - `metrics_status()`
 
-**8.2 Maintenance**:
+**11.2 Database Info**:
+- `db_info()` → schema version, size
+- `embedding_info()` → provider, cache info
+
+**11.3 Maintenance Operations**:
 - `db_maintenance()`
 - `validate_embeddings()`
+- `run_cleanup()` → comprehensive cleanup
 
-**8.3 Consolidation Preview**:
-- `preview_consolidation()`
+**11.4 Consolidation**:
+- `preview_consolidation()` → dry run
+- `run_consolidation(dry_run=true)` → preview
+- `run_consolidation(dry_run=false)` → actual merge (careful!)
 
-**8.4 Audit History**:
+**11.5 Audit History**:
 - `audit_history(limit=10)`
+
+**11.6 Vector Rebuild** (use with caution - rebuilds all embeddings):
+- `db_rebuild_vectors(batch_size=100)` → re-embed all memories
+- Use when: switching embedding models, fixing dimension mismatches, recovering from corruption
 
 ---
 
-### Phase 9: Cleanup
+### Phase 12: MCP Resources
+
+**12.1 Hot Cache Resource**:
+Read `memory://hot-cache` directly (auto-injected to Claude):
+- Contains all promoted memories for instant recall
+- Verify contents match `hot_cache_status()` items
+
+**12.2 Working Set Resource**:
+Read `memory://working-set` directly:
+- Session-aware active context (~10 items max)
+- Combines: recently recalled, predicted next, top salience
+- Verify smaller/more focused than hot-cache
+
+**12.3 Project Context Resource**:
+Read `memory://project-context` directly:
+- Project-scoped memories for current working directory
+- Should filter to current project only
+
+---
+
+### Phase 13: Additional Tools
+
+**13.1 List Memories**:
+- `list_memories(limit=5)` → paginated browse
+- `list_memories(memory_type="pattern")` → filtered
+- `list_memories(offset=5, limit=5)` → pagination
+
+**13.2 Recall with Fallback**:
+- `recall_with_fallback("query")` → tries patterns → project → all
+
+**13.3 Relationship Stats**:
+- `relationship_stats()` → knowledge graph overview
+
+**13.4 Session Details**:
+- `get_session(session_id)` → specific session
+- `get_session_memories(session_id)` → memories from session
+- `cross_session_patterns()` → patterns across sessions
+
+---
+
+### Phase 14: Error Handling & Edge Cases
+
+**14.1 Invalid IDs**:
+- `forget(memory_id=999999)` → should return error/not found
+- `promote(memory_id=-1)` → should handle gracefully
+- `get_related_memories(memory_id=0)` → should not crash
+
+**14.2 Recall Edge Cases**:
+- `recall("", mode="precision")` → empty query handling
+- `recall("xyz", threshold=0.99)` → very high threshold, likely no results
+- `recall("test", limit=0)` → zero limit edge case
+- `recall("test", limit=1000)` → large limit handling
+
+**14.3 Pagination Boundaries**:
+- `list_memories(offset=99999, limit=10)` → beyond data range
+- `list_memories(offset=-1)` → negative offset
+- `audit_history(limit=0)` → zero limit
+
+**14.4 Link/Unlink Errors**:
+- `link_memories(id, id, "relates_to")` → self-link
+- `link_memories(999, 888, "relates_to")` → non-existent IDs
+- `unlink_memories(id_a, id_b)` → when no link exists
+
+**14.5 Trust Boundaries**:
+- `validate_memory(id, boost=10.0)` → extreme boost (should cap at 1.0)
+- `invalidate_memory(id, penalty=10.0)` → extreme penalty (should floor at 0.0)
+
+**14.6 Session Errors**:
+- `get_session("nonexistent-session-id")` → invalid session
+- `end_session("bad-id")` → non-existent session
+
+**14.7 Mining Edge Cases**:
+- `run_mining(hours=0)` → zero hours
+- `approve_candidate(pattern_id=999)` → non-existent candidate
+
+---
+
+### Phase 15: Cleanup
 
 After testing, clean up test data:
 - `forget()` all memories tagged with "test"
@@ -215,11 +347,36 @@ Track results as you go:
 | 7.1 | Log Output | ⬜ | |
 | 7.2 | Run Mining | ⬜ | |
 | 7.3 | Review | ⬜ | |
-| 8.1 | Stats | ⬜ | |
-| 8.2 | Maintenance | ⬜ | |
-| 8.3 | Consolidation | ⬜ | |
-| 8.4 | Audit | ⬜ | |
-| 9 | Cleanup | ⬜ | |
+| 8.1 | Seed from Text | ⬜ | |
+| 8.2 | Seed from File | ⬜ | |
+| 8.3 | Bootstrap | ⬜ | |
+| 9.1 | Predictive Status | ⬜ | |
+| 9.2 | Access Patterns | ⬜ | |
+| 9.3 | Predict Next | ⬜ | |
+| 9.4 | Warm Cache | ⬜ | |
+| 10.1 | Mark Used | ⬜ | |
+| 10.2 | Retrieval Stats | ⬜ | |
+| 11.1 | Stats | ⬜ | |
+| 11.2 | DB Info | ⬜ | |
+| 11.3 | Maintenance | ⬜ | |
+| 11.4 | Consolidation | ⬜ | |
+| 11.5 | Audit | ⬜ | |
+| 11.6 | Vector Rebuild | ⬜ | |
+| 12.1 | Hot Cache Resource | ⬜ | |
+| 12.2 | Working Set Resource | ⬜ | |
+| 12.3 | Project Context Resource | ⬜ | |
+| 13.1 | List Memories | ⬜ | |
+| 13.2 | Recall Fallback | ⬜ | |
+| 13.3 | Relationship Stats | ⬜ | |
+| 13.4 | Session Details | ⬜ | |
+| 14.1 | Invalid IDs | ⬜ | |
+| 14.2 | Recall Edge Cases | ⬜ | |
+| 14.3 | Pagination Boundaries | ⬜ | |
+| 14.4 | Link/Unlink Errors | ⬜ | |
+| 14.5 | Trust Boundaries | ⬜ | |
+| 14.6 | Session Errors | ⬜ | |
+| 14.7 | Mining Edge Cases | ⬜ | |
+| 15 | Cleanup | ⬜ | |
 
 ## Quick Smoke Test
 
