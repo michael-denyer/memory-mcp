@@ -4,6 +4,22 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.6] - 2026-01-22
+
+### Fixed
+
+- **log_output CLI now passes project_id** - Pattern mining was finding 0 outputs because logs were stored without project_id
+  - Root cause: `log-output` CLI wasn't calling `get_current_project_id()`
+  - Mining filters by project_id, so logs without it were invisible
+  - Added regression tests to prevent this from recurring
+
+### Added
+
+- **Code map documentation** - Visual architecture guide with bidirectional source links
+  - Mermaid diagrams for system overview, data flows, and schema
+  - Tables mapping components to file:line locations
+  - Quick navigation for key entry points
+
 ## [0.5.5] - 2026-01-22
 
 ### Added
