@@ -601,8 +601,8 @@ class MemoryCrudMixin:
                 )
             }
             return {
-                "total": total,
-                "hot": hot,
+                "total_memories": total,
+                "hot_cache_count": hot,
                 "by_type": by_type,
                 "by_source": by_source,
             }
