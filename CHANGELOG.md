@@ -4,6 +4,31 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.7] - 2026-01-22
+
+### Added
+
+- **Dashboard enhancements** - Full-featured web dashboard at http://127.0.0.1:8765
+  - **Mining page** (`/mining`) - Review and approve/reject mined patterns
+  - **Injections page** (`/injections`) - Track hot cache/working-set injections over time
+  - **Sessions page** (`/sessions`) - Browse conversation sessions and their memories
+  - **Graph page** (`/graph`) - Knowledge graph visualization with force-directed layout
+  - **Memories over time chart** - Bar chart on overview page showing daily memory counts
+  - **Helpfulness metrics** - Trust score and used/retrieved counts in memory tables
+  - **Category distribution** - Visual breakdown by memory category on overview
+
+- **Auto-mining in hook** - Pattern mining now runs automatically after each Claude response
+  - No manual intervention needed - patterns become memories immediately
+  - High-confidence patterns stored as memories on first extraction
+  - Hot cache promotion after reaching occurrence threshold
+
+### Changed
+
+- **Mining stores memories immediately** - Patterns no longer wait for 3+ occurrences
+  - First extraction creates a memory (if confidence >= threshold)
+  - Hot cache promotion still requires occurrence threshold
+  - Existing patterns migrated to memories on first mining run
+
 ## [0.5.6] - 2026-01-22
 
 ### Fixed

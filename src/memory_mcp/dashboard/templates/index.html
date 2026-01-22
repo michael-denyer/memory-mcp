@@ -39,9 +39,9 @@
         </div>
     </div>
 
-    <!-- Memory Distribution -->
+    <!-- Type Distribution -->
     <div class="bg-dark-900 rounded-lg border border-gray-800 p-6">
-        <h2 class="text-lg font-semibold text-white mb-4">Memory Distribution</h2>
+        <h2 class="text-lg font-semibold text-white mb-4">By Type</h2>
         <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
             {% for type, count in stats.get('by_type', {}).items() %}
             <div class="bg-dark-800 rounded-lg p-4">
@@ -55,5 +55,102 @@
             {% endfor %}
         </div>
     </div>
+
+    <!-- Category Distribution -->
+    <div class="bg-dark-900 rounded-lg border border-gray-800 p-6">
+        <h2 class="text-lg font-semibold text-white mb-4">By Category</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {% for category, count in stats.get('by_category', {}).items()|sort(attribute='1', reverse=true) %}
+            <div class="bg-dark-800 rounded-lg p-3">
+                <p class="text-xs text-gray-400 truncate" title="{{ category }}">{{ category }}</p>
+                <p class="text-xl font-bold text-white">{{ count }}</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Helpfulness Stats -->
+    <div class="bg-dark-900 rounded-lg border border-gray-800 p-6">
+        <h2 class="text-lg font-semibold text-white mb-4">Helpfulness Metrics</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-dark-800 rounded-lg p-4">
+                <p class="text-xs text-gray-400">Total Retrieved</p>
+                <p class="text-2xl font-bold text-white">{{ stats.get('total_retrieved', 0) }}</p>
+            </div>
+            <div class="bg-dark-800 rounded-lg p-4">
+                <p class="text-xs text-gray-400">Total Used</p>
+                <p class="text-2xl font-bold text-white">{{ stats.get('total_used', 0) }}</p>
+            </div>
+            <div class="bg-dark-800 rounded-lg p-4">
+                <p class="text-xs text-gray-400">Avg Trust</p>
+                {% set avg_trust = stats.get('avg_trust', 0.7) %}
+                <p class="text-2xl font-bold {% if avg_trust >= 0.7 %}text-green-400{% elif avg_trust >= 0.4 %}text-yellow-400{% else %}text-red-400{% endif %}">
+                    {{ avg_trust }}
+                </p>
+            </div>
+            <div class="bg-dark-800 rounded-lg p-4">
+                <p class="text-xs text-gray-400">Helpfulness Rate</p>
+                {% set retrieved = stats.get('total_retrieved', 0) %}
+                {% set used = stats.get('total_used', 0) %}
+                {% if retrieved > 0 %}
+                    {% set rate = (used / retrieved * 100)|round|int %}
+                    <p class="text-2xl font-bold {% if rate >= 50 %}text-green-400{% elif rate >= 25 %}text-yellow-400{% else %}text-red-400{% endif %}">
+                        {{ rate }}%
+                    </p>
+                {% else %}
+                    <p class="text-2xl font-bold text-gray-500">—</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Memories Over Time Chart -->
+    <div class="bg-dark-900 rounded-lg border border-gray-800 p-6">
+        <h2 class="text-lg font-semibold text-white mb-4">Memories Over Time</h2>
+        <div id="memory-chart" class="h-48 flex items-end gap-1">
+        </div>
+        <div id="chart-labels" class="flex justify-between mt-2 text-xs text-gray-500">
+        </div>
+    </div>
 </div>
+
+<script>
+(async function() {
+    const resp = await fetch('/api/stats/history?days=30');
+    const data = await resp.json();
+    const chart = document.getElementById('memory-chart');
+    const labels = document.getElementById('chart-labels');
+
+    if (!data.days || data.days.length === 0) {
+        const noData = document.createElement('p');
+        noData.className = 'text-gray-500 text-sm';
+        noData.textContent = 'No data yet';
+        chart.appendChild(noData);
+        return;
+    }
+
+    const maxCount = Math.max(...data.days.map(d => d.count), 1);
+
+    data.days.forEach((day) => {
+        const pct = (day.count / maxCount) * 100;
+        const col = document.createElement('div');
+        col.className = 'flex-1 flex flex-col justify-end';
+        const bar = document.createElement('div');
+        bar.className = 'bg-blue-500 rounded-t';
+        bar.style.height = pct + '%';
+        bar.title = day.day + ': ' + day.count + ' memories (' + day.hot_count + ' hot)';
+        col.appendChild(bar);
+        chart.appendChild(col);
+    });
+
+    if (data.days.length > 0) {
+        const startLabel = document.createElement('span');
+        startLabel.textContent = data.days[0].day;
+        const endLabel = document.createElement('span');
+        endLabel.textContent = data.days[data.days.length - 1].day;
+        labels.appendChild(startLabel);
+        labels.appendChild(endLabel);
+    }
+})();
+</script>
 {% endblock %}

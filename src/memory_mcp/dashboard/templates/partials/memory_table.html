@@ -5,7 +5,8 @@
             <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">ID</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Type</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Content</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Tags</th>
+            <th class="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider" title="Trust score (0-1)">Trust</th>
+            <th class="px-4 py-3 text-center text-xs font-medium text-gray-400 uppercase tracking-wider" title="Used / Retrieved">Help</th>
             <th class="px-4 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
         </tr>
     </thead>
@@ -16,7 +17,7 @@
             {% endfor %}
         {% else %}
             <tr>
-                <td colspan="5" class="px-4 py-8 text-center text-gray-500">
+                <td colspan="6" class="px-4 py-8 text-center text-gray-500">
                     {% if query %}
                         No memories match your search
                     {% else %}

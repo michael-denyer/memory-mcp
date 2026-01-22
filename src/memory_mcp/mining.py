@@ -8,7 +8,7 @@ from typing import Any
 
 from memory_mcp.embeddings import content_hash
 from memory_mcp.project import get_current_project_id
-from memory_mcp.storage import Storage
+from memory_mcp.storage import MemoryType, Storage
 
 # Patterns that indicate potentially sensitive content - never auto-approve
 SENSITIVE_PATTERNS = (
@@ -1095,6 +1095,15 @@ def _create_entity_links(
     return links_created
 
 
+def _get_memory_type_for_pattern(pattern_type: str) -> MemoryType:
+    """Map pattern type to memory type."""
+    if pattern_type == "fact":
+        return MemoryType.PROJECT
+    if pattern_type == "command":
+        return MemoryType.REFERENCE
+    return MemoryType.PATTERN
+
+
 def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None) -> dict:
     """Run pattern mining on recent outputs.
 
@@ -1104,16 +1113,31 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
         project_id: If provided, only mine logs from this project.
                     This prevents cross-project pattern leakage.
 
-    Returns statistics about patterns found, updated, and auto-approved.
-    High-confidence patterns meeting thresholds are auto-approved and promoted.
+    Returns statistics about patterns found and stored.
+
+    Patterns are stored as memories immediately when they meet the minimum
+    confidence threshold. Hot cache promotion happens separately when patterns
+    reach the occurrence threshold.
     """
+    from memory_mcp.storage import MemorySource
+
     outputs = storage.get_recent_outputs(hours=hours, project_id=project_id)
     settings = storage.settings
 
     total_patterns = 0
-    new_patterns = 0
+    new_memories = 0
     updated_patterns = 0
-    auto_approved = 0
+    promoted_to_hot = 0
+
+    # Track entity memories for cross-linking
+    entity_memories: list[
+        tuple[int, str, int | None]
+    ] = []  # (memory_id, pattern_type, source_log_id)
+
+    # Get project_id for memory storage
+    mem_project_id = None
+    if settings.project_awareness_enabled:
+        mem_project_id = get_current_project_id()
 
     for log_id, content, _ in outputs:
         patterns = extract_patterns(
@@ -1127,78 +1151,75 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
             hash_val = content_hash(pattern.pattern)
             is_existing = storage.mined_pattern_exists(hash_val)
 
+            # SECURITY: Skip patterns that might contain sensitive data
+            if _may_contain_secrets(pattern.pattern):
+                continue
+
             if is_existing:
+                # Update occurrence count in mined_patterns table
                 updated_patterns += 1
+                storage.upsert_mined_pattern(
+                    pattern.pattern,
+                    pattern.pattern_type.value,
+                    source_log_id=log_id,
+                    confidence=pattern.confidence,
+                )
             else:
-                new_patterns += 1
+                # New pattern - store as memory immediately if confidence is sufficient
+                if pattern.confidence >= settings.mining_auto_approve_confidence:
+                    mem_type = _get_memory_type_for_pattern(pattern.pattern_type.value)
 
-            # Pass provenance and confidence to storage
-            storage.upsert_mined_pattern(
-                pattern.pattern,
-                pattern.pattern_type.value,
-                source_log_id=log_id,
-                confidence=pattern.confidence,
-            )
+                    memory_id, is_new = storage.store_memory(
+                        content=pattern.pattern,
+                        memory_type=mem_type,
+                        source=MemorySource.MINED,
+                        tags=["mined"],
+                        project_id=mem_project_id,
+                        source_log_id=log_id,
+                    )
 
-    # Auto-approve high-confidence patterns if enabled
-    entity_links_created = 0
+                    if is_new:
+                        new_memories += 1
+
+                        # Track entity patterns for knowledge graph linking
+                        if pattern.pattern_type.value in (
+                            "entity_technology",
+                            "entity_decision",
+                        ):
+                            entity_memories.append((memory_id, pattern.pattern_type.value, log_id))
+
+                # Also track in mined_patterns for occurrence counting
+                storage.upsert_mined_pattern(
+                    pattern.pattern,
+                    pattern.pattern_type.value,
+                    source_log_id=log_id,
+                    confidence=pattern.confidence,
+                )
+
+    # Promote high-occurrence patterns to hot cache
     if settings.mining_auto_approve_enabled:
-        from memory_mcp.storage import MemorySource, MemoryType, PatternStatus
-
-        # Track entity memories for cross-linking
-        entity_memories: list[
-            tuple[int, str, int | None]
-        ] = []  # (memory_id, pattern_type, source_log_id)
+        from memory_mcp.storage import PatternStatus
 
         candidates = storage.get_promotion_candidates(threshold=1, status=PatternStatus.PENDING)
         for candidate in candidates:
-            # Check if meets auto-approve thresholds
-            if (
-                candidate.confidence >= settings.mining_auto_approve_confidence
-                and candidate.occurrence_count >= settings.mining_auto_approve_occurrences
-            ):
-                # SECURITY: Skip patterns that might contain sensitive data
-                if _may_contain_secrets(candidate.pattern):
-                    continue
+            # Check if meets hot cache promotion thresholds
+            if candidate.occurrence_count >= settings.mining_auto_approve_occurrences:
+                # Find the memory for this pattern and promote it
+                memories = storage.recall(candidate.pattern, limit=1, threshold=0.95).memories
+                if memories:
+                    memory = memories[0]
+                    # promote_to_hot returns True if promoted (or already hot)
+                    if storage.promote_to_hot(memory.id):
+                        promoted_to_hot += 1
 
-                # Auto-approve: store as memory and promote to hot cache
-                mem_type = MemoryType.PATTERN
-                if candidate.pattern_type == "fact":
-                    mem_type = MemoryType.PROJECT
-                elif candidate.pattern_type == "command":
-                    mem_type = MemoryType.REFERENCE
-
-                # Get project_id if project awareness is enabled
-                project_id = None
-                if settings.project_awareness_enabled:
-                    project_id = get_current_project_id()
-
-                memory_id, _ = storage.store_memory(
-                    content=candidate.pattern,
-                    memory_type=mem_type,
-                    source=MemorySource.MINED,
-                    tags=["auto-approved"],
-                    project_id=project_id,
-                    source_log_id=candidate.source_log_id,  # Preserve provenance
-                )
-                storage.promote_to_hot(memory_id)
-                storage.delete_mined_pattern(candidate.id)
-                auto_approved += 1
-
-                # Track entity patterns for knowledge graph linking
-                if candidate.pattern_type in ("entity_technology", "entity_decision"):
-                    entity_memories.append(
-                        (memory_id, candidate.pattern_type, candidate.source_log_id)
-                    )
-
-        # Create knowledge graph links for entities
-        entity_links_created = _create_entity_links(storage, entity_memories)
+    # Create knowledge graph links for entities
+    entity_links_created = _create_entity_links(storage, entity_memories)
 
     return {
         "outputs_processed": len(outputs),
         "patterns_found": total_patterns,
-        "new_patterns": new_patterns,
+        "new_memories": new_memories,
         "updated_patterns": updated_patterns,
-        "auto_approved": auto_approved,
+        "promoted_to_hot": promoted_to_hot,
         "entity_links_created": entity_links_created,
     }

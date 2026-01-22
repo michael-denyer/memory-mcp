@@ -1,0 +1,80 @@
+<!-- Injection history table partial -->
+<table class="w-full">
+    <thead class="bg-dark-800 border-b border-gray-800">
+        <tr>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Time</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Memory</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Resource</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Session</th>
+        </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-800">
+        {% if injections %}
+            {% for inj in injections %}
+            <tr class="hover:bg-dark-800/50 transition-colors">
+                <td class="px-4 py-3 text-sm text-gray-400">
+                    {{ inj.injected_at[:16] }}
+                </td>
+                <td class="px-4 py-3">
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm text-gray-500">#{{ inj.memory_id }}</span>
+                        <p class="text-sm text-gray-200 truncate max-w-md" title="{{ inj.content }}">
+                            {{ inj.content[:80] }}{% if inj.content|length > 80 %}...{% endif %}
+                        </p>
+                    </div>
+                </td>
+                <td class="px-4 py-3">
+                    {% if inj.resource == 'hot-cache' %}
+                    <span class="px-2 py-0.5 text-xs font-medium rounded bg-orange-500/20 text-orange-400 border border-orange-500/30">
+                        hot-cache
+                    </span>
+                    {% else %}
+                    <span class="px-2 py-0.5 text-xs font-medium rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                        working-set
+                    </span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-500">
+                    {{ inj.session_id[:8] if inj.session_id else '—' }}
+                </td>
+            </tr>
+            {% endfor %}
+        {% else %}
+            <tr>
+                <td colspan="4" class="px-4 py-8 text-center text-gray-500">
+                    <svg class="w-12 h-12 text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    <p>No injections recorded yet</p>
+                    <p class="text-sm mt-1">Injections are logged when memories are included in Claude's context</p>
+                </td>
+            </tr>
+        {% endif %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<div class="px-4 py-3 border-t border-gray-800 flex items-center justify-between">
+    <div class="text-sm text-gray-400">
+        Page {{ page }} of {{ total_pages }}
+    </div>
+    <div class="flex gap-2">
+        {% if page > 1 %}
+        <button hx-get="/api/injections?page={{ page - 1 }}"
+                hx-target="#injections-table"
+                hx-include="[name='resource_filter'], [name='days']"
+                class="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors">
+            Previous
+        </button>
+        {% endif %}
+        {% if page < total_pages %}
+        <button hx-get="/api/injections?page={{ page + 1 }}"
+                hx-target="#injections-table"
+                hx-include="[name='resource_filter'], [name='days']"
+                class="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors">
+            Next
+        </button>
+        {% endif %}
+    </div>
+</div>
+{% endif %}

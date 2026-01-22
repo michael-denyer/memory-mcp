@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block title %}Pattern Mining - Memory MCP Dashboard{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Page Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-white">Pattern Mining</h1>
+            <p class="text-gray-400 mt-1">
+                {{ mining_stats.pending_count }} pending patterns
+            </p>
+        </div>
+        <button hx-post="/api/mining/run"
+                hx-target="#mining-results"
+                hx-swap="innerHTML"
+                class="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+            Run Mining
+        </button>
+    </div>
+
+    <!-- Mining Stats -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-dark-900 rounded-lg border border-gray-800 p-4">
+            <p class="text-xs text-gray-400">Output Logs</p>
+            <p class="text-2xl font-bold text-white">{{ mining_stats.output_count }}</p>
+        </div>
+        <div class="bg-dark-900 rounded-lg border border-gray-800 p-4">
+            <p class="text-xs text-gray-400">Mined Patterns</p>
+            <p class="text-2xl font-bold text-white">{{ mining_stats.total_patterns }}</p>
+        </div>
+        <div class="bg-dark-900 rounded-lg border border-gray-800 p-4">
+            <p class="text-xs text-gray-400">Pending Review</p>
+            <p class="text-2xl font-bold text-yellow-400">{{ mining_stats.pending_count }}</p>
+        </div>
+        <div class="bg-dark-900 rounded-lg border border-gray-800 p-4">
+            <p class="text-xs text-gray-400">Auto-Promoted</p>
+            <p class="text-2xl font-bold text-green-400">{{ mining_stats.promoted_count }}</p>
+        </div>
+    </div>
+
+    <!-- Mining Results (for run feedback) -->
+    <div id="mining-results"></div>
+
+    <!-- Pending Patterns -->
+    <div class="bg-dark-900 rounded-lg border border-gray-800 overflow-hidden">
+        <div class="px-4 py-3 border-b border-gray-800">
+            <h2 class="text-lg font-semibold text-white">Pending Patterns</h2>
+        </div>
+        <div id="patterns-list" class="divide-y divide-gray-800">
+            {% if patterns %}
+                {% for pattern in patterns %}
+                <div id="pattern-{{ pattern.id }}" class="p-4 hover:bg-dark-800/50">
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="px-2 py-0.5 text-xs font-medium rounded bg-gray-700 text-gray-300">
+                                    {{ pattern.pattern_type }}
+                                </span>
+                                <span class="text-xs text-gray-500">×{{ pattern.occurrence_count }}</span>
+                                <span class="text-xs {% if pattern.confidence >= 0.7 %}text-green-400{% elif pattern.confidence >= 0.5 %}text-yellow-400{% else %}text-gray-400{% endif %}">
+                                    {{ "%.0f"|format(pattern.confidence * 100) }}% conf
+                                </span>
+                            </div>
+                            <p class="text-sm text-gray-200 line-clamp-3">{{ pattern.pattern }}</p>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button hx-post="/api/mining/{{ pattern.id }}/approve"
+                                    hx-target="#pattern-{{ pattern.id }}"
+                                    hx-swap="outerHTML"
+                                    class="p-2 text-gray-400 hover:text-green-400 hover:bg-green-500/10 rounded-lg transition-colors"
+                                    title="Approve and promote">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                </svg>
+                            </button>
+                            <button hx-post="/api/mining/{{ pattern.id }}/reject"
+                                    hx-target="#pattern-{{ pattern.id }}"
+                                    hx-swap="outerHTML swap:300ms"
+                                    class="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                                    title="Reject">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="p-8 text-center text-gray-500">
+                    <svg class="w-12 h-12 text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                    </svg>
+                    <p>No pending patterns</p>
+                    <p class="text-sm mt-1">Patterns will appear here after mining runs</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

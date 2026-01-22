@@ -475,7 +475,28 @@ memory-mcp-cli consolidate
 
 # Show memory system status
 memory-mcp-cli status
+
+# Launch web dashboard
+memory-mcp-cli dashboard
+# Open http://127.0.0.1:8765 in browser
 ```
+
+### Web Dashboard
+
+View and manage your memories through a web interface:
+
+```bash
+memory-mcp-cli dashboard
+```
+
+The dashboard at http://127.0.0.1:8765 provides:
+- **Overview** — Stats, category distribution, helpfulness metrics, memories over time
+- **Hot Cache** — Pin/unpin, promote/demote memories
+- **Memories** — Search and browse all memories with trust/utility scores
+- **Mining** — Review and approve/reject mined patterns
+- **Injections** — Track which memories were injected into context
+- **Sessions** — Browse conversation sessions and their memories
+- **Graph** — Visualize knowledge graph relationships
 
 <details>
 <summary>From source? Prefix commands with `uv run`</summary>

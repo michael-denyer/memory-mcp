@@ -100,13 +100,11 @@ def run_mining(ctx: click.Context, hours: int) -> None:
             console.print("[bold]Mining Results[/bold]")
             console.print(f"  Outputs processed: [cyan]{result['outputs_processed']}[/cyan]")
             console.print(f"  Patterns found: [cyan]{result['patterns_found']}[/cyan]")
-            console.print(f"  New patterns: [green]{result['new_patterns']}[/green]")
+            console.print(f"  New memories: [green]{result['new_memories']}[/green]")
             console.print(f"  Updated patterns: [yellow]{result['updated_patterns']}[/yellow]")
-            auto_approved = result.get("auto_approved", 0)
-            if auto_approved > 0:
-                console.print(
-                    f"  Auto-approved: [magenta]{auto_approved}[/magenta] (promoted to hot cache)"
-                )
+            promoted = result.get("promoted_to_hot", 0)
+            if promoted > 0:
+                console.print(f"  Promoted to hot: [magenta]{promoted}[/magenta]")
     finally:
         storage.close()
 

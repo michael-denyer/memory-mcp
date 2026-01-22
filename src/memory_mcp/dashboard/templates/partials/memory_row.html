@@ -18,18 +18,32 @@
     <td class="px-4 py-3">
         <p class="text-sm text-gray-200 line-clamp-2 max-w-md">{{ memory.content }}</p>
     </td>
-    <td class="px-4 py-3">
-        {% if memory.tags %}
-        <div class="flex flex-wrap gap-1">
-            {% for tag in memory.tags[:3] %}
-            <span class="px-1.5 py-0.5 text-xs bg-gray-700 text-gray-300 rounded">{{ tag }}</span>
-            {% endfor %}
-            {% if memory.tags|length > 3 %}
-            <span class="px-1.5 py-0.5 text-xs bg-gray-700 text-gray-400 rounded">+{{ memory.tags|length - 3 }}</span>
-            {% endif %}
-        </div>
+    <!-- Trust Score -->
+    <td class="px-4 py-3 text-center">
+        {% set trust = memory.trust_score|default(0.7) %}
+        {% if trust >= 0.7 %}
+        <span class="text-xs font-medium text-green-400" title="High trust">{{ "%.2f"|format(trust) }}</span>
+        {% elif trust >= 0.4 %}
+        <span class="text-xs font-medium text-yellow-400" title="Medium trust">{{ "%.2f"|format(trust) }}</span>
         {% else %}
-        <span class="text-gray-500 text-xs">-</span>
+        <span class="text-xs font-medium text-red-400" title="Low trust">{{ "%.2f"|format(trust) }}</span>
+        {% endif %}
+    </td>
+    <!-- Helpfulness (Used/Retrieved) -->
+    <td class="px-4 py-3 text-center">
+        {% set retrieved = memory.retrieved_count|default(0) %}
+        {% set used = memory.used_count|default(0) %}
+        {% if retrieved > 0 %}
+            {% set rate = (used / retrieved * 100)|int %}
+            {% if rate >= 50 %}
+            <span class="text-xs font-medium text-green-400" title="{{ used }} used / {{ retrieved }} retrieved">{{ used }}/{{ retrieved }}</span>
+            {% elif rate >= 25 %}
+            <span class="text-xs font-medium text-yellow-400" title="{{ used }} used / {{ retrieved }} retrieved">{{ used }}/{{ retrieved }}</span>
+            {% else %}
+            <span class="text-xs font-medium text-red-400" title="{{ used }} used / {{ retrieved }} retrieved">{{ used }}/{{ retrieved }}</span>
+            {% endif %}
+        {% else %}
+        <span class="text-xs text-gray-500" title="Not yet retrieved">—</span>
         {% endif %}
     </td>
     <td class="px-4 py-3 text-right">
