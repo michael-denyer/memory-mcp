@@ -782,18 +782,22 @@ PATTERN_EXTRACTORS = [
 ]
 
 
-def extract_patterns(text: str, ner_confidence: float = 0.7) -> list[ExtractedPattern]:
+def extract_patterns(
+    text: str, ner_enabled: bool = True, ner_confidence: float = 0.7
+) -> list[ExtractedPattern]:
     """Extract all patterns from text, deduplicated by pattern content.
 
     Args:
         text: Text to extract patterns from.
+        ner_enabled: Whether to run NER entity extraction.
         ner_confidence: Minimum confidence for NER entity extraction.
     """
     # Run all regex extractors
     all_patterns = [pattern for extractor in PATTERN_EXTRACTORS for pattern in extractor(text)]
 
-    # Run NER extractor with configurable threshold
-    all_patterns.extend(extract_entities_ner(text, min_confidence=ner_confidence))
+    # Run NER extractor if enabled
+    if ner_enabled:
+        all_patterns.extend(extract_entities_ner(text, min_confidence=ner_confidence))
 
     # Deduplicate while preserving order (first occurrence wins)
     seen: dict[str, ExtractedPattern] = {}
@@ -825,7 +829,11 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
     auto_approved = 0
 
     for log_id, content, _ in outputs:
-        patterns = extract_patterns(content, ner_confidence=settings.ner_confidence_threshold)
+        patterns = extract_patterns(
+            content,
+            ner_enabled=settings.ner_enabled,
+            ner_confidence=settings.ner_confidence_threshold,
+        )
         total_patterns += len(patterns)
 
         for pattern in patterns:

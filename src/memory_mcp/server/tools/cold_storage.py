@@ -54,12 +54,27 @@ def remember(
         ),
     ] = "project",
     tags: Annotated[list[str] | None, Field(description="Tags for categorization")] = None,
+    category: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Subcategory within type (e.g., 'decision', 'architecture', 'import', "
+                "'command', 'api', 'config'). Helps organize memories."
+            )
+        ),
+    ] = None,
     session_id: Annotated[
         str | None, Field(description="Session ID for conversation provenance tracking")
     ] = None,
 ) -> dict:
     """Store a new memory. Returns the memory ID."""
-    log.debug("remember() called: type={} tags={} session={}", memory_type, tags, session_id)
+    log.debug(
+        "remember() called: type={} category={} tags={} session={}",
+        memory_type,
+        category,
+        tags,
+        session_id,
+    )
 
     # Validate content not empty
     if not content or not content.strip():
@@ -99,6 +114,7 @@ def remember(
         tags=tag_list,
         session_id=effective_session_id,
         project_id=project_id,
+        category=category,
     )
 
     # Record metrics (merged=False since we can't detect semantic merges at this level)

@@ -287,12 +287,13 @@ class TestAutoBootstrap:
         readme = tmp_path / "README.md"
         readme.write_text("# Test Project\n\n- Feature one\n- Feature two\n")
 
-        # Create fresh storage for this test
-        settings = Settings(db_path=tmp_path / "test.db")
+        # Create fresh storage for this test (enable auto_bootstrap)
+        settings = Settings(db_path=tmp_path / "test.db", auto_bootstrap=True)
         test_storage = Storage(settings)
 
-        # Monkeypatch the server.app's storage and cwd
+        # Monkeypatch the server.app's storage, settings, and cwd
         monkeypatch.setattr(server.app, "storage", test_storage)
+        monkeypatch.setattr(server.app, "settings", settings)
         monkeypatch.chdir(tmp_path)
 
         # Clear the bootstrap tracking set
@@ -317,12 +318,13 @@ class TestAutoBootstrap:
         from memory_mcp import server
         from memory_mcp.config import Settings
 
-        # Create fresh storage for this test
-        settings = Settings(db_path=tmp_path / "test.db")
+        # Create fresh storage for this test (enable auto_bootstrap)
+        settings = Settings(db_path=tmp_path / "test.db", auto_bootstrap=True)
         test_storage = Storage(settings)
 
-        # Monkeypatch the server.app's storage and cwd (empty directory)
+        # Monkeypatch the server.app's storage, settings, and cwd (empty directory)
         monkeypatch.setattr(server.app, "storage", test_storage)
+        monkeypatch.setattr(server.app, "settings", settings)
         monkeypatch.chdir(tmp_path)
 
         # Clear the bootstrap tracking set
@@ -348,12 +350,13 @@ class TestAutoBootstrap:
         readme = tmp_path / "README.md"
         readme.write_text("# Test Project\n\n- New content\n")
 
-        # Create fresh storage for this test
-        settings = Settings(db_path=tmp_path / "test.db")
+        # Create fresh storage for this test (enable auto_bootstrap)
+        settings = Settings(db_path=tmp_path / "test.db", auto_bootstrap=True)
         test_storage = Storage(settings)
 
-        # Monkeypatch the server's storage and cwd
+        # Monkeypatch the server's storage, settings, and cwd
         monkeypatch.setattr(server.app, "storage", test_storage)
+        monkeypatch.setattr(server.app, "settings", settings)
         monkeypatch.chdir(tmp_path)
 
         # Clear the bootstrap tracking set
@@ -378,12 +381,13 @@ class TestAutoBootstrap:
         readme = tmp_path / "README.md"
         readme.write_text("# Auto Bootstrap Test\n\n- Content line\n")
 
-        # Create fresh storage for this test
-        settings = Settings(db_path=tmp_path / "test.db")
+        # Create fresh storage for this test (enable auto_bootstrap)
+        settings = Settings(db_path=tmp_path / "test.db", auto_bootstrap=True)
         test_storage = Storage(settings)
 
-        # Monkeypatch the server's storage and cwd
+        # Monkeypatch the server's storage, settings, and cwd
         monkeypatch.setattr(server.app, "storage", test_storage)
+        monkeypatch.setattr(server.app, "settings", settings)
         monkeypatch.chdir(tmp_path)
 
         # Clear the bootstrap tracking set
@@ -400,6 +404,39 @@ class TestAutoBootstrap:
         # Verify memories exist
         hot_memories = test_storage.get_hot_memories()
         assert len(hot_memories) >= 1
+
+        test_storage.close()
+
+    def test_try_auto_bootstrap_disabled_by_default(self, tmp_path, monkeypatch):
+        """Auto-bootstrap returns False when disabled (default behavior)."""
+        from memory_mcp import server
+        from memory_mcp.config import Settings
+
+        # Set up temp directory with README
+        readme = tmp_path / "README.md"
+        readme.write_text("# Test Project\n\n- Feature one\n- Feature two\n")
+
+        # Create fresh storage with default settings (auto_bootstrap=False)
+        settings = Settings(db_path=tmp_path / "test.db")
+        assert settings.auto_bootstrap is False  # Verify default is False
+        test_storage = Storage(settings)
+
+        # Monkeypatch the server.app's storage, settings, and cwd
+        monkeypatch.setattr(server.app, "storage", test_storage)
+        monkeypatch.setattr(server.app, "settings", settings)
+        monkeypatch.chdir(tmp_path)
+
+        # Clear the bootstrap tracking set
+        server.app._auto_bootstrap_attempted.clear()
+
+        # Trigger auto-bootstrap - should return False since disabled
+        result = server.app._try_auto_bootstrap()
+
+        assert result is False
+
+        # Verify no memories were created
+        hot_memories = test_storage.get_hot_memories()
+        assert len(hot_memories) == 0
 
         test_storage.close()
 
@@ -832,9 +869,17 @@ class TestContextShaping:
     def test_recall_includes_formatted_context(self, storage, monkeypatch):
         """recall response includes formatted_context and context_summary."""
         import memory_mcp.server as server_module
+        from memory_mcp.server import app as server_app
+        from memory_mcp.server.tools import cold_storage
 
         monkeypatch.setattr(server_module, "storage", storage)
         monkeypatch.setattr(server_module, "settings", storage.settings)
+        # Also patch the app module where recall() gets storage from
+        monkeypatch.setattr(server_app, "storage", storage)
+        monkeypatch.setattr(server_app, "settings", storage.settings)
+        # And patch cold_storage which imports storage at module load time
+        monkeypatch.setattr(cold_storage, "storage", storage)
+        monkeypatch.setattr(cold_storage, "settings", storage.settings)
 
         # Store a memory
         storage.store_memory(

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -18,9 +17,6 @@ from memory_mcp.models import (
     MemoryType,
     PromotionSource,
 )
-
-if TYPE_CHECKING:
-    pass
 
 log = get_logger("storage.memory_crud")
 
@@ -209,6 +205,7 @@ class MemoryCrudMixin:
         source_log_id: int | None = None,
         session_id: str | None = None,
         project_id: str | None = None,
+        category: str | None = None,
     ) -> tuple[int, bool]:
         """Store a new memory with embedding.
 
@@ -221,6 +218,7 @@ class MemoryCrudMixin:
             source_log_id: For mined memories, the originating output_log ID
             session_id: Conversation session ID for provenance tracking
             project_id: Project ID for project-aware filtering (e.g., "github/owner/repo")
+            category: Subcategory within type (e.g., "decision", "architecture", "import")
 
         Returns:
             Tuple of (memory_id, is_new) where is_new indicates if a new
@@ -263,6 +261,31 @@ class MemoryCrudMixin:
                 self.settings.importance_code_weight,
                 self.settings.importance_entity_weight,
             )
+
+        # Pre-compute embedding early - used for ML classification and semantic dedup
+        # The embedding provider has caching, so this won't duplicate work
+        embedding = self._embedding_engine.embed(content)
+
+        # Auto-infer category if not provided
+        if category is None:
+            if self.settings.ml_classification_enabled:
+                # Hybrid ML + regex: uses embedding similarity to category prototypes
+                from memory_mcp.ml_classification import hybrid_classify_category
+
+                category = hybrid_classify_category(
+                    content,
+                    embedding=embedding,
+                    provider=self._embedding_engine,
+                    ml_threshold=self.settings.ml_classification_threshold,
+                )
+            else:
+                # Pure regex-based classification
+                from memory_mcp.helpers import infer_category
+
+                category = infer_category(content)
+
+            if category:
+                log.debug("Auto-inferred category '{}' from content", category)
 
         with self.transaction() as conn:
             # Check if memory already exists (project-scoped when filtering enabled)
@@ -307,10 +330,8 @@ class MemoryCrudMixin:
 
                 return memory_id, False
 
-            # Compute embedding for new content (needed for dedup check and insert)
-            embedding = self._embedding_engine.embed(content)
-
-            # Semantic deduplication: check for very similar existing memories
+            # Embedding already computed above for ML classification
+            # Now use it for semantic deduplication
             if self.settings.semantic_dedup_enabled:
                 similar = self._find_semantic_duplicate(
                     conn, embedding, self.settings.semantic_dedup_threshold, project_id
@@ -330,9 +351,9 @@ class MemoryCrudMixin:
                 INSERT INTO memories (
                     content, content_hash, memory_type, source, is_hot,
                     trust_score, importance_score, source_log_id, extracted_at,
-                    session_id, project_id
+                    session_id, project_id, category
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING id
                 """,
                 (
@@ -347,6 +368,7 @@ class MemoryCrudMixin:
                     extracted_at,
                     session_id,
                     project_id,
+                    category,
                 ),
             )
             memory_id = cursor.fetchone()[0]
@@ -470,6 +492,7 @@ class MemoryCrudMixin:
         extracted_at = datetime.fromisoformat(extracted_at_str) if extracted_at_str else None
         session_id = self._get_row_value(row, "session_id")
         project_id = self._get_row_value(row, "project_id")
+        category = self._get_row_value(row, "category")
 
         hot_score = self._compute_hot_score(row["access_count"], last_accessed_dt)
         salience_score = self._compute_salience_score(
@@ -495,6 +518,7 @@ class MemoryCrudMixin:
             extracted_at=extracted_at,
             session_id=session_id,
             project_id=project_id,
+            category=category,
             similarity=similarity,
             hot_score=hot_score,
             salience_score=salience_score,

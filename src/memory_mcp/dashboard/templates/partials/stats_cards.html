@@ -21,7 +21,7 @@
             <div>
                 <p class="text-sm font-medium text-gray-400">Hot Cache</p>
                 <p class="text-3xl font-bold text-white mt-1">
-                    {{ hot_stats.get('count', 0) }}
+                    {{ hot_stats.get('current_count', 0) }}
                     <span class="text-lg text-gray-500">/ {{ hot_stats.get('max_items', 20) }}</span>
                 </p>
                 {% if hot_stats.get('pinned_count', 0) > 0 %}
@@ -39,7 +39,7 @@
         <!-- Progress bar -->
         <div class="mt-4">
             <div class="w-full bg-gray-700 rounded-full h-2">
-                {% set fill_pct = (hot_stats.get('count', 0) / hot_stats.get('max_items', 20) * 100) | round %}
+                {% set fill_pct = (hot_stats.get('current_count', 0) / hot_stats.get('max_items', 20) * 100) | round %}
                 <div class="bg-orange-500 h-2 rounded-full transition-all duration-300"
                      style="width: {{ fill_pct }}%"></div>
             </div>

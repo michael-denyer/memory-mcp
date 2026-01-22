@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -16,9 +15,6 @@ from memory_mcp.models import (
     Memory,
     PromotionSource,
 )
-
-if TYPE_CHECKING:
-    pass
 
 log = get_logger("storage.hot_cache")
 
@@ -228,37 +224,57 @@ class HotCacheMixin:
         Skips pinned memories. Called during maintenance if auto_demote is enabled.
         Uses created_at as fallback when last_accessed_at is NULL (newly promoted).
 
+        Temporal-scope-aware demotion:
+        - Durable memories (antipattern, landmine, convention, architecture): 2x base time
+        - Stable memories (decision, preference, lesson, constraint): base time
+        - Transient memories (context, bug, todo): 0.5x base time
+
         Returns list of demoted memory IDs.
         """
         if not self.settings.auto_demote:
             return []
 
+        from memory_mcp.helpers import get_demotion_multiplier
+
         demoted_ids = []
-        cutoff = f"-{self.settings.demotion_days} days"
+        base_demotion_days = self.settings.demotion_days
 
         with self._connection() as conn:
-            # Find stale non-pinned hot memories
-            # Use COALESCE to fall back to created_at for newly promoted memories
+            # Fetch all non-pinned hot memories with their category and last access
             rows = conn.execute(
                 """
-                SELECT id FROM memories
-                WHERE is_hot = 1
-                  AND is_pinned = 0
-                  AND COALESCE(last_accessed_at, created_at) < datetime('now', ?)
-                """,
-                (cutoff,),
+                SELECT id, category, COALESCE(last_accessed_at, created_at) as last_activity
+                FROM memories
+                WHERE is_hot = 1 AND is_pinned = 0
+                """
             ).fetchall()
 
-            stale_ids = [row["id"] for row in rows]
+            stale_candidates = []
+            for row in rows:
+                category = row["category"]
+                last_activity = datetime.fromisoformat(row["last_activity"])
+
+                # Category-aware demotion time
+                multiplier = get_demotion_multiplier(category)
+                effective_demotion_days = int(base_demotion_days * multiplier)
+
+                # Check if stale based on effective threshold
+                days_since_access = (datetime.now() - last_activity).days
+                if days_since_access >= effective_demotion_days:
+                    stale_candidates.append(
+                        (row["id"], category, effective_demotion_days, days_since_access)
+                    )
 
         # Demote each (outside the read transaction)
-        for memory_id in stale_ids:
+        for memory_id, category, effective_days, days_since in stale_candidates:
             if self.demote_from_hot(memory_id):
                 demoted_ids.append(memory_id)
                 log.info(
-                    "Auto-demoted stale memory id={} (not accessed in {} days)",
+                    "Auto-demoted stale memory id={} (category={}, days={}, threshold={})",
                     memory_id,
-                    self.settings.demotion_days,
+                    category,
+                    days_since,
+                    effective_days,
                 )
 
         # Record summary audit entry for batch demotion
@@ -271,7 +287,8 @@ class HotCacheMixin:
                         {
                             "count": len(demoted_ids),
                             "memory_ids": demoted_ids,
-                            "demotion_days": self.settings.demotion_days,
+                            "base_demotion_days": base_demotion_days,
+                            "note": "Category-aware thresholds applied",
                         }
                     ),
                 )

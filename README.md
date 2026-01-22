@@ -80,13 +80,9 @@ uv tool install hot-memory-mcp[mlx]
 # or: pip install hot-memory-mcp[mlx]
 ```
 
-**Want smarter entity extraction?** Install with NER (Named Entity Recognition) support:
-```bash
-uv tool install hot-memory-mcp[ner]
-# or both: uv tool install hot-memory-mcp[mlx,ner]
-```
-
-NER automatically identifies and tags entities in your memories — people, organizations, locations, dates, code references — making recall more precise. Without NER, pattern mining still works but relies on keyword matching.
+**Included by default:**
+- **NER (Named Entity Recognition)** — Automatically identifies people, organizations, locations in your memories for better pattern mining
+- **ML Classification** — Semantic category inference (antipattern, decision, convention, etc.) using embedding similarity
 
 ### Configure
 
