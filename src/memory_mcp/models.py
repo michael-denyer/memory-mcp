@@ -73,6 +73,7 @@ class RelationType(str, Enum):
     REFINES = "refines"  # More specific version
     CONTRADICTS = "contradicts"  # Conflicting information
     ELABORATES = "elaborates"  # Provides more detail
+    MENTIONS = "mentions"  # Source content mentions an entity (weaker than elaborates)
 
 
 class PatternStatus(str, Enum):

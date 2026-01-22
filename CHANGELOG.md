@@ -4,6 +4,25 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.5] - 2026-01-22
+
+### Added
+
+- **Entity extraction for pattern mining** - Extracts technology and decision entities from Claude outputs
+  - Technology entities: databases, frameworks, languages, tools with context-aware patterns
+  - Decision entities: architecture/design choices with rationale extraction
+  - Confidence scoring based on context quality (rationale, alternatives boost confidence)
+
+- **MENTIONS relation type** - New knowledge graph relation for entity linking
+  - Source memories auto-link to extracted technology entities via MENTIONS
+  - Decision entities auto-link to mentioned technologies via DEPENDS_ON
+  - Creates rich semantic connections during mining
+
+- **Auto-linking during mining** - `run_mining()` now creates knowledge graph links
+  - Tracks which memories came from each output log via `source_log_id`
+  - Links source content to extracted entities automatically
+  - New helper: `get_memories_by_source_log()` for provenance queries
+
 ## [0.5.4] - 2026-01-22
 
 ### Added
