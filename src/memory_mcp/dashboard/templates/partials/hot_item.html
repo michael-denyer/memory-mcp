@@ -1,0 +1,66 @@
+<!-- Single hot cache item -->
+<div id="hot-{{ memory.id }}" class="bg-dark-900 rounded-lg border border-gray-800 p-4 hover:border-gray-700 transition-colors">
+    <div class="flex items-start justify-between gap-4">
+        <!-- Content -->
+        <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="px-2 py-0.5 text-xs font-medium rounded border {{ get_type_badge_class(memory.memory_type) }}">
+                    {{ memory.memory_type }}
+                </span>
+                {% if is_pinned %}
+                <span class="px-2 py-0.5 text-xs font-medium rounded border bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                    pinned
+                </span>
+                {% endif %}
+                <span class="text-xs text-gray-500">#{{ memory.id }}</span>
+            </div>
+            <p class="text-gray-200 text-sm line-clamp-2">{{ memory.content }}</p>
+            {% if memory.tags %}
+            <div class="flex flex-wrap gap-1 mt-2">
+                {% for tag in memory.tags[:5] %}
+                <span class="px-1.5 py-0.5 text-xs bg-gray-700 text-gray-300 rounded">{{ tag }}</span>
+                {% endfor %}
+                {% if memory.tags|length > 5 %}
+                <span class="px-1.5 py-0.5 text-xs bg-gray-700 text-gray-400 rounded">+{{ memory.tags|length - 5 }}</span>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Actions -->
+        <div class="flex items-center gap-2 shrink-0">
+            {% if is_pinned %}
+            <button hx-post="/api/hot-cache/{{ memory.id }}/unpin"
+                    hx-target="#hot-{{ memory.id }}"
+                    hx-swap="outerHTML"
+                    class="p-2 text-yellow-400 hover:bg-yellow-500/10 rounded-lg transition-colors"
+                    title="Unpin">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M5 5a2 2 0 012-2h6a2 2 0 012 2v2h2a1 1 0 110 2h-1v7a2 2 0 01-2 2H6a2 2 0 01-2-2V9H3a1 1 0 110-2h2V5z"/>
+                </svg>
+            </button>
+            {% else %}
+            <button hx-post="/api/hot-cache/{{ memory.id }}/pin"
+                    hx-target="#hot-{{ memory.id }}"
+                    hx-swap="outerHTML"
+                    class="p-2 text-gray-400 hover:text-yellow-400 hover:bg-yellow-500/10 rounded-lg transition-colors"
+                    title="Pin">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+                </svg>
+            </button>
+            {% endif %}
+
+            <button hx-post="/api/hot-cache/{{ memory.id }}/demote"
+                    hx-target="#hot-{{ memory.id }}"
+                    hx-swap="outerHTML swap:300ms"
+                    hx-confirm="Demote this memory from hot cache?"
+                    class="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                    title="Demote from hot cache">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+</div>
