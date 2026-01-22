@@ -49,10 +49,10 @@ if [ -z "$MEMORY_MCP_DIR" ]; then
 fi
 
 # Extract the last assistant message with text content from the transcript
-# Transcript format: JSONL with {type: "assistant", message: {content: [{type: "text", text: "..."}]}}
+# Transcript format: JSONL with {message: {role: "assistant", content: [{type: "text", text: "..."}]}}
 LAST_RESPONSE=$(tail -100 "$TRANSCRIPT_PATH" 2>/dev/null | \
     jq -rs '
-        [.[] | select(.type == "assistant") | select(.message.content[]?.type == "text")]
+        [.[] | select(.message.role? == "assistant") | select(.message.content[]?.type == "text")]
         | last
         | .message.content
         | map(select(.type == "text") | .text)
