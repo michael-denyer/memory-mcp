@@ -244,11 +244,10 @@ class MemoryCrudMixin:
             hash_val = content_hash(content)
 
         # Trust score based on source type
-        trust_scores = {
-            MemorySource.MANUAL: self.settings.trust_score_manual,
-            MemorySource.MINED: self.settings.trust_score_mined,
-        }
-        trust_score = trust_scores.get(source, self.settings.trust_score_mined)
+        if source == MemorySource.MANUAL:
+            trust_score = self.settings.trust_score_manual
+        else:
+            trust_score = self.settings.trust_score_mined
 
         # Compute importance score at admission time (MemGPT-inspired)
         importance_score = 0.5  # Default
@@ -655,9 +654,31 @@ class MemoryCrudMixin:
                     "SELECT source, COUNT(*) as count FROM memories GROUP BY source"
                 )
             }
+            by_category = {
+                (row["category"] or "uncategorized"): row["count"]
+                for row in conn.execute(
+                    "SELECT category, COUNT(*) as count FROM memories GROUP BY category"
+                )
+            }
+            # Helpfulness aggregate stats
+            helpfulness = conn.execute(
+                """
+                SELECT
+                    SUM(retrieved_count) as total_retrieved,
+                    SUM(used_count) as total_used,
+                    AVG(trust_score) as avg_trust,
+                    AVG(utility_score) as avg_utility
+                FROM memories
+                """
+            ).fetchone()
             return {
                 "total_memories": total,
                 "hot_cache_count": hot,
                 "by_type": by_type,
                 "by_source": by_source,
+                "by_category": by_category,
+                "total_retrieved": helpfulness["total_retrieved"] or 0,
+                "total_used": helpfulness["total_used"] or 0,
+                "avg_trust": round(helpfulness["avg_trust"] or 0.7, 2),
+                "avg_utility": round(helpfulness["avg_utility"] or 0.25, 2),
             }

@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from memory_mcp.config import get_settings
-from memory_mcp.storage import MemoryType, Storage
+from memory_mcp.storage import MemorySource, MemoryType, PatternStatus, Storage
 
 # Template directory
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -130,7 +130,7 @@ async def hot_cache_page(request: Request) -> HTMLResponse:
 
 def _parse_memory_type(type_str: str | None) -> MemoryType | None:
     """Parse a string to MemoryType enum or None."""
-    if type_str is None:
+    if not type_str:
         return None
     try:
         return MemoryType(type_str)
@@ -302,3 +302,423 @@ async def api_hot_cache_list(request: Request) -> HTMLResponse:
             "memories": hot_memories,
         },
     )
+
+
+# ============================================================================
+# Mining Page and API
+# ============================================================================
+
+
+def _get_mining_stats(s: Storage) -> dict:
+    """Get mining statistics."""
+    # Count output logs
+    output_count = s._conn.execute("SELECT COUNT(*) FROM output_log").fetchone()[0]
+    # Count mined patterns by status
+    pattern_stats = s._conn.execute(
+        """
+        SELECT status, COUNT(*) as count
+        FROM mined_patterns
+        GROUP BY status
+        """
+    ).fetchall()
+    stats = {row["status"]: row["count"] for row in pattern_stats}
+    return {
+        "output_count": output_count,
+        "total_patterns": sum(stats.values()),
+        "pending_count": stats.get("pending", 0),
+        "promoted_count": stats.get("promoted", 0),
+        "rejected_count": stats.get("rejected", 0),
+    }
+
+
+@app.get("/mining", response_class=HTMLResponse)
+async def mining_page(request: Request) -> HTMLResponse:
+    """Pattern mining review page."""
+    s = get_storage()
+    mining_stats = _get_mining_stats(s)
+    patterns = s.get_promotion_candidates(threshold=1, status=PatternStatus.PENDING)
+
+    return templates.TemplateResponse(
+        "mining.html",
+        {
+            "request": request,
+            "mining_stats": mining_stats,
+            "patterns": patterns[:50],  # Limit display
+            "active_page": "mining",
+        },
+    )
+
+
+@app.post("/api/mining/run", response_class=HTMLResponse)
+async def api_run_mining(request: Request) -> HTMLResponse:
+    """Run pattern mining and return results."""
+    from memory_mcp.mining import run_mining
+
+    s = get_storage()
+    result = run_mining(s, hours=24)
+
+    return HTMLResponse(
+        content=f"""
+        <div class="bg-green-500/10 border border-green-500/30 rounded-lg p-4 text-green-400">
+            <p class="font-medium">Mining completed</p>
+            <p class="text-sm mt-1">
+                Processed {result['outputs_processed']} outputs,
+                found {result['patterns_found']} patterns,
+                created {result['new_memories']} new memories
+            </p>
+        </div>
+        """
+    )
+
+
+def _pattern_type_to_memory_type(pattern_type: str) -> MemoryType:
+    """Map pattern type to memory type."""
+    if pattern_type == "fact":
+        return MemoryType.PROJECT
+    if pattern_type == "command":
+        return MemoryType.REFERENCE
+    return MemoryType.PATTERN
+
+
+@app.post("/api/mining/{pattern_id}/approve", response_class=HTMLResponse)
+async def api_approve_pattern(pattern_id: int, request: Request) -> HTMLResponse:
+    """Approve a mined pattern and promote to memory."""
+    s = get_storage()
+    pattern = s.get_mined_pattern(pattern_id)
+    if not pattern:
+        return HTMLResponse(content="")
+
+    mem_type = _pattern_type_to_memory_type(pattern.pattern_type)
+    memory_id, _ = s.store_memory(
+        content=pattern.pattern,
+        memory_type=mem_type,
+        source=MemorySource.MINED,
+        tags=["approved"],
+    )
+    s.promote_to_hot(memory_id)
+    s.delete_mined_pattern(pattern_id)
+
+    return HTMLResponse(content="")
+
+
+@app.post("/api/mining/{pattern_id}/reject", response_class=HTMLResponse)
+async def api_reject_pattern(pattern_id: int, request: Request) -> HTMLResponse:
+    """Reject a mined pattern."""
+    s = get_storage()
+    s.update_pattern_status(pattern_id, PatternStatus.REJECTED)
+    return HTMLResponse(content="")
+
+
+# ============================================================================
+# Injection History Page and API
+# ============================================================================
+
+
+def _get_injection_stats(s: Storage) -> dict:
+    """Get injection statistics."""
+    conn = s._conn
+    today = conn.execute(
+        "SELECT COUNT(*) FROM injection_log WHERE injected_at >= date('now')"
+    ).fetchone()[0]
+    week = conn.execute(
+        "SELECT COUNT(*) FROM injection_log WHERE injected_at >= date('now', '-7 days')"
+    ).fetchone()[0]
+    hot_cache = conn.execute(
+        "SELECT COUNT(*) FROM injection_log WHERE resource = 'hot-cache'"
+    ).fetchone()[0]
+    working_set = conn.execute(
+        "SELECT COUNT(*) FROM injection_log WHERE resource = 'working-set'"
+    ).fetchone()[0]
+    return {
+        "today": today,
+        "week": week,
+        "hot_cache": hot_cache,
+        "working_set": working_set,
+    }
+
+
+def _get_injections(
+    s: Storage,
+    days: int = 7,
+    resource: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
+    """Get recent injections with memory content."""
+    conn = s._conn
+    params: list = [f"-{days} days"]
+    resource_filter = ""
+    if resource:
+        resource_filter = "AND il.resource = ?"
+        params.append(resource)
+    params.extend([limit, offset])
+
+    rows = conn.execute(
+        f"""
+        SELECT il.id, il.memory_id, il.resource, il.injected_at, il.session_id,
+               m.content
+        FROM injection_log il
+        LEFT JOIN memories m ON m.id = il.memory_id
+        WHERE il.injected_at >= datetime('now', ?)
+        {resource_filter}
+        ORDER BY il.injected_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.get("/injections", response_class=HTMLResponse)
+async def injections_page(
+    request: Request,
+    resource_filter: str | None = None,
+    days: int = 7,
+) -> HTMLResponse:
+    """Injection history page."""
+    s = get_storage()
+    injection_stats = _get_injection_stats(s)
+    injections = _get_injections(s, days=days, resource=resource_filter)
+
+    return templates.TemplateResponse(
+        "injections.html",
+        {
+            "request": request,
+            "injection_stats": injection_stats,
+            "injections": injections,
+            "resource_filter": resource_filter,
+            "days": days,
+            "page": 1,
+            "total_pages": 1,
+            "active_page": "injections",
+        },
+    )
+
+
+@app.get("/api/injections", response_class=HTMLResponse)
+async def api_injections(
+    request: Request,
+    resource_filter: str | None = None,
+    days: int = 7,
+    page: int = 1,
+    limit: int = 50,
+) -> HTMLResponse:
+    """Return injections table partial."""
+    s = get_storage()
+    offset = (page - 1) * limit
+    injections = _get_injections(s, days=days, resource=resource_filter, limit=limit, offset=offset)
+
+    # Rough count for pagination
+    total = len(injections) if len(injections) < limit else limit * 2
+    total_pages = max(1, (total + limit - 1) // limit)
+
+    return templates.TemplateResponse(
+        "partials/injection_table.html",
+        {
+            "request": request,
+            "injections": injections,
+            "page": page,
+            "total_pages": total_pages,
+        },
+    )
+
+
+# ============================================================================
+# Sessions Page and API
+# ============================================================================
+
+
+def _get_sessions(s: Storage, limit: int = 50) -> list[dict]:
+    """Get recent sessions with memory counts."""
+    conn = s._conn
+    rows = conn.execute(
+        """
+        SELECT
+            s.session_id,
+            s.project_path,
+            s.topic,
+            s.created_at,
+            s.ended_at,
+            COUNT(m.id) as memory_count,
+            SUM(CASE WHEN hc.memory_id IS NOT NULL THEN 1 ELSE 0 END) as hot_count
+        FROM sessions s
+        LEFT JOIN memories m ON m.session_id = s.session_id
+        LEFT JOIN hot_cache hc ON hc.memory_id = m.id
+        GROUP BY s.session_id
+        ORDER BY s.created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _get_session(s: Storage, session_id: str) -> dict | None:
+    """Get a single session by ID."""
+    conn = s._conn
+    row = conn.execute(
+        """
+        SELECT session_id, project_path, topic, created_at, ended_at
+        FROM sessions
+        WHERE session_id = ?
+        """,
+        (session_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _get_session_memories(s: Storage, session_id: str) -> list[dict]:
+    """Get all memories for a session."""
+    conn = s._conn
+    rows = conn.execute(
+        """
+        SELECT
+            m.*,
+            CASE WHEN hc.memory_id IS NOT NULL THEN 1 ELSE 0 END as is_hot
+        FROM memories m
+        LEFT JOIN hot_cache hc ON hc.memory_id = m.id
+        WHERE m.session_id = ?
+        ORDER BY m.created_at DESC
+        """,
+        (session_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.get("/sessions", response_class=HTMLResponse)
+async def sessions_page(request: Request) -> HTMLResponse:
+    """Sessions list page."""
+    s = get_storage()
+    sessions = _get_sessions(s)
+
+    return templates.TemplateResponse(
+        "sessions.html",
+        {
+            "request": request,
+            "sessions": sessions,
+            "active_page": "sessions",
+        },
+    )
+
+
+@app.get("/sessions/{session_id}", response_class=HTMLResponse)
+async def session_detail_page(session_id: str, request: Request) -> HTMLResponse:
+    """Session detail page."""
+    s = get_storage()
+    session = _get_session(s, session_id)
+    if not session:
+        return HTMLResponse(content="Session not found", status_code=404)
+
+    memories = _get_session_memories(s, session_id)
+
+    return templates.TemplateResponse(
+        "session_detail.html",
+        {
+            "request": request,
+            "session": session,
+            "memories": memories,
+            "active_page": "sessions",
+        },
+    )
+
+
+# ============================================================================
+# Stats History API (for charts)
+# ============================================================================
+
+
+@app.get("/api/stats/history")
+async def api_stats_history(days: int = 30):
+    """Get memory counts by day for time-series charts."""
+    s = get_storage()
+    conn = s._conn
+
+    # Get daily memory counts
+    rows = conn.execute(
+        """
+        SELECT
+            date(created_at) as day,
+            COUNT(*) as count,
+            SUM(CASE WHEN is_hot = 1 THEN 1 ELSE 0 END) as hot_count
+        FROM memories
+        WHERE created_at >= date('now', ?)
+        GROUP BY date(created_at)
+        ORDER BY day
+        """,
+        (f"-{days} days",),
+    ).fetchall()
+
+    return {"days": [dict(row) for row in rows]}
+
+
+# ============================================================================
+# Knowledge Graph Page and API
+# ============================================================================
+
+
+@app.get("/graph", response_class=HTMLResponse)
+async def graph_page(request: Request) -> HTMLResponse:
+    """Knowledge graph visualization page."""
+    s = get_storage()
+    stats = s.get_relationship_stats()
+
+    return templates.TemplateResponse(
+        "graph.html",
+        {
+            "request": request,
+            "stats": stats,
+            "active_page": "graph",
+        },
+    )
+
+
+@app.get("/api/graph")
+async def api_graph_data(limit: int = 100):
+    """Get knowledge graph data for visualization."""
+    s = get_storage()
+    conn = s._conn
+
+    # Get memories that have relationships
+    nodes_rows = conn.execute(
+        """
+        SELECT DISTINCT m.id, m.content, m.memory_type
+        FROM memories m
+        WHERE m.id IN (
+            SELECT from_memory_id FROM memory_relationships
+            UNION
+            SELECT to_memory_id FROM memory_relationships
+        )
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+    # Get relationships
+    edges_rows = conn.execute(
+        """
+        SELECT from_memory_id, to_memory_id, relation_type
+        FROM memory_relationships
+        LIMIT ?
+        """,
+        (limit * 2,),
+    ).fetchall()
+
+    nodes = [
+        {
+            "id": row["id"],
+            "label": row["content"][:40] + "..." if len(row["content"]) > 40 else row["content"],
+            "type": row["memory_type"],
+        }
+        for row in nodes_rows
+    ]
+
+    edges = [
+        {
+            "from": row["from_memory_id"],
+            "to": row["to_memory_id"],
+            "type": row["relation_type"],
+        }
+        for row in edges_rows
+    ]
+
+    return {"nodes": nodes, "edges": edges}

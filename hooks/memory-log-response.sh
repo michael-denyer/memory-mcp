@@ -119,3 +119,19 @@ if [ ${#LOG_CMD[@]} -eq 0 ]; then
 fi
 
 echo "$LAST_RESPONSE" | "${LOG_CMD[@]}" 2>/dev/null || true
+
+# Run mining to extract and store patterns as memories
+# This runs in the background to avoid blocking Claude Code
+MINE_CMD=()
+if command -v uv &> /dev/null; then
+    MINE_CMD=(uv run memory-mcp-cli run-mining --hours 1)
+elif command -v memory-mcp-cli &> /dev/null; then
+    MINE_CMD=(memory-mcp-cli run-mining --hours 1)
+elif [ -x "$HOME/.local/bin/memory-mcp-cli" ]; then
+    MINE_CMD=("$HOME/.local/bin/memory-mcp-cli" run-mining --hours 1)
+fi
+
+if [ ${#MINE_CMD[@]} -gt 0 ]; then
+    # Run mining in background to not block the hook
+    nohup "${MINE_CMD[@]}" > /dev/null 2>&1 &
+fi
