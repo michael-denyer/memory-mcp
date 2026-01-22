@@ -1264,6 +1264,19 @@ class TestMemoryRelationships:
         assert r1.relation_type == RelationType.RELATES_TO
         assert r2.relation_type == RelationType.ELABORATES
 
+    def test_link_memories_mentions_type(self, storage):
+        """Can use MENTIONS relation type for entity extraction linking."""
+        mid1, _ = storage.store_memory("Project uses PostgreSQL for data", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("PostgreSQL", MemoryType.REFERENCE)
+
+        # Link source content to mentioned entity
+        r = storage.link_memories(mid1, mid2, RelationType.MENTIONS)
+
+        assert r is not None
+        assert r.relation_type == RelationType.MENTIONS
+        assert r.from_memory_id == mid1
+        assert r.to_memory_id == mid2
+
     def test_link_memories_prevents_duplicates(self, storage):
         """Same relationship type between same memories returns None."""
         mid1, _ = storage.store_memory("Memory A", MemoryType.PROJECT)
@@ -1288,6 +1301,34 @@ class TestMemoryRelationships:
 
         relation = storage.link_memories(mid1, mid1, RelationType.RELATES_TO)
         assert relation is None
+
+    def test_get_memories_by_source_log(self, storage):
+        """Can retrieve memories by their source_log_id."""
+        # First create an output log to get a valid log_id
+        log_id = storage.log_output("Test output content")
+
+        # Store memories with this source_log_id
+        mid1, _ = storage.store_memory(
+            "Memory from log 1", MemoryType.PROJECT, source_log_id=log_id
+        )
+        mid2, _ = storage.store_memory(
+            "Memory from log 2", MemoryType.PATTERN, source_log_id=log_id
+        )
+        # Store a memory without source_log_id (should not be returned)
+        mid3, _ = storage.store_memory("Memory without log", MemoryType.PROJECT)
+
+        memories = storage.get_memories_by_source_log(log_id)
+
+        assert len(memories) == 2
+        memory_ids = {m.id for m in memories}
+        assert mid1 in memory_ids
+        assert mid2 in memory_ids
+        assert mid3 not in memory_ids
+
+    def test_get_memories_by_source_log_empty(self, storage):
+        """Returns empty list for non-existent source_log_id."""
+        memories = storage.get_memories_by_source_log(99999)
+        assert memories == []
 
     def test_unlink_memories_specific_type(self, storage):
         """unlink_memories removes specific relationship type."""

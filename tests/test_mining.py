@@ -11,6 +11,7 @@ from memory_mcp.mining import (
     extract_code_patterns,
     extract_commands,
     extract_config,
+    extract_decision_entities,
     extract_decisions,
     extract_dependencies,
     extract_entities_ner,
@@ -18,6 +19,7 @@ from memory_mcp.mining import (
     extract_facts,
     extract_imports,
     extract_patterns,
+    extract_tech_entities,
     extract_tech_stack,
 )
 
@@ -451,6 +453,10 @@ class TestPatternType:
         expected |= {"entity_person", "entity_org", "entity_location", "entity_misc"}
         # High-value extractors
         expected |= {"dependency", "api_endpoint"}
+        # Technology entity type
+        expected |= {"entity_technology"}
+        # Decision entity type
+        expected |= {"entity_decision"}
         actual = {pt.value for pt in PatternType}
         assert expected == actual
 
@@ -958,3 +964,225 @@ class TestExtractTechStackImprovements:
         text = "We use Python3.11 for this"
         patterns = extract_tech_stack(text)
         assert len(patterns) >= 1
+
+
+# ========== Technology Entity Extraction Tests ==========
+
+
+class TestExtractTechEntities:
+    """Tests for extract_tech_entities function (knowledge graph linking)."""
+
+    def test_extracts_technology_entity(self):
+        """Extract technology entity with correct type."""
+        text = "This project uses FastAPI for the backend"
+        patterns = extract_tech_entities(text)
+        assert len(patterns) >= 1
+        assert patterns[0].pattern_type == PatternType.ENTITY_TECHNOLOGY
+
+    def test_entity_format(self):
+        """Extracted entity has normalized format."""
+        text = "The API is powered by PostgreSQL"
+        patterns = extract_tech_entities(text)
+        assert len(patterns) >= 1
+        # Should be formatted as "Technology: Name"
+        assert patterns[0].pattern.startswith("Technology:")
+
+    def test_metadata_included(self):
+        """Entity includes metadata for linking."""
+        text = "We use Django for web development"
+        patterns = extract_tech_entities(text)
+        assert len(patterns) >= 1
+        assert patterns[0].metadata is not None
+        assert patterns[0].metadata["entity_type"] == "technology"
+        assert patterns[0].metadata["entity_name"] == "django"
+
+    def test_subcategory_framework(self):
+        """Framework tech has correct subcategory."""
+        text = "The frontend uses React components"
+        patterns = extract_tech_entities(text)
+        assert len(patterns) >= 1
+        react_pattern = next((p for p in patterns if "react" in p.metadata["entity_name"]), None)
+        assert react_pattern is not None
+        assert react_pattern.metadata["subcategory"] == "framework"
+
+    def test_subcategory_database(self):
+        """Database tech has correct subcategory."""
+        text = "Data is stored in MongoDB"
+        patterns = extract_tech_entities(text)
+        assert len(patterns) >= 1
+        mongo_pattern = next((p for p in patterns if "mongodb" in p.metadata["entity_name"]), None)
+        assert mongo_pattern is not None
+        assert mongo_pattern.metadata["subcategory"] == "database"
+
+    def test_subcategory_tool(self):
+        """Tool has correct subcategory."""
+        text = "Deployments use Docker containers"
+        patterns = extract_tech_entities(text)
+        assert len(patterns) >= 1
+        docker_pattern = next((p for p in patterns if "docker" in p.metadata["entity_name"]), None)
+        assert docker_pattern is not None
+        assert docker_pattern.metadata["subcategory"] == "tool"
+
+    def test_subcategory_language(self):
+        """Language has correct subcategory."""
+        text = "The service is written in Rust"
+        patterns = extract_tech_entities(text)
+        assert len(patterns) >= 1
+        rust_pattern = next((p for p in patterns if "rust" in p.metadata["entity_name"]), None)
+        assert rust_pattern is not None
+        assert rust_pattern.metadata["subcategory"] == "language"
+
+    def test_deduplication(self):
+        """Duplicate tech mentions are deduplicated."""
+        text = "We use FastAPI. FastAPI is great. FastAPI handles requests."
+        patterns = extract_tech_entities(text)
+        # Should only have one FastAPI entity
+        fastapi_patterns = [p for p in patterns if "fastapi" in p.metadata.get("entity_name", "")]
+        assert len(fastapi_patterns) == 1
+
+    def test_no_context_skipped(self):
+        """Bare tech mentions without context are not extracted."""
+        text = "fastapi"
+        patterns = extract_tech_entities(text)
+        assert len(patterns) == 0
+
+    def test_high_confidence(self):
+        """Tech entities have high confidence."""
+        text = "The app is built with React"
+        patterns = extract_tech_entities(text)
+        assert len(patterns) >= 1
+        assert patterns[0].confidence >= 0.8
+
+    def test_multiple_technologies(self):
+        """Extract multiple technologies from text."""
+        text = "We use FastAPI for the backend and React for the frontend, with PostgreSQL"
+        patterns = extract_tech_entities(text)
+        # Should find all three
+        entity_names = [p.metadata["entity_name"] for p in patterns]
+        assert "fastapi" in entity_names
+        assert "react" in entity_names
+        assert any("postgres" in name for name in entity_names)
+
+    def test_decided_on_verb(self):
+        """Extract tech from decision verbs."""
+        text = "The team decided on Vue for the UI"
+        patterns = extract_tech_entities(text)
+        assert len(patterns) >= 1
+        assert any("vue" in p.metadata["entity_name"] for p in patterns)
+
+    def test_migrated_to_verb(self):
+        """Extract tech from migration mentions."""
+        text = "We migrated to TypeScript last year"
+        patterns = extract_tech_entities(text)
+        assert len(patterns) >= 1
+        assert any("typescript" in p.metadata["entity_name"] for p in patterns)
+
+
+# ========== Decision Entity Extraction Tests ==========
+
+
+class TestExtractDecisionEntities:
+    """Tests for extract_decision_entities function (knowledge graph linking)."""
+
+    def test_extracts_decision_entity(self):
+        """Extract decision entity with correct type."""
+        text = "We decided to use a microservices architecture"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) >= 1
+        assert patterns[0].pattern_type == PatternType.ENTITY_DECISION
+
+    def test_entity_format(self):
+        """Extracted entity has normalized format."""
+        text = "We chose to implement caching for performance"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) >= 1
+        # Should be formatted as "Decision: ..."
+        assert patterns[0].pattern.startswith("Decision:")
+
+    def test_metadata_included(self):
+        """Entity includes metadata for linking."""
+        text = "We decided to use PostgreSQL for the database"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) >= 1
+        assert patterns[0].metadata is not None
+        assert patterns[0].metadata["entity_type"] == "decision"
+        assert "decision" in patterns[0].metadata
+
+    def test_decision_with_rationale_high_confidence(self):
+        """Decision with rationale has higher confidence."""
+        text = "We chose FastAPI because of its async support and performance"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) >= 1
+        assert patterns[0].confidence >= 0.85
+        assert patterns[0].metadata["has_rationale"] is True
+        assert "rationale" in patterns[0].metadata
+
+    def test_decision_with_alternative(self):
+        """Decision with alternative is captured."""
+        text = "We went with PostgreSQL instead of MySQL for better JSON support"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) >= 1
+        assert "alternative" in patterns[0].metadata
+        assert "mysql" in patterns[0].metadata["alternative"].lower()
+
+    def test_instead_of_pattern(self):
+        """'Instead of X, use Y' pattern is captured correctly."""
+        text = "Instead of MongoDB, we chose PostgreSQL for ACID compliance"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) >= 1
+        # The decision should be PostgreSQL, alternative MongoDB
+        assert "postgresql" in patterns[0].metadata["decision"].lower()
+
+    def test_rather_than_pattern(self):
+        """'Rather than X' pattern is captured."""
+        text = "We decided on microservices rather than a monolith"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) >= 1
+
+    def test_simple_decision_lower_confidence(self):
+        """Simple decisions without rationale have lower confidence."""
+        text = "We decided to implement a caching layer"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) >= 1
+        assert patterns[0].confidence < 0.8
+
+    def test_going_with_pattern(self):
+        """'Going with X' pattern is captured."""
+        text = "We're going with a REST API design for this service"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) >= 1
+
+    def test_deduplication(self):
+        """Duplicate decisions are deduplicated."""
+        text = "We decided to use caching. We chose caching because it's fast."
+        patterns = extract_decision_entities(text)
+        # Should only have one or two, not multiple duplicates
+        caching_patterns = [
+            p for p in patterns if "caching" in p.metadata.get("decision", "").lower()
+        ]
+        assert len(caching_patterns) <= 2
+
+    def test_short_decisions_filtered(self):
+        """Very short decisions are filtered out."""
+        text = "We chose it"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) == 0
+
+    def test_decision_is_statement(self):
+        """'The decision is/was to X' pattern is captured."""
+        text = "The decision was to prioritize security over performance"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) >= 1
+
+    def test_opted_for_pattern(self):
+        """'Opted for X' pattern is captured."""
+        text = "We opted for a serverless architecture for scalability"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) >= 1
+
+    def test_with_since_rationale(self):
+        """Decision with 'since' rationale is captured."""
+        text = "We chose SQLite since it requires no server setup"
+        patterns = extract_decision_entities(text)
+        assert len(patterns) >= 1
+        assert patterns[0].metadata["has_rationale"] is True

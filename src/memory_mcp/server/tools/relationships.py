@@ -39,8 +39,8 @@ def link_memories(
         Field(
             description=(
                 "Relationship type: 'relates_to' (general), 'depends_on' (prerequisite), "
-                "'supersedes' (replaces), 'refines' (more specific), "
-                "'contradicts' (conflict), 'elaborates' (more detail)"
+                "'supersedes' (replaces), 'refines' (more specific), 'contradicts' (conflict), "
+                "'elaborates' (more detail), 'mentions' (references entity)"
             )
         ),
     ],
@@ -54,6 +54,7 @@ def link_memories(
     - "Python 3.12 features" -[supersedes]-> "Python 3.11 features"
     - "Auth implementation" -[depends_on]-> "Database schema"
     - "API endpoint details" -[elaborates]-> "API overview"
+    - "Project notes" -[mentions]-> "PostgreSQL" (entity extraction)
     """
     rel_type = parse_relation_type(relation_type)
     if rel_type is None:

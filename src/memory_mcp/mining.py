@@ -80,6 +80,10 @@ class PatternType(str, Enum):
     DEPENDENCY = "dependency"  # Package dependencies with versions
     API_ENDPOINT = "api_endpoint"  # REST/HTTP endpoints
 
+    # Technology entity type (for knowledge graph linking)
+    ENTITY_TECHNOLOGY = "entity_technology"  # Technology/framework/tool mentions
+    ENTITY_DECISION = "entity_decision"  # Architecture/design decisions with rationale
+
 
 # Common CLI tool prefixes for command extraction
 COMMAND_PREFIXES = (
@@ -127,6 +131,7 @@ class ExtractedPattern:
     pattern: str
     pattern_type: PatternType
     confidence: float = 0.5  # Extraction confidence (0-1)
+    metadata: dict[str, Any] | None = None  # Optional metadata (e.g., entity_type)
 
 
 # ========== NER Pipeline (Lazy-Loaded) ==========
@@ -760,6 +765,226 @@ def extract_api_endpoints(text: str) -> list[ExtractedPattern]:
     return patterns
 
 
+# ========== Entity Extractors (for Knowledge Graph Linking) ==========
+
+
+def extract_tech_entities(text: str) -> list[ExtractedPattern]:
+    """Extract technology entities for knowledge graph linking.
+
+    Unlike extract_tech_stack() which captures contextual usage statements,
+    this extractor outputs normalized entity patterns designed for linking
+    via the MENTIONS relation type.
+
+    Output patterns include:
+    - Normalized entity name
+    - entity_type='technology' metadata
+    - Subcategory (framework, database, tool, language)
+    """
+    patterns = []
+    seen: set[str] = set()
+
+    # Build regex pattern from known tech (longest first to avoid partial matches)
+    tech_pattern = "|".join(re.escape(t) for t in sorted(ALL_TECH, key=len, reverse=True))
+
+    # Context patterns that indicate meaningful tech usage (not just casual mention)
+    context_patterns = [
+        rf"(?:uses?|using|built with|powered by|runs? on|based on|written in)\s+({tech_pattern})",
+        rf"(?:chose|selected|picked|went with|decided on|migrated to)\s+({tech_pattern})",
+        rf"({tech_pattern})\s+(?:server|client|app|api|service|database|db|cache|components?)",
+        rf"(?:the|our|this)\s+({tech_pattern})\s+(?:app|api|server|service|project|backend|frontend)",
+        rf"({tech_pattern})\s*(?:v?\d+\.[\d.]+)",  # With version number
+        rf"(?:stored|persisted|saved)\s+(?:in|with|using)\s+({tech_pattern})",  # Data storage
+        # Role assignment pattern
+        rf"({tech_pattern})\s+(?:for the|as the)\s+(?:backend|frontend|database|cache|api)",
+    ]
+
+    for pattern in context_patterns:
+        try:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                tech = match.group(1).lower()
+                if tech in seen:
+                    continue
+                seen.add(tech)
+
+                # Determine subcategory
+                subcategory = "tool"  # Default
+                for cat, items in KNOWN_TECH.items():
+                    if tech in [t.lower() for t in items]:
+                        subcategory = cat.rstrip("s")  # "frameworks" -> "framework"
+                        break
+
+                # Create entity pattern with normalized name
+                # Format: "Technology: {name}" for easy recall and linking
+                pattern_text = f"Technology: {tech.title()}"
+
+                patterns.append(
+                    ExtractedPattern(
+                        pattern_text,
+                        PatternType.ENTITY_TECHNOLOGY,
+                        confidence=0.85,
+                        metadata={
+                            "entity_type": "technology",
+                            "entity_name": tech,
+                            "subcategory": subcategory,
+                        },
+                    )
+                )
+        except re.error:
+            continue
+
+    return patterns
+
+
+def _build_decision_metadata(
+    groups: list[str],
+    has_rationale: bool,
+    has_alternative: bool,
+    is_inverted_pattern: bool,
+) -> tuple[str, float, dict[str, Any]]:
+    """Build metadata for a decision entity pattern.
+
+    Returns:
+        Tuple of (pattern_text, confidence, metadata).
+    """
+    if has_alternative and len(groups) >= 2:
+        # Handle "instead of Y, use X" vs "chose X instead of Y"
+        if is_inverted_pattern:
+            alternative, decision = groups[0], groups[1]
+        else:
+            decision, alternative = groups[0], groups[1]
+        return (
+            f"Decision: {decision} (over {alternative})",
+            0.8,
+            {
+                "entity_type": "decision",
+                "decision": decision,
+                "alternative": alternative,
+                "has_rationale": False,
+            },
+        )
+
+    if has_rationale and len(groups) >= 2:
+        decision, rationale = groups[0], groups[1]
+        return (
+            f"Decision: {decision} (reason: {rationale})",
+            0.9,
+            {
+                "entity_type": "decision",
+                "decision": decision,
+                "rationale": rationale,
+                "has_rationale": True,
+            },
+        )
+
+    # Simple decision
+    decision = groups[0]
+    return (
+        f"Decision: {decision}",
+        0.7,
+        {
+            "entity_type": "decision",
+            "decision": decision,
+            "has_rationale": False,
+        },
+    )
+
+
+def extract_decision_entities(text: str) -> list[ExtractedPattern]:
+    """Extract decision entities for knowledge graph linking.
+
+    Unlike extract_decisions() which captures contextual decision statements,
+    this extractor outputs normalized entity patterns designed for linking
+    via the MENTIONS relation type.
+
+    Output patterns include:
+    - Normalized decision summary
+    - entity_type='decision' metadata
+    - has_rationale flag for higher confidence
+    - alternatives if "instead of"/"rather than" present
+    """
+    patterns = []
+    seen_decisions: set[str] = set()
+
+    # Pattern groups: (pattern, has_rationale, has_alternative, is_inverted)
+    # Order matters - more specific patterns first
+    decision_patterns = [
+        # Decision with alternative considered (check these first)
+        (
+            r"(?:decided on|chose|went with)\s+(.{5,60}?)\s+(?:instead of|rather than|over)"
+            r"\s+([^.]{5,60}?)(?:\s+for\s+|$|\.)",
+            False,
+            True,
+            False,
+        ),
+        (
+            r"(?:instead of|rather than)\s+(.{5,60}?)[,.]?\s*(?:we |I )?"
+            r"(?:use|chose|using|went with)\s+(.{5,60})",
+            False,
+            True,
+            True,
+        ),
+        # Decision with rationale (higher confidence)
+        (
+            r"(?:we |I )?(?:decided|chose|went with|opted for)\s+(.{5,80}?)"
+            r"\s+because(?:\s+of)?\s+(.{10,100})",
+            True,
+            False,
+            False,
+        ),
+        (
+            r"(?:we |I )?(?:decided|chose|went with|opted for)\s+(.{5,80}?)"
+            r"\s+since\s+(.{10,100})",
+            True,
+            False,
+            False,
+        ),
+        (
+            r"(?:we |I )?(?:decided|chose|went with|opted for)\s+(.{5,80}?)" r"\s+for\s+(.{10,60})",
+            True,
+            False,
+            False,
+        ),
+        # Simple decisions (lower confidence)
+        (
+            r"(?:we |I )?(?:decided to|chose to|going with|opted to)" r"\s+(.{10,80})",
+            False,
+            False,
+            False,
+        ),
+        (r"(?:the )?decision (?:was |is )?to\s+(.{10,80})", False, False, False),
+    ]
+
+    for pattern, has_rationale, has_alternative, is_inverted in decision_patterns:
+        try:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                groups = [g.strip() for g in match.groups() if g]
+                if not groups:
+                    continue
+
+                pattern_text, confidence, metadata = _build_decision_metadata(
+                    groups, has_rationale, has_alternative, is_inverted
+                )
+
+                # Deduplicate by decision key
+                decision_key = metadata["decision"].lower()[:50]
+                if decision_key in seen_decisions:
+                    continue
+                seen_decisions.add(decision_key)
+
+                patterns.append(
+                    ExtractedPattern(
+                        pattern_text,
+                        PatternType.ENTITY_DECISION,
+                        confidence=confidence,
+                        metadata=metadata,
+                    )
+                )
+        except re.error:
+            continue
+
+    return patterns
+
+
 # ========== Main Mining Function ==========
 
 
@@ -779,6 +1004,9 @@ PATTERN_EXTRACTORS = [
     # High-value extractors
     extract_dependencies,
     extract_api_endpoints,
+    # Entity extractors (for knowledge graph linking)
+    extract_tech_entities,
+    extract_decision_entities,
 ]
 
 
@@ -806,6 +1034,65 @@ def extract_patterns(
             seen[p.pattern] = p
 
     return list(seen.values())
+
+
+def _group_entities_by_source(
+    entity_memories: list[tuple[int, str, int | None]],
+) -> dict[int, list[tuple[int, str]]]:
+    """Group entity memories by their source_log_id."""
+    entities_by_source: dict[int, list[tuple[int, str]]] = {}
+    for memory_id, pattern_type, source_log_id in entity_memories:
+        if source_log_id:
+            entities_by_source.setdefault(source_log_id, []).append((memory_id, pattern_type))
+    return entities_by_source
+
+
+def _create_entity_links(
+    storage: Storage,
+    entity_memories: list[tuple[int, str, int | None]],
+) -> int:
+    """Create knowledge graph links for extracted entities.
+
+    For each entity memory:
+    1. Find other memories from the same source_log_id
+    2. Create source_memory -[MENTIONS]-> entity_memory links
+    3. Link related entities (e.g., decision -[DEPENDS_ON]-> technology if decision involves tech)
+
+    Args:
+        storage: Storage instance.
+        entity_memories: List of (memory_id, pattern_type, source_log_id) tuples.
+
+    Returns:
+        Number of links created.
+    """
+    from memory_mcp.storage import RelationType
+
+    def try_link(from_id: int, to_id: int, rel_type: RelationType) -> int:
+        """Attempt to create a link, returning 1 if successful, 0 otherwise."""
+        return 1 if storage.link_memories(from_id, to_id, rel_type) else 0
+
+    links_created = 0
+    entities_by_source = _group_entities_by_source(entity_memories)
+
+    for source_log_id, entities in entities_by_source.items():
+        source_memories = storage.get_memories_by_source_log(source_log_id)
+        entity_ids = {mem_id for mem_id, _ in entities}
+        non_entity_memories = [m for m in source_memories if m.id not in entity_ids]
+
+        # Create MENTIONS links from non-entity memories to entities
+        for entity_id, _ in entities:
+            for source_mem in non_entity_memories:
+                links_created += try_link(source_mem.id, entity_id, RelationType.MENTIONS)
+
+        # Link decisions to technologies (decision -[DEPENDS_ON]-> technology)
+        tech_ids = [m_id for m_id, pt in entities if pt == "entity_technology"]
+        decision_ids = [m_id for m_id, pt in entities if pt == "entity_decision"]
+
+        for decision_id in decision_ids:
+            for tech_id in tech_ids:
+                links_created += try_link(decision_id, tech_id, RelationType.DEPENDS_ON)
+
+    return links_created
 
 
 def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None) -> dict:
@@ -854,8 +1141,14 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
             )
 
     # Auto-approve high-confidence patterns if enabled
+    entity_links_created = 0
     if settings.mining_auto_approve_enabled:
         from memory_mcp.storage import MemorySource, MemoryType, PatternStatus
+
+        # Track entity memories for cross-linking
+        entity_memories: list[
+            tuple[int, str, int | None]
+        ] = []  # (memory_id, pattern_type, source_log_id)
 
         candidates = storage.get_promotion_candidates(threshold=1, status=PatternStatus.PENDING)
         for candidate in candidates:
@@ -892,10 +1185,20 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
                 storage.delete_mined_pattern(candidate.id)
                 auto_approved += 1
 
+                # Track entity patterns for knowledge graph linking
+                if candidate.pattern_type in ("entity_technology", "entity_decision"):
+                    entity_memories.append(
+                        (memory_id, candidate.pattern_type, candidate.source_log_id)
+                    )
+
+        # Create knowledge graph links for entities
+        entity_links_created = _create_entity_links(storage, entity_memories)
+
     return {
         "outputs_processed": len(outputs),
         "patterns_found": total_patterns,
         "new_patterns": new_patterns,
         "updated_patterns": updated_patterns,
         "auto_approved": auto_approved,
+        "entity_links_created": entity_links_created,
     }

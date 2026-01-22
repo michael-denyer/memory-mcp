@@ -555,6 +555,25 @@ class MemoryCrudMixin:
             # Re-fetch with full data using get_memory (RLock allows nested calls)
             return self.get_memory(row["id"])
 
+    def get_memories_by_source_log(self, source_log_id: int) -> list[Memory]:
+        """Get all memories extracted from a specific output log.
+
+        Used for entity linking - find other memories from the same source
+        to create MENTIONS relationships.
+
+        Args:
+            source_log_id: ID of the output_log to find memories for.
+
+        Returns:
+            List of Memory objects that were extracted from this log.
+        """
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM memories WHERE source_log_id = ? ORDER BY id",
+                (source_log_id,),
+            ).fetchall()
+            return [self._row_to_memory(row, conn) for row in rows]
+
     def delete_memory(self, memory_id: int) -> bool:
         """Delete a memory."""
         # Capture content summary for audit before deletion
