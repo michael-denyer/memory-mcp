@@ -504,6 +504,35 @@ def consolidate(
         storage.close()
 
 
+@cli.command("dashboard")
+@click.option("--host", default="127.0.0.1", help="Host to bind to")
+@click.option("--port", default=8765, type=int, help="Port to bind to")
+@click.option("--reload", is_flag=True, help="Enable auto-reload for development")
+def dashboard(host: str, port: int, reload: bool) -> None:
+    """Launch the web dashboard for Memory MCP.
+
+    Opens a browser-based interface for viewing and managing memories.
+
+    Examples:
+
+        # Start dashboard on default port
+        memory-mcp-cli dashboard
+
+        # Use a different port
+        memory-mcp-cli dashboard --port 9000
+
+        # Enable auto-reload for development
+        memory-mcp-cli dashboard --reload
+    """
+    from memory_mcp.dashboard import run_dashboard
+
+    console.print("[bold]Starting Memory MCP Dashboard[/bold]")
+    console.print(f"  URL: [cyan]http://{host}:{port}[/cyan]")
+    console.print("  Press Ctrl+C to stop\n")
+
+    run_dashboard(host=host, port=port, reload=reload)
+
+
 @cli.command("status")
 @click.pass_context
 def status(ctx: click.Context) -> None:

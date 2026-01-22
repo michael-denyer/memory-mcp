@@ -1,0 +1,51 @@
+<!-- Single memory row -->
+<tr id="memory-{{ memory.id }}" class="hover:bg-dark-800/50 transition-colors">
+    <td class="px-4 py-3 text-sm text-gray-400">
+        #{{ memory.id }}
+    </td>
+    <td class="px-4 py-3">
+        <span class="px-2 py-0.5 text-xs font-medium rounded border {{ get_type_badge_class(memory.memory_type) }}">
+            {{ memory.memory_type }}
+        </span>
+    </td>
+    <td class="px-4 py-3">
+        <p class="text-sm text-gray-200 line-clamp-2 max-w-md">{{ memory.content }}</p>
+    </td>
+    <td class="px-4 py-3">
+        {% if memory.tags %}
+        <div class="flex flex-wrap gap-1">
+            {% for tag in memory.tags[:3] %}
+            <span class="px-1.5 py-0.5 text-xs bg-gray-700 text-gray-300 rounded">{{ tag }}</span>
+            {% endfor %}
+            {% if memory.tags|length > 3 %}
+            <span class="px-1.5 py-0.5 text-xs bg-gray-700 text-gray-400 rounded">+{{ memory.tags|length - 3 }}</span>
+            {% endif %}
+        </div>
+        {% else %}
+        <span class="text-gray-500 text-xs">-</span>
+        {% endif %}
+    </td>
+    <td class="px-4 py-3 text-right">
+        <div class="flex items-center justify-end gap-1">
+            <button hx-post="/api/memories/{{ memory.id }}/promote"
+                    hx-target="#memory-{{ memory.id }}"
+                    hx-swap="outerHTML"
+                    class="p-1.5 text-gray-400 hover:text-orange-400 hover:bg-orange-500/10 rounded transition-colors"
+                    title="Promote to hot cache">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+            </button>
+            <button hx-delete="/api/memories/{{ memory.id }}"
+                    hx-target="#memory-{{ memory.id }}"
+                    hx-swap="outerHTML swap:300ms"
+                    hx-confirm="Delete this memory permanently?"
+                    class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
+                    title="Delete memory">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                </svg>
+            </button>
+        </div>
+    </td>
+</tr>

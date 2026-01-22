@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Memory MCP Dashboard{% endblock %}</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            800: '#1e1e2e',
+                            900: '#11111b',
+                            950: '#0a0a0f'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+
+    <style>
+        /* Custom scrollbar for dark mode */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e1e2e;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        /* HTMX loading indicator */
+        .htmx-request .htmx-indicator {
+            opacity: 1;
+        }
+        .htmx-indicator {
+            opacity: 0;
+            transition: opacity 200ms ease-in;
+        }
+
+        /* Fade out animation for deleted items */
+        .htmx-swapping {
+            opacity: 0;
+            transition: opacity 300ms ease-out;
+        }
+    </style>
+</head>
+<body class="bg-dark-950 text-gray-100 min-h-screen">
+    <!-- Navigation -->
+    <nav class="bg-dark-900 border-b border-gray-800 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-14">
+                <!-- Logo -->
+                <div class="flex items-center space-x-3">
+                    <span class="text-2xl">&#129504;</span>
+                    <span class="font-semibold text-lg">Memory MCP</span>
+                </div>
+
+                <!-- Navigation Links -->
+                <div class="flex items-center space-x-1">
+                    <a href="/"
+                       class="px-3 py-2 rounded-md text-sm font-medium transition-colors
+                              {% if active_page == 'overview' %}bg-gray-800 text-white{% else %}text-gray-400 hover:text-white hover:bg-gray-800{% endif %}">
+                        Overview
+                    </a>
+                    <a href="/hot-cache"
+                       class="px-3 py-2 rounded-md text-sm font-medium transition-colors
+                              {% if active_page == 'hot_cache' %}bg-gray-800 text-white{% else %}text-gray-400 hover:text-white hover:bg-gray-800{% endif %}">
+                        Hot Cache
+                    </a>
+                    <a href="/memories"
+                       class="px-3 py-2 rounded-md text-sm font-medium transition-colors
+                              {% if active_page == 'memories' %}bg-gray-800 text-white{% else %}text-gray-400 hover:text-white hover:bg-gray-800{% endif %}">
+                        Memories
+                    </a>
+                </div>
+
+                <!-- Auto-refresh toggle -->
+                <div class="flex items-center space-x-2">
+                    <label class="flex items-center space-x-2 cursor-pointer text-sm text-gray-400">
+                        <input type="checkbox"
+                               id="auto-refresh-toggle"
+                               class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-900">
+                        <span>Auto-refresh</span>
+                    </label>
+                    <span id="refresh-indicator" class="htmx-indicator">
+                        <svg class="animate-spin h-4 w-4 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                        </svg>
+                    </span>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-gray-800 mt-12">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <p class="text-center text-gray-500 text-sm">
+                Memory MCP Dashboard &middot;
+                <a href="https://github.com/michael-denyer/memory-mcp" class="text-blue-400 hover:text-blue-300">GitHub</a>
+            </p>
+        </div>
+    </footer>
+
+    <!-- Auto-refresh script -->
+    <script>
+        (function() {
+            const toggle = document.getElementById('auto-refresh-toggle');
+            const key = 'memory-mcp-auto-refresh';
+
+            // Load preference
+            const saved = localStorage.getItem(key);
+            if (saved === 'true') {
+                toggle.checked = true;
+                startAutoRefresh();
+            }
+
+            toggle.addEventListener('change', function() {
+                localStorage.setItem(key, this.checked);
+                if (this.checked) {
+                    startAutoRefresh();
+                } else {
+                    stopAutoRefresh();
+                }
+            });
+
+            let intervalId = null;
+
+            function startAutoRefresh() {
+                if (intervalId) return;
+                intervalId = setInterval(() => {
+                    // Trigger HTMX refresh on elements with hx-trigger="every 5s"
+                    const statsEl = document.getElementById('stats-container');
+                    if (statsEl) {
+                        htmx.trigger(statsEl, 'refresh');
+                    }
+                }, 5000);
+            }
+
+            function stopAutoRefresh() {
+                if (intervalId) {
+                    clearInterval(intervalId);
+                    intervalId = null;
+                }
+            }
+        })();
+    </script>
+</body>
+</html>

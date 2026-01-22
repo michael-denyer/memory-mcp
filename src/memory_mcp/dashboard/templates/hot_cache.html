@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Hot Cache - Memory MCP Dashboard{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Page Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-white">Hot Cache</h1>
+            <p class="text-gray-400 mt-1">
+                {{ hot_stats.get('count', 0) }} / {{ hot_stats.get('max_items', 20) }} items
+                {% if hot_stats.get('pinned_count', 0) > 0 %}
+                &middot; {{ hot_stats.get('pinned_count', 0) }} pinned
+                {% endif %}
+            </p>
+        </div>
+    </div>
+
+    <!-- Hot Cache Items -->
+    <div id="hot-cache-list" class="space-y-3">
+        {% if memories %}
+            {% for memory in memories %}
+                {% set is_pinned = memory.id in (hot_stats.get('pinned_ids', [])|default([], true)) %}
+                {% include "partials/hot_item.html" %}
+            {% endfor %}
+        {% else %}
+            <div class="bg-dark-900 rounded-lg border border-gray-800 p-8 text-center">
+                <svg class="w-12 h-12 text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+                <p class="text-gray-400">No memories in hot cache</p>
+                <p class="text-gray-500 text-sm mt-1">Promote memories from the browser or let auto-promotion do its work</p>
+                <a href="/memories" class="inline-flex items-center mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
+                    Browse Memories
+                </a>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
