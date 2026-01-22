@@ -18,6 +18,9 @@ from memory_mcp.helpers import (
     cluster_memories_for_display as _cluster_memories_for_display,
 )
 from memory_mcp.helpers import (
+    format_hot_cache_concise as _format_hot_cache_concise,
+)
+from memory_mcp.helpers import (
     format_memories_for_llm as _format_memories_for_llm,
 )
 from memory_mcp.helpers import (
@@ -249,12 +252,12 @@ def hot_cache_resource() -> str:
     directory, auto-bootstraps from README.md, CLAUDE.md, etc.
 
     Records hit/miss metrics for observability (see hot_cache_status).
+    Logs injections for feedback loop analysis (7-day retention).
 
     Project-aware: If project awareness is enabled, filters to current project
     plus global memories.
 
-    Semantic clustering: Groups related memories together to reduce
-    cognitive load (enabled by default, configure via settings).
+    Concise format with category prefixes and metadata for quick scanning.
     """
     # Get current project for project-aware hot cache
     project_id = get_auto_project_id()
@@ -268,39 +271,23 @@ def hot_cache_resource() -> str:
         return "[MEMORY: Hot cache empty - no frequently-accessed patterns yet]"
 
     storage.record_hot_cache_hit()
-    header = "[MEMORY: Hot Cache - High-confidence patterns]"
-    if project_id:
-        header = f"[MEMORY: Hot Cache ({project_id}) - High-confidence patterns]"
 
-    # Feedback nudge to help improve memory ranking
-    feedback_hint = (
-        "\n(If a memory above was helpful, call mark_memory_used(memory_id) "
-        "to improve future recall.)\n"
+    # Log injections for feedback loop tracking
+    session_id = get_current_session_id()
+    memory_ids = [m.id for m in hot_memories]
+    storage.log_injections_batch(
+        memory_ids=memory_ids,
+        resource="hot-cache",
+        session_id=session_id,
+        project_id=project_id,
     )
 
-    # Apply semantic clustering if enabled and enough memories
-    if settings.clustering_display_enabled and len(hot_memories) >= 4:
-        memory_ids = [m.id for m in hot_memories]
-        embeddings = storage.get_embeddings_for_memories(memory_ids)
-
-        if embeddings:
-            clusters, unclustered = _cluster_memories_for_display(
-                memories=hot_memories,
-                embeddings=embeddings,
-                threshold=settings.clustering_display_threshold,
-                min_cluster_size=settings.clustering_min_size,
-                max_clusters=settings.clustering_max_clusters,
-            )
-
-            # Only use clustered format if we got meaningful clusters
-            if clusters:
-                return (
-                    _format_clustered_memory_list(clusters, unclustered, header, include_ids=True)
-                    + feedback_hint
-                )
-
-    # Fall back to flat list
-    return _format_memory_list(hot_memories, header, include_ids=True) + feedback_hint
+    # Use concise format with category prefixes
+    return _format_hot_cache_concise(
+        memories=hot_memories,
+        project_id=project_id,
+        max_chars=settings.hot_cache_display_max_chars,
+    )
 
 
 @mcp.resource("memory://working-set")
@@ -314,6 +301,7 @@ def working_set_resource() -> str:
 
     Smaller and more focused than hot-cache - designed for active work context.
     Semantic clustering groups related items together.
+    Logs injections for feedback loop analysis (7-day retention).
     """
     if not settings.working_set_enabled:
         return "[MEMORY: Working set disabled]"
@@ -322,6 +310,17 @@ def working_set_resource() -> str:
 
     if not working_set:
         return "[MEMORY: Working set empty - no recent activity]"
+
+    # Log injections for feedback loop tracking
+    project_id = get_auto_project_id()
+    session_id = get_current_session_id()
+    memory_ids = [m.id for m in working_set]
+    storage.log_injections_batch(
+        memory_ids=memory_ids,
+        resource="working-set",
+        session_id=session_id,
+        project_id=project_id,
+    )
 
     header = "[MEMORY: Working Set - Active context]"
 

@@ -57,6 +57,34 @@ def format_age(created_at: datetime) -> str:
         return "just now"
 
 
+def get_bayesian_helpfulness(
+    used_count: int,
+    retrieved_count: int,
+    alpha: float = 1.0,
+    beta: float = 3.0,
+) -> float:
+    """Compute Bayesian helpfulness rate using Beta-Binomial posterior.
+
+    Uses the formula: (used + α) / (retrieved + α + β)
+
+    This provides smooth handling of cold start:
+    - 0 used, 0 retrieved → 0.25 (benefit of doubt)
+    - 0 used, 5 retrieved → 0.125 (evidence of low utility)
+    - 2 used, 5 retrieved → 0.33 (decent signal)
+    - 5 used, 10 retrieved → 0.43 (strong signal)
+
+    Args:
+        used_count: Number of times memory was marked as used/helpful
+        retrieved_count: Number of times memory was returned in recall
+        alpha: Prior successes (default 1.0, optimistic)
+        beta: Prior failures (default 3.0, assumes 25% base rate)
+
+    Returns:
+        Estimated helpfulness rate between 0 and 1
+    """
+    return (used_count + alpha) / (retrieved_count + alpha + beta)
+
+
 def get_similarity_confidence(
     similarity: float | None,
     high_threshold: float,
@@ -845,3 +873,179 @@ def cluster_memories_for_display(
             )
 
     return clusters, unclustered
+
+
+# ========== Concise Memory Formatting ==========
+
+# Category display prefixes (uppercase for visibility)
+_CATEGORY_PREFIXES: dict[str, str] = {
+    "antipattern": "ANTIPATTERN",
+    "landmine": "WARNING",
+    "decision": "DECISION",
+    "convention": "CONVENTION",
+    "preference": "PREFERENCE",
+    "lesson": "LESSON",
+    "constraint": "CONSTRAINT",
+    "architecture": "ARCHITECTURE",
+    "context": "CONTEXT",
+    "bug": "BUG",
+    "todo": "TODO",
+}
+
+
+def _get_category_prefix(memory: Memory) -> str:
+    """Get display prefix for memory category.
+
+    Args:
+        memory: Memory to get prefix for
+
+    Returns:
+        Category prefix (e.g., "CONSTRAINT") or empty string
+    """
+    if memory.category:
+        return _CATEGORY_PREFIXES.get(memory.category, memory.category.upper())
+    return ""
+
+
+def _get_confidence_label(memory: Memory) -> str:
+    """Get confidence label for memory.
+
+    Uses trust score as proxy for confidence.
+
+    Args:
+        memory: Memory to get confidence for
+
+    Returns:
+        'high', 'medium', or 'low'
+    """
+    if memory.trust_score >= 0.8:
+        return "high"
+    elif memory.trust_score >= 0.5:
+        return "medium"
+    return "low"
+
+
+def _get_source_label(memory: Memory) -> str | None:
+    """Get source label for memory.
+
+    Args:
+        memory: Memory to get source for
+
+    Returns:
+        Source label or None
+    """
+    if memory.source.value == "mined":
+        return "mined"
+    # Check tags for bootstrap source
+    if memory.tags:
+        for tag in memory.tags:
+            if tag == "auto-bootstrap":
+                return "bootstrap"
+            if tag.endswith(".md"):
+                return tag
+    return None
+
+
+def _format_verified_date(memory: Memory) -> str | None:
+    """Format last verified date (last_accessed_at) as YYYY-MM-DD.
+
+    Args:
+        memory: Memory to format date for
+
+    Returns:
+        Formatted date or None
+    """
+    if memory.last_accessed_at:
+        return memory.last_accessed_at.strftime("%Y-%m-%d")
+    return None
+
+
+def format_memory_concise(
+    memory: Memory,
+    max_chars: int = 200,
+    include_metadata: bool = True,
+) -> str:
+    """Format a memory in concise format for hot cache injection.
+
+    Format:
+    - CATEGORY: content [id:N, confidence: X, source: Y, verified: Z]
+
+    Args:
+        memory: Memory to format
+        max_chars: Maximum characters for content
+        include_metadata: Whether to include metadata brackets
+
+    Returns:
+        Formatted memory string
+    """
+    # Get category prefix
+    prefix = _get_category_prefix(memory)
+
+    # Truncate content
+    content = memory.content
+    if len(content) > max_chars:
+        content = content[:max_chars] + "..."
+
+    # Build metadata parts
+    metadata_parts = [f"id:{memory.id}"]
+
+    if include_metadata:
+        # Confidence
+        confidence = _get_confidence_label(memory)
+        metadata_parts.append(f"confidence: {confidence}")
+
+        # Source (optional)
+        source = _get_source_label(memory)
+        if source:
+            metadata_parts.append(f"source: {source}")
+
+        # Verified date (optional)
+        verified = _format_verified_date(memory)
+        if verified:
+            metadata_parts.append(f"verified: {verified}")
+
+    metadata = ", ".join(metadata_parts)
+
+    # Build final string
+    if prefix:
+        return f"- {prefix}: {content} [{metadata}]"
+    return f"- {content} [{metadata}]"
+
+
+def format_hot_cache_concise(
+    memories: list[Memory],
+    project_id: str | None = None,
+    max_chars: int = 200,
+) -> str:
+    """Format hot cache memories in concise format.
+
+    Format:
+    [MEMORY: Hot Cache (repo: X, N items)]
+    - CONSTRAINT: Use pnpm, never npm. [id:42, confidence: high, verified: 2026-01-10]
+    - CONVENTION: Server changes go in src/... [id:43, confidence: high]
+
+    Args:
+        memories: List of hot cache memories
+        project_id: Current project ID (e.g., "owner/repo")
+        max_chars: Maximum characters per memory content
+
+    Returns:
+        Formatted hot cache string
+    """
+    if not memories:
+        return "[MEMORY: Hot cache empty - no frequently-accessed patterns yet]"
+
+    # Build header
+    repo_part = f"repo: {project_id}, " if project_id else ""
+    header = f"[MEMORY: Hot Cache ({repo_part}{len(memories)} items)]"
+
+    lines = [header]
+
+    for memory in memories:
+        lines.append(format_memory_concise(memory, max_chars=max_chars))
+
+    # Add feedback hint
+    lines.append("")
+    lines.append("(If helpful, call mark_memory_used(id) to improve ranking)")
+
+    return "\n".join(lines)

@@ -213,6 +213,9 @@ class TrustMixin:
         - memory is not already hot
         - salience_score >= threshold (category-aware: lower for antipattern/landmine)
         - OR access_count >= promotion_threshold (legacy fallback)
+        - AND helpfulness check passes (if enough retrievals):
+          - If retrieved_count >= 5: used_rate must be >= 0.25
+          - If retrieved_count < 5: passes by default (cold start benefit of doubt)
 
         High-value categories (antipattern, landmine) use lower thresholds
         so critical warnings surface early in plans.
@@ -225,7 +228,7 @@ class TrustMixin:
         with self._connection() as conn:
             row = conn.execute(
                 """SELECT is_hot, access_count, trust_score, importance_score,
-                          last_accessed_at, category
+                          last_accessed_at, category, retrieved_count, used_count
                    FROM memories WHERE id = ?""",
                 (memory_id,),
             ).fetchone()
@@ -257,6 +260,23 @@ class TrustMixin:
 
             if not (meets_salience_threshold or meets_access_threshold):
                 return False
+
+            # Helpfulness gate: if we have enough retrieval data, require minimum used_rate
+            retrieved_count = row["retrieved_count"] or 0
+            used_count = row["used_count"] or 0
+            helpfulness_warmup_threshold = 5  # Require 5 retrievals before gating
+
+            if retrieved_count >= helpfulness_warmup_threshold:
+                used_rate = used_count / retrieved_count
+                min_used_rate = 0.25  # Require 25% usage rate
+                if used_rate < min_used_rate:
+                    log.debug(
+                        "Skipped promotion for memory id={} (used_rate={:.2f} < {:.2f})",
+                        memory_id,
+                        used_rate,
+                        min_used_rate,
+                    )
+                    return False
 
             promoted = self.promote_to_hot(memory_id, PromotionSource.AUTO_THRESHOLD)
             if promoted:

@@ -494,6 +494,14 @@ class MemoryCrudMixin:
         project_id = self._get_row_value(row, "project_id")
         category = self._get_row_value(row, "category")
 
+        # Helpfulness tracking (v16+)
+        retrieved_count = self._get_row_value(row, "retrieved_count", 0) or 0
+        used_count = self._get_row_value(row, "used_count", 0) or 0
+        last_used_at_str = self._get_row_value(row, "last_used_at")
+        last_used_at = datetime.fromisoformat(last_used_at_str) if last_used_at_str else None
+        utility_score_val = self._get_row_value(row, "utility_score", 0.25)
+        utility_score = utility_score_val if utility_score_val is not None else 0.25
+
         hot_score = self._compute_hot_score(row["access_count"], last_accessed_dt)
         salience_score = self._compute_salience_score(
             importance_score, trust_score, row["access_count"], last_accessed_dt
@@ -519,6 +527,10 @@ class MemoryCrudMixin:
             session_id=session_id,
             project_id=project_id,
             category=category,
+            retrieved_count=retrieved_count,
+            used_count=used_count,
+            last_used_at=last_used_at,
+            utility_score=utility_score,
             similarity=similarity,
             hot_score=hot_score,
             salience_score=salience_score,

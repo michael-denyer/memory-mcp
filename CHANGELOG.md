@@ -4,6 +4,35 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.4] - 2026-01-22
+
+### Added
+
+- **Helpfulness tracking** - Track which memories are actually useful (schema v16)
+  - `retrieved_count` - how often memory appears in recall results
+  - `used_count` - how often memory is marked as helpful
+  - `last_used_at` - when memory was last marked as used
+  - `utility_score` - precomputed Bayesian helpfulness score
+
+- **Bayesian helpfulness scoring** - Uses Beta-Binomial posterior `(used + α) / (retrieved + α + β)`
+  - Cold start gives benefit of doubt (0.25)
+  - Low utility detection emerges naturally from retrievals without usage
+  - New helper: `get_bayesian_helpfulness()` in helpers.py
+
+- **Helpfulness-weighted recall ranking** - New `recall_helpfulness_weight` config (default 0.05)
+  - `utility_score` now factors into composite recall score
+  - Memories that prove helpful rank higher
+
+- **Used-rate promotion gate** - Auto-promotion now requires helpfulness signal
+  - If `retrieved_count >= 5`, requires `used_rate >= 0.25` (25% usage)
+  - Memories below warmup threshold get benefit of doubt
+  - Prevents low-utility memories from being promoted to hot cache
+
+- **Hot cache session recency ordering** - Hot memories ordered for optimal injection
+  - Primary: `last_used_at` (most recently helpful first)
+  - Secondary: `trust_score` (reliability)
+  - Tertiary: `last_accessed_at` (general recency)
+
 ## [0.5.3] - 2026-01-22
 
 ### Added

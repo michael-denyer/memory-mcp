@@ -23,7 +23,14 @@ class HotCacheMixin:
     """Mixin providing hot cache methods for Storage."""
 
     def get_hot_memories(self, project_id: str | None = None) -> list[Memory]:
-        """Get all memories in hot cache, ordered by hot_score descending.
+        """Get all memories in hot cache, ordered for optimal injection.
+
+        Ordering prioritizes (most important first):
+        1. last_used_at (session recency - memories recently marked helpful)
+        2. trust_score (reliability signal)
+        3. last_accessed_at (general recency fallback)
+
+        This provides cheap, non-embedding curation without per-request filtering.
 
         Args:
             project_id: Optional project filter. If provided and project_filter_hot_cache
@@ -48,8 +55,14 @@ class HotCacheMixin:
             for row in rows:
                 memories.append(self._row_to_memory(row, conn))
 
-        # Sort by hot_score descending (highest score first)
-        memories.sort(key=lambda m: m.hot_score or 0, reverse=True)
+        # Sort by: session recency (last_used_at), trust, general recency
+        # None values get timestamp 0 (sort last), negated for descending order
+        def sort_key(m: Memory) -> tuple:
+            last_used_ts = m.last_used_at.timestamp() if m.last_used_at else 0
+            last_accessed_ts = m.last_accessed_at.timestamp() if m.last_accessed_at else 0
+            return (-last_used_ts, -(m.trust_score or 0), -last_accessed_ts)
+
+        memories.sort(key=sort_key)
         return memories
 
     def get_embeddings_for_memories(self, memory_ids: list[int]) -> dict[int, np.ndarray]:

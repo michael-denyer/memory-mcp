@@ -155,6 +155,11 @@ class Memory:
     category: str | None = (
         None  # Subcategory within type (e.g., "decision", "architecture", "import")
     )
+    # Helpfulness tracking (feedback loop)
+    retrieved_count: int = 0  # Times returned in recall results
+    used_count: int = 0  # Times marked as actually helpful
+    last_used_at: datetime | None = None  # When last marked as used
+    utility_score: float = 0.25  # Precomputed Bayesian helpfulness (α=1, β=3 prior)
     # Computed scores (populated during search/recall)
     similarity: float | None = None  # Populated during search
     hot_score: float | None = None  # Computed score for LRU ranking
@@ -168,6 +173,7 @@ class Memory:
     recency_component: float | None = None  # recency_score * weight
     access_component: float | None = None  # access_score * weight
     trust_component: float | None = None  # trust * weight
+    helpfulness_component: float | None = None  # utility_score * weight
     keyword_score: float | None = None  # FTS keyword match score (hybrid search)
 
 
@@ -236,6 +242,7 @@ class ScoreBreakdown:
     recency_component: float  # recency_score * weight
     access_component: float  # access_score * weight
     trust_component: float  # trust * weight
+    helpfulness_component: float = 0.0  # utility_score * weight
 
 
 @dataclass
