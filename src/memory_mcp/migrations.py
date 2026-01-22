@@ -12,7 +12,7 @@ from memory_mcp.logging import get_logger
 log = get_logger("migrations")
 
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 16
 
 SCHEMA = """
 -- Schema version tracking
@@ -477,6 +477,57 @@ def migrate_v13_to_v14(conn: sqlite3.Connection) -> None:
     log.info("Added category column for memory subcategorization")
 
 
+def migrate_v14_to_v15(conn: sqlite3.Connection) -> None:
+    """Add injection_log table for tracking hot cache injections.
+
+    Tracks which memories were injected via hot-cache/working-set resources
+    to enable feedback loop analysis (injection → used correlation).
+    Retention: 7 days, cleaned during maintenance.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS injection_log (
+            id INTEGER PRIMARY KEY,
+            memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            resource TEXT NOT NULL,
+            injected_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            session_id TEXT,
+            project_id TEXT
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_injection_memory ON injection_log(memory_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_injection_time ON injection_log(injected_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_injection_resource ON injection_log(resource)")
+
+    log.info("Created injection_log table for tracking hot cache injections")
+
+
+def migrate_v15_to_v16(conn: sqlite3.Connection) -> None:
+    """Add helpfulness tracking columns for feedback loop.
+
+    New columns on memories table:
+    - retrieved_count: Times memory was returned in recall results
+    - used_count: Times memory was marked as actually helpful
+    - last_used_at: When memory was last marked as used
+    - utility_score: Precomputed Bayesian helpfulness score
+
+    These enable:
+    - Tracking injection → used correlation
+    - Bayesian helpfulness for promotion criteria
+    - Helpfulness-weighted recall ranking
+    """
+    add_column_if_missing(conn, "memories", "retrieved_count", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "memories", "used_count", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "memories", "last_used_at", "TEXT")
+    add_column_if_missing(conn, "memories", "utility_score", "REAL DEFAULT 0.25")
+
+    # Index for ordering by last_used_at (session recency)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_last_used ON memories(last_used_at)")
+
+    log.info("Added helpfulness tracking columns (v16)")
+
+
 # ========== Migration Runner ==========
 
 
@@ -508,6 +559,10 @@ def run_migrations(conn: sqlite3.Connection, from_version: int, settings: Settin
         migrate_v12_to_v13(conn)
     if from_version < 14:
         migrate_v13_to_v14(conn)
+    if from_version < 15:
+        migrate_v14_to_v15(conn)
+    if from_version < 16:
+        migrate_v15_to_v16(conn)
 
 
 def check_schema_version(conn: sqlite3.Connection) -> None:

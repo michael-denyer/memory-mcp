@@ -28,6 +28,7 @@ from memory_mcp.storage.bootstrap import BootstrapMixin
 from memory_mcp.storage.consolidation import ConsolidationMixin
 from memory_mcp.storage.contradictions import ContradictionsMixin
 from memory_mcp.storage.hot_cache import HotCacheMixin
+from memory_mcp.storage.injection_tracking import InjectionTrackingMixin
 from memory_mcp.storage.maintenance import MaintenanceMixin
 from memory_mcp.storage.memory_crud import MemoryCrudMixin, ValidationError
 from memory_mcp.storage.mining_store import MiningStoreMixin
@@ -58,6 +59,7 @@ class Storage(
     PredictionsMixin,
     BootstrapMixin,
     OutputLoggingMixin,
+    InjectionTrackingMixin,
 ):
     """SQLite storage manager with thread-safe connection handling.
 
@@ -77,6 +79,7 @@ class Storage(
     - PredictionsMixin: Predictive cache warming
     - BootstrapMixin: Bootstrap from files
     - OutputLoggingMixin: Output logging for mining
+    - InjectionTrackingMixin: Track hot cache/working set injections
     """
 
     def __init__(self, settings: Settings | None = None):

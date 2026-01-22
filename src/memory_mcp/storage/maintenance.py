@@ -348,7 +348,7 @@ class MaintenanceMixin:
         }
 
     def run_full_cleanup(self) -> dict:
-        """Run comprehensive cleanup: stale memories, old logs, patterns.
+        """Run comprehensive cleanup: stale memories, old logs, patterns, injections.
 
         Orchestrates all maintenance tasks in one call.
 
@@ -370,10 +370,14 @@ class MaintenanceMixin:
         if self.settings.predictive_cache_enabled:
             self.decay_old_sequences()
 
+        # 6. Clean up old injection records (7-day retention)
+        deleted_injections = self.cleanup_old_injections(retention_days=7)
+
         return {
             "hot_cache_demoted": len(demoted_ids),
             "patterns_expired": expired_patterns,
             "logs_deleted": deleted_logs,
             "memories_deleted": memory_cleanup["total_deleted"],
             "memories_deleted_by_type": memory_cleanup["deleted_by_type"],
+            "injections_deleted": deleted_injections,
         }

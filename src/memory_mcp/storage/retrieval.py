@@ -74,16 +74,47 @@ class RetrievalMixin:
         If query is provided, marks the specific retrieval event.
         Otherwise, marks the most recent retrieval for this memory.
 
+        Also updates denormalized counters on the memory:
+        - Increments used_count
+        - Sets last_used_at to current timestamp
+        - Recomputes utility_score (Bayesian helpfulness)
+
         Args:
             memory_id: ID of the memory that was used
             query: Optional query to match specific retrieval
             feedback: Optional feedback (e.g., "helpful", "partially_helpful")
 
         Returns:
-            Number of retrieval events updated
+            Number of retrieval events updated (0 if tracking disabled, 1 if memory updated)
         """
+        # Always update denormalized counters on the memory itself
+        # even if retrieval_events tracking is disabled
+        with self.transaction() as conn:
+            # Update used_count and last_used_at on the memory
+            conn.execute(
+                """
+                UPDATE memories
+                SET used_count = used_count + 1,
+                    last_used_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (memory_id,),
+            )
+
+            # Recompute Bayesian utility_score: (used + α) / (retrieved + α + β)
+            # α=1 (prior successes), β=3 (assumes 25% base rate)
+            conn.execute(
+                """
+                UPDATE memories
+                SET utility_score = CAST(used_count + 1 AS REAL) / (retrieved_count + 4)
+                WHERE id = ?
+                """,
+                (memory_id,),
+            )
+
         if not self.settings.retrieval_tracking_enabled:
-            return 0
+            log.debug("Marked memory {} as used", memory_id)
+            return 1
 
         with self.transaction() as conn:
             if query:
@@ -113,13 +144,12 @@ class RetrievalMixin:
                 )
 
             updated = cursor.rowcount
-            if updated > 0:
-                log.debug(
-                    "Marked {} retrieval(s) as used for memory_id={}",
-                    updated,
-                    memory_id,
-                )
-            return updated
+            log.debug(
+                "Marked memory {} as used ({} retrieval event(s))",
+                memory_id,
+                updated,
+            )
+            return max(1, updated)  # At least 1 for memory update
 
     def get_retrieval_stats(
         self,

@@ -225,18 +225,20 @@ class SearchMixin:
         recency_score: float,
         access_score: float,
         trust_score: float = 1.0,
+        helpfulness_score: float = 0.25,
         weights: RecallModeConfig | None = None,
     ) -> ScoreBreakdown:
         """Compute weighted composite score for ranking.
 
-        Combines semantic similarity with recency, access frequency, and trust.
-        Trust weight is optional (default 0) for backwards compatibility.
+        Combines semantic similarity with recency, access frequency, trust, and helpfulness.
+        Trust and helpfulness weights are optional (default 0 and 0.05 respectively).
 
         Args:
             similarity: Semantic similarity score (0-1)
             recency_score: Time-decayed recency score (0-1)
             access_score: Normalized access count (0-1)
             trust_score: Trust score with decay (0-1)
+            helpfulness_score: Bayesian utility_score (0-1), default 0.25 cold start
             weights: Optional custom weights from recall mode preset
 
         Returns:
@@ -252,18 +254,25 @@ class SearchMixin:
             acc_weight = self.settings.recall_access_weight
 
         trust_weight = self.settings.recall_trust_weight
+        helpfulness_weight = self.settings.recall_helpfulness_weight
 
         sim_component = similarity * sim_weight
         rec_component = recency_score * rec_weight
         acc_component = access_score * acc_weight
         trust_component = trust_score * trust_weight
+        helpfulness_component = helpfulness_score * helpfulness_weight
 
         return ScoreBreakdown(
-            total=sim_component + rec_component + acc_component + trust_component,
+            total=sim_component
+            + rec_component
+            + acc_component
+            + trust_component
+            + helpfulness_component,
             similarity_component=sim_component,
             recency_component=rec_component,
             access_component=acc_component,
             trust_component=trust_component,
+            helpfulness_component=helpfulness_component,
         )
 
     def recall(
@@ -324,6 +333,7 @@ class SearchMixin:
                     m.extracted_at,
                     m.session_id,
                     m.project_id,
+                    m.utility_score,
                     vec_distance_cosine(v.embedding, ?) as distance
                 FROM memory_vectors v
                 JOIN memories m ON m.id = v.rowid
@@ -416,11 +426,16 @@ class SearchMixin:
                         base_trust, created_at, last_accessed_at, memory_type_enum
                     )
 
+                    # Get Bayesian helpfulness from precomputed utility_score
+                    utility_score = row["utility_score"]
+                    helpfulness = utility_score if utility_score is not None else 0.25
+
                     score_breakdown = self._compute_composite_score(
                         effective_similarity,
                         recency_score,
                         access_score,
                         trust_decayed,
+                        helpfulness,
                         weights=mode_config,
                     )
 
@@ -433,6 +448,7 @@ class SearchMixin:
                     memory.recency_component = score_breakdown.recency_component
                     memory.access_component = score_breakdown.access_component
                     memory.trust_component = score_breakdown.trust_component
+                    memory.helpfulness_component = score_breakdown.helpfulness_component
                     # Store keyword score for debugging/transparency
                     memory.keyword_score = keyword_score if keyword_score > 0 else None
                     candidates.append(memory)
@@ -442,7 +458,7 @@ class SearchMixin:
             # Re-rank by composite score
             candidates.sort(key=lambda m: m.composite_score or 0, reverse=True)
 
-            # Take top results and update access counts
+            # Take top results and update access counts and retrieved_count
             memories = candidates[:effective_limit]
             memory_ids_to_check = []
             for memory in memories:
@@ -450,6 +466,7 @@ class SearchMixin:
                     """
                     UPDATE memories
                     SET access_count = access_count + 1,
+                        retrieved_count = retrieved_count + 1,
                         last_accessed_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,

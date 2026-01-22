@@ -43,6 +43,7 @@ The system learns what you use and automatically promotes it. Your most valuable
 | Tool call latency on every memory lookup | Hot cache: **0ms** — already in context |
 | Stale information lingers forever | Trust scoring demotes outdated facts |
 | Flat list of disconnected facts | Knowledge graph connects related concepts |
+| Noise gets promoted alongside signal | Helpfulness tracking filters to what's actually useful |
 
 ## Key Features
 
@@ -51,6 +52,8 @@ The system learns what you use and automatically promotes it. Your most valuable
 🔍 **Semantic search** — Find memories by meaning, not just keywords. Knowledge graph connects related concepts.
 
 🤖 **Self-organizing** — Learns what you use. Auto-promotes frequent patterns. Auto-demotes stale ones.
+
+📊 **Helpfulness tracking** — Measures which memories are actually used. Bayesian scoring ensures only genuinely useful knowledge gets promoted.
 
 🗂️ **Project-aware** — Memories auto-tagged by git repo. Switch projects, get relevant context automatically.
 

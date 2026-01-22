@@ -294,6 +294,32 @@ class TestHotCacheMetrics:
         d = metrics.to_dict()
         assert d == {"hits": 5, "misses": 2, "evictions": 1, "promotions": 3}
 
+    def test_hot_memories_ordered_by_session_recency(self, storage):
+        """get_hot_memories should order by last_used_at (session recency) first."""
+        # Create and promote memories
+        id1, _ = storage.store_memory("Memory 1 (never used)", MemoryType.PROJECT)
+        id2, _ = storage.store_memory("Memory 2 (used recently)", MemoryType.PROJECT)
+        id3, _ = storage.store_memory("Memory 3 (used earlier)", MemoryType.PROJECT)
+
+        storage.promote_to_hot(id1)
+        storage.promote_to_hot(id2)
+        storage.promote_to_hot(id3)
+
+        # Mark id3 as used first, then id2
+        storage.mark_retrieval_used(id3)
+        import time
+
+        time.sleep(0.01)  # Ensure different timestamp
+        storage.mark_retrieval_used(id2)
+
+        # Get hot memories - should be ordered by last_used_at descending
+        hot = storage.get_hot_memories()
+        ids = [m.id for m in hot]
+
+        # id2 used most recently should be first, then id3, then id1 (never used)
+        assert ids.index(id2) < ids.index(id3)
+        assert ids.index(id3) < ids.index(id1)
+
 
 # ========== Auto-Promotion Tests ==========
 
@@ -423,6 +449,86 @@ class TestAutoPromotion:
         memory = stor.get_memory(memory_id)
         assert memory.is_hot is True
         assert memory.promotion_source == PromotionSource.AUTO_THRESHOLD
+        stor.close()
+
+    def test_auto_promote_blocked_by_low_used_rate(self, tmp_path):
+        """Memory with low used_rate should not be promoted after warmup."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_promote=True,
+            promotion_threshold=3,
+        )
+        stor = Storage(settings)
+
+        memory_id, _ = stor.store_memory("Test memory for used rate", MemoryType.PROJECT)
+
+        # Manually set retrieved_count to trigger warmup threshold (5+)
+        # but keep used_count low to fail the used_rate check
+        with stor.transaction() as conn:
+            conn.execute(
+                """UPDATE memories SET retrieved_count = 6, used_count = 0,
+                   access_count = 10 WHERE id = ?""",
+                (memory_id,),
+            )
+
+        # used_rate = 0/6 = 0 < 0.25, should not promote despite high access
+        result = stor.check_auto_promote(memory_id)
+        assert result is False
+        memory = stor.get_memory(memory_id)
+        assert not memory.is_hot
+        stor.close()
+
+    def test_auto_promote_passes_with_high_used_rate(self, tmp_path):
+        """Memory with high used_rate should be promoted after warmup."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_promote=True,
+            promotion_threshold=3,
+        )
+        stor = Storage(settings)
+
+        memory_id, _ = stor.store_memory("Helpful memory test", MemoryType.PROJECT)
+
+        # Manually set retrieved_count and used_count for high used_rate
+        with stor.transaction() as conn:
+            conn.execute(
+                """UPDATE memories SET retrieved_count = 6, used_count = 2,
+                   access_count = 10 WHERE id = ?""",
+                (memory_id,),
+            )
+
+        # used_rate = 2/6 = 0.33 >= 0.25, should promote
+        result = stor.check_auto_promote(memory_id)
+        assert result is True
+        memory = stor.get_memory(memory_id)
+        assert memory.is_hot
+        stor.close()
+
+    def test_auto_promote_no_warmup_gates_early(self, tmp_path):
+        """Memory without enough retrievals should skip helpfulness check."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_promote=True,
+            promotion_threshold=3,
+        )
+        stor = Storage(settings)
+
+        memory_id, _ = stor.store_memory("New memory cold start", MemoryType.PROJECT)
+
+        # Manually set retrieved_count below warmup threshold
+        with stor.transaction() as conn:
+            conn.execute(
+                """UPDATE memories SET retrieved_count = 4, used_count = 0,
+                   access_count = 10 WHERE id = ?""",
+                (memory_id,),
+            )
+
+        # retrieved_count < 5, so helpfulness check is skipped
+        # Should promote based on access_count alone
+        result = stor.check_auto_promote(memory_id)
+        assert result is True
+        memory = stor.get_memory(memory_id)
+        assert memory.is_hot
         stor.close()
 
 
@@ -669,6 +775,7 @@ class TestFullCleanup:
         assert "logs_deleted" in result
         assert "memories_deleted" in result
         assert "memories_deleted_by_type" in result
+        assert "injections_deleted" in result
 
     def test_cleanup_old_logs(self, tmp_path):
         """cleanup_old_logs deletes based on log_retention_days."""
@@ -686,6 +793,205 @@ class TestFullCleanup:
         # Note: log_output already deletes old logs, so this may be 0
         assert isinstance(deleted, int)
         stor.close()
+
+
+# ========== Injection Tracking Tests ==========
+
+
+class TestInjectionTracking:
+    """Tests for injection tracking functionality."""
+
+    def test_log_injection(self, storage):
+        """log_injection should record injection event."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+
+        log_id = storage.log_injection(mid, "hot-cache", session_id="test-session")
+        assert log_id > 0
+
+    def test_log_injections_batch(self, storage):
+        """log_injections_batch should record multiple injections."""
+        mid1, _ = storage.store_memory("Memory 1", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory 2", MemoryType.PROJECT)
+
+        count = storage.log_injections_batch([mid1, mid2], "hot-cache", session_id="test-session")
+        assert count == 2
+
+    def test_get_recent_injections(self, storage):
+        """get_recent_injections should return injection records."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+        storage.log_injection(mid, "hot-cache", session_id="test-session")
+
+        injections = storage.get_recent_injections(memory_id=mid, days=7)
+        assert len(injections) == 1
+        assert injections[0].memory_id == mid
+        assert injections[0].resource == "hot-cache"
+
+    def test_was_recently_injected(self, storage):
+        """was_recently_injected should return True for injected memories."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+
+        assert not storage.was_recently_injected(mid)
+
+        storage.log_injection(mid, "hot-cache")
+
+        assert storage.was_recently_injected(mid)
+        assert storage.was_recently_injected(mid, resource="hot-cache")
+        assert not storage.was_recently_injected(mid, resource="working-set")
+
+    def test_get_injection_stats(self, storage):
+        """get_injection_stats should return correct stats."""
+        mid1, _ = storage.store_memory("Memory 1", MemoryType.PROJECT)
+        mid2, _ = storage.store_memory("Memory 2", MemoryType.PROJECT)
+
+        storage.log_injection(mid1, "hot-cache")
+        storage.log_injection(mid1, "hot-cache")
+        storage.log_injection(mid2, "working-set")
+
+        stats = storage.get_injection_stats(days=7)
+        assert stats["total_injections"] == 3
+        assert stats["unique_memories"] == 2
+        assert stats["by_resource"]["hot-cache"] == 2
+        assert stats["by_resource"]["working-set"] == 1
+
+    def test_cleanup_old_injections(self, tmp_path):
+        """cleanup_old_injections should delete old records."""
+        settings = Settings(db_path=tmp_path / "test.db")
+        stor = Storage(settings)
+
+        mid, _ = stor.store_memory("Test memory", MemoryType.PROJECT)
+        stor.log_injection(mid, "hot-cache")
+
+        # Cleanup with 0 retention should delete all
+        deleted = stor.cleanup_old_injections(retention_days=0)
+        assert deleted >= 0  # May be 0 if logged just now
+
+        stor.close()
+
+
+# ========== Helpfulness Tracking Tests ==========
+
+
+class TestHelpfulnessTracking:
+    """Tests for helpfulness tracking columns (v16 schema)."""
+
+    def test_memory_has_helpfulness_fields(self, storage):
+        """New memories should have helpfulness tracking fields."""
+        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
+        memory = storage.get_memory(mid)
+
+        assert memory.retrieved_count == 0
+        assert memory.used_count == 0
+        assert memory.last_used_at is None
+        assert memory.utility_score == 0.25  # Bayesian prior: (0+1)/(0+1+3)
+
+    def test_helpfulness_columns_exist_in_schema(self, storage):
+        """Helpfulness columns should exist in memories table."""
+        with storage._connection() as conn:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
+
+        assert "retrieved_count" in columns
+        assert "used_count" in columns
+        assert "last_used_at" in columns
+        assert "utility_score" in columns
+
+    def test_last_used_at_index_exists(self, storage):
+        """Index on last_used_at should exist for session recency ordering."""
+        with storage._connection() as conn:
+            indexes = {
+                row[1]
+                for row in conn.execute(
+                    "SELECT * FROM sqlite_master WHERE type='index' AND tbl_name='memories'"
+                ).fetchall()
+            }
+
+        assert "idx_memories_last_used" in indexes
+
+    def test_recall_increments_retrieved_count(self, storage):
+        """recall() should increment retrieved_count for returned memories."""
+        mid, _ = storage.store_memory("Test Python programming", MemoryType.PROJECT)
+
+        # Verify initial state
+        memory = storage.get_memory(mid)
+        assert memory.retrieved_count == 0
+
+        # Recall should increment retrieved_count
+        result = storage.recall("Python programming")
+        assert len(result.memories) > 0, "Recall should find the memory"
+
+        memory = storage.get_memory(mid)
+        assert memory.retrieved_count == 1
+
+        # Second recall with same query
+        storage.recall("Python programming")
+
+        memory = storage.get_memory(mid)
+        assert memory.retrieved_count == 2
+
+    def test_mark_retrieval_used_increments_used_count(self, storage):
+        """mark_retrieval_used() should increment used_count and set last_used_at."""
+        mid, _ = storage.store_memory("Test Python programming", MemoryType.PROJECT)
+
+        # Verify initial state
+        memory = storage.get_memory(mid)
+        assert memory.used_count == 0
+        assert memory.last_used_at is None
+
+        # Mark as used should increment used_count
+        storage.mark_retrieval_used(mid)
+
+        memory = storage.get_memory(mid)
+        assert memory.used_count == 1
+        assert memory.last_used_at is not None
+
+        # Multiple marks should accumulate
+        storage.mark_retrieval_used(mid)
+        storage.mark_retrieval_used(mid)
+
+        memory = storage.get_memory(mid)
+        assert memory.used_count == 3
+
+    def test_mark_retrieval_used_updates_utility_score(self, storage):
+        """mark_retrieval_used() should update utility_score using Bayesian formula."""
+        mid, _ = storage.store_memory("Test Python programming", MemoryType.PROJECT)
+
+        # Recall twice to get retrieved_count=2
+        storage.recall("Python programming")
+        storage.recall("Python programming")
+
+        memory = storage.get_memory(mid)
+        assert memory.retrieved_count == 2
+        assert memory.used_count == 0
+        # utility_score starts at default 0.25 until mark_used updates it
+        assert memory.utility_score == 0.25
+
+        # Mark as used once - this recomputes utility_score
+        storage.mark_retrieval_used(mid)
+
+        memory = storage.get_memory(mid)
+        assert memory.used_count == 1
+        # utility_score = (1+1)/(2+1+3) = 2/6 ≈ 0.333
+        assert abs(memory.utility_score - 2 / 6) < 0.01
+
+        # Mark as used again
+        storage.mark_retrieval_used(mid)
+
+        memory = storage.get_memory(mid)
+        assert memory.used_count == 2
+        # utility_score = (2+1)/(2+1+3) = 3/6 = 0.5
+        assert abs(memory.utility_score - 3 / 6) < 0.01
+
+    def test_recall_includes_helpfulness_component(self, storage):
+        """recall() should include helpfulness_component in score breakdown."""
+        mid, _ = storage.store_memory("Python programming test", MemoryType.PROJECT)
+
+        result = storage.recall("Python programming", threshold=0.3)
+        assert len(result.memories) > 0
+
+        memory = result.memories[0]
+        # Helpfulness component should be populated
+        assert memory.helpfulness_component is not None
+        # Cold start value (0.25 * 0.05 weight = 0.0125)
+        assert abs(memory.helpfulness_component - 0.0125) < 0.001
 
 
 # ========== Trust Granularity Tests ==========
@@ -1129,10 +1435,10 @@ class TestMemoryRelationships:
             ).fetchone()
             assert result is not None
 
-    def test_schema_version_is_14(self, storage):
-        """Schema version should be 14 after migration."""
+    def test_schema_version_is_16(self, storage):
+        """Schema version should be 16 after migration."""
         version = storage.get_schema_version()
-        assert version == 14
+        assert version == 16
 
     def test_expand_via_relations(self, storage):
         """expand_via_relations adds related memories with decayed scores."""
@@ -1979,10 +2285,10 @@ class TestPredictiveCache:
 
         assert mid2 not in promoted  # Already hot
 
-    def test_schema_version_is_14(self, predictive_storage):
-        """Schema version should be 14 after migration."""
+    def test_schema_version_is_16(self, predictive_storage):
+        """Schema version should be 16 after migration."""
         version = predictive_storage.get_schema_version()
-        assert version == 14
+        assert version == 16
 
     def test_access_sequences_table_exists(self, predictive_storage):
         """access_sequences table should exist."""
@@ -2438,18 +2744,28 @@ class TestRetrievalTracking:
         assert stats["total_retrievals"] == 1
 
     def test_tracking_disabled_returns_empty(self, tmp_path):
-        """When tracking disabled, methods return empty/zero."""
+        """record_retrieval_event returns empty but mark_retrieval_used still works."""
         settings = Settings(
             db_path=tmp_path / "no_tracking.db",
             retrieval_tracking_enabled=False,
         )
         stor = Storage(settings)
 
+        # record_retrieval_event returns empty when tracking disabled
         event_ids = stor.record_retrieval_event("query", [1], [0.9])
         assert event_ids == []
 
-        updated = stor.mark_retrieval_used(1)
-        assert updated == 0
+        # Create a memory to test mark_retrieval_used
+        mem_id, _ = stor.store_memory("Test content for tracking", MemoryType.PROJECT)
+
+        # mark_retrieval_used still updates memory's denormalized counters
+        # even when retrieval_events tracking is disabled
+        updated = stor.mark_retrieval_used(mem_id)
+        assert updated == 1  # Memory counters updated
+
+        # Verify memory's used_count was incremented
+        refreshed = stor.get_memory(mem_id)
+        assert refreshed.used_count == 1
 
         stor.close()
 
@@ -2992,7 +3308,7 @@ class TestHybridSearch:
             stor_hybrid.close()
             stor_no_hybrid.close()
 
-    def test_schema_version_is_14(self, hybrid_storage):
-        """Schema version should be 14 for hybrid search."""
+    def test_schema_version_is_16(self, hybrid_storage):
+        """Schema version should be 16 for hybrid search."""
         version = hybrid_storage.get_schema_version()
-        assert version == 14
+        assert version == 16

@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     recall_trust_weight: float = Field(
         default=0.0, description="Weight for trust score in recall ranking (0 to disable)"
     )
+    recall_helpfulness_weight: float = Field(
+        default=0.05,
+        description="Weight for helpfulness (utility_score) in recall ranking",
+    )
 
     # Per-memory-type trust decay rates (in days)
     # Project facts decay slowest (architecture rarely changes)

@@ -745,6 +745,38 @@ class TestContextShaping:
         years_ago = now - timedelta(days=400)
         assert format_age(years_ago) == "1 year"
 
+    def test_bayesian_helpfulness_cold_start(self):
+        """Bayesian helpfulness gives benefit of doubt for cold start."""
+        from memory_mcp.helpers import get_bayesian_helpfulness
+
+        # 0 used, 0 retrieved → 0.25 (benefit of doubt)
+        rate = get_bayesian_helpfulness(0, 0)
+        assert rate == 0.25
+
+    def test_bayesian_helpfulness_low_utility(self):
+        """Bayesian helpfulness detects low utility memories."""
+        from memory_mcp.helpers import get_bayesian_helpfulness
+
+        # 0 used, 5 retrieved → (0+1)/(5+1+3) = 1/9 ≈ 0.111 (evidence of low utility)
+        rate = get_bayesian_helpfulness(0, 5)
+        assert abs(rate - 0.111) < 0.01
+
+    def test_bayesian_helpfulness_decent_signal(self):
+        """Bayesian helpfulness recognizes decent usage signal."""
+        from memory_mcp.helpers import get_bayesian_helpfulness
+
+        # 2 used, 5 retrieved → 0.33 (decent signal)
+        rate = get_bayesian_helpfulness(2, 5)
+        assert abs(rate - 0.333) < 0.01
+
+    def test_bayesian_helpfulness_strong_signal(self):
+        """Bayesian helpfulness recognizes strong usage signal."""
+        from memory_mcp.helpers import get_bayesian_helpfulness
+
+        # 5 used, 10 retrieved → 0.43 (strong signal)
+        rate = get_bayesian_helpfulness(5, 10)
+        assert abs(rate - 0.429) < 0.01
+
     def test_summarize_content_short_text(self):
         """summarize_content returns short text unchanged."""
         from memory_mcp.helpers import summarize_content

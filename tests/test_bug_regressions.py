@@ -258,7 +258,7 @@ class TestSchemaVersioning:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(db_path=Path(tmpdir) / "new.db")
             storage = Storage(settings)
-            assert storage.get_schema_version() == 14  # v14: memory categories
+            assert storage.get_schema_version() == 16  # v16: helpfulness tracking
             storage.close()
 
     def test_wal_mode_enabled(self):
@@ -523,7 +523,7 @@ class TestRecallCompositeScoring:
         assert mem.recency_score > 0.99  # Very close to 1.0 for fresh items
 
     def test_composite_score_combines_factors(self):
-        """Composite score should combine similarity, recency, and access."""
+        """Composite score should combine similarity, recency, access, and helpfulness."""
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(
                 db_path=Path(tmpdir) / "composite.db",
@@ -538,11 +538,12 @@ class TestRecallCompositeScoring:
             assert len(result.memories) > 0
 
             mem = result.memories[0]
-            # Composite should be weighted sum
+            # Composite should be weighted sum including helpfulness (0.25 cold start * 0.05 weight)
             expected = (
                 mem.similarity * storage.settings.recall_similarity_weight
                 + mem.recency_score * storage.settings.recall_recency_weight
                 + 0.0  # access_score is 0 for single-item recall
+                + 0.25 * storage.settings.recall_helpfulness_weight  # cold start helpfulness
             )
             # Allow small floating point difference
             assert abs(mem.composite_score - expected) < 0.01
@@ -639,6 +640,7 @@ class TestRecallCompositeScoring:
         assert mem.recency_component is not None
         assert mem.access_component is not None
         assert mem.trust_component is not None
+        assert mem.helpfulness_component is not None
 
         # Components should sum to composite score
         expected_total = (
@@ -646,6 +648,7 @@ class TestRecallCompositeScoring:
             + mem.recency_component
             + mem.access_component
             + mem.trust_component
+            + mem.helpfulness_component
         )
         assert abs(mem.composite_score - expected_total) < 0.0001
 
