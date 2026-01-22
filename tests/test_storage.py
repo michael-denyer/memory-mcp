@@ -380,6 +380,53 @@ class TestAutoPromotion:
         assert memory.promotion_source == PromotionSource.AUTO_THRESHOLD
         stor.close()
 
+    def test_no_promote_categories(self, tmp_path):
+        """Memories with command or snippet categories should never auto-promote."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_promote=True,
+            promotion_threshold=1,  # Very low to ensure it would normally promote
+            salience_promotion_threshold=0.0,  # Very low to ensure it would normally promote
+        )
+        stor = Storage(settings)
+
+        # Command category - should NOT promote even with many accesses
+        command_content = "git status"
+        command_id, _ = stor.store_memory(command_content, MemoryType.PATTERN)
+        # Manually set category since pattern might not match in test
+        with stor.transaction() as conn:
+            conn.execute("UPDATE memories SET category = 'command' WHERE id = ?", (command_id,))
+
+        for _ in range(10):
+            stor.update_access(command_id)
+
+        assert stor.check_auto_promote(command_id) is False
+        assert not stor.get_memory(command_id).is_hot
+
+        # Snippet category - should NOT promote
+        snippet_content = "[python]\ndef foo(): pass"
+        snippet_id, _ = stor.store_memory(snippet_content, MemoryType.PATTERN)
+        with stor.transaction() as conn:
+            conn.execute("UPDATE memories SET category = 'snippet' WHERE id = ?", (snippet_id,))
+
+        for _ in range(10):
+            stor.update_access(snippet_id)
+
+        assert stor.check_auto_promote(snippet_id) is False
+        assert not stor.get_memory(snippet_id).is_hot
+
+        # Control: architecture category SHOULD promote
+        arch_content = "The system architecture uses microservices"
+        arch_id, _ = stor.store_memory(arch_content, MemoryType.PATTERN)
+        with stor.transaction() as conn:
+            conn.execute("UPDATE memories SET category = 'architecture' WHERE id = ?", (arch_id,))
+
+        stor.update_access(arch_id)
+        assert stor.check_auto_promote(arch_id) is True
+        assert stor.get_memory(arch_id).is_hot
+
+        stor.close()
+
     def test_auto_promote_on_salience(self, tmp_path):
         """Memory should auto-promote when salience score reaches threshold."""
         settings = Settings(
@@ -390,8 +437,12 @@ class TestAutoPromotion:
         )
         stor = Storage(settings)
 
-        # Content with high importance score (code-like content)
-        code_content = "```python\ndef hello():\n    print('hi')\n```"
+        # Content with high importance score (architecture-like content to avoid snippet category)
+        # Note: snippet category (```python) would block promotion
+        code_content = (
+            "The API architecture uses class UserService to handle auth. "
+            "File path: /src/auth.py version 1.2.0"
+        )
         memory_id, _ = stor.store_memory(code_content, MemoryType.PATTERN)
 
         # With high importance, trust=1.0, and recent access, salience should be high enough

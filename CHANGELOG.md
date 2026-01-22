@@ -4,6 +4,41 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.8] - 2026-01-22
+
+### Added
+
+- **New memory categories** - Better organization of mined patterns
+  - `workflow` - Deployment and operational processes (ssh, curl, deploy scripts)
+  - `snippet` - Code snippets with language markers (never promoted to hot cache)
+  - `command` - Short CLI commands (never promoted to hot cache)
+  - `reference` - External resources, URLs, documentation pointers
+  - `observation` - Factual findings and discoveries
+
+- **recategorize CLI command** - Re-run category inference on existing memories
+  - `memory-mcp-cli recategorize --dry-run` to preview changes
+  - `memory-mcp-cli recategorize --all` to recategorize all memories
+  - Useful after category pattern updates
+
+- **Auto-mark recalled memories as used** - Automatic helpfulness tracking
+  - New `retrieval_auto_mark_used` setting (default: True)
+  - Memories returned by `recall()` are automatically marked as used
+  - Fixes helpfulness metrics showing 0% (previously required manual `mark_memory_used()` calls)
+
+### Changed
+
+- **Low-value categories never promoted** - `command` and `snippet` categories are blocked from hot cache promotion
+  - These are easily discoverable or have low recall value
+  - Keeps hot cache focused on high-value tacit knowledge
+
+### Fixed
+
+- **Dashboard sessions page** - Fixed SQL queries using wrong column names
+  - `session_id` → `id`, `created_at` → `started_at`
+  - Sessions page now loads correctly
+
+- **Mining button UX** - Added loading spinner and "Running..." text while mining executes
+
 ## [0.5.7] - 2026-01-22
 
 ### Added

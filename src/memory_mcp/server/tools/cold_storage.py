@@ -250,6 +250,11 @@ def recall(
         similarities = [m.similarity or 0.0 for m in result.memories]
         storage.record_retrieval_event(query, memory_ids, similarities)
 
+        # Auto-mark as used if enabled (assumes recalled = used)
+        if settings.retrieval_auto_mark_used:
+            for memory_id in memory_ids:
+                storage.mark_retrieval_used(memory_id, feedback="auto")
+
     # Generate promotion suggestions for frequently-accessed cold memories
     suggestions = get_promotion_suggestions(result.memories) if result.memories else None
 

@@ -247,6 +247,13 @@ class Settings(BaseSettings):
     retrieval_tracking_enabled: bool = Field(
         default=True, description="Track which recalled memories were actually used"
     )
+    retrieval_auto_mark_used: bool = Field(
+        default=True,
+        description=(
+            "Auto-mark recalled memories as used. When True, memories returned by recall() "
+            "are automatically marked as used since the LLM explicitly requested them."
+        ),
+    )
 
     # Salience scoring (Engram-inspired unified metric)
     # Combines importance + trust + access + recency for promotion/eviction decisions

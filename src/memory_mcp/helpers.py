@@ -361,6 +361,42 @@ _CATEGORY_PATTERNS: dict[str, list[str]] = {
         r"\bneed to\b",
         r"\bshould (add|fix|update|implement)\b",
     ],
+    "workflow": [
+        # [stable] Deployment and operational processes
+        r"\b(deploy|deployment|release|rollout)\b",
+        r"\b(pipeline|workflow|process|procedure)\b",
+        r"\b(step\s*\d|first|then|next|finally)\b.*\b(run|execute|do)\b",
+        r"\b(ssh|curl|wget)\s+",
+        r"\b(staging|production|prod|uat|dev)\b.*\b(server|environment)\b",
+        r"\b(script|verify|check)\b.*\b(before|after)\b",
+    ],
+    "snippet": [
+        # [transient] Code snippets with language markers - lower value, in codebase
+        r"^\[(java|python|bash|json|sql|yaml|xml|go|rust|typescript|javascript)\]",
+        r"^```(java|python|bash|json|sql|yaml|xml|go|rust|typescript|javascript)",
+    ],
+    "command": [
+        # [transient] Short CLI commands - easily discoverable, never promote
+        r"^(git|npm|yarn|pnpm|uv|pip|cargo|go|make|docker|kubectl)\s+\w+$",
+        r"^(cd|ls|pwd|mkdir|rm|cp|mv|cat|grep|find|chmod|chown)\s+",
+        r"^\./[\w.-]+\.sh\b",
+        r"^[\w-]+\s+(--\w+|\-\w)\s*$",  # command with flags only
+    ],
+    "reference": [
+        # [stable] External resources and documentation pointers
+        r"https?://\S+",
+        r"\b(documentation|docs|readme|guide|tutorial)\b",
+        r"\b(see|refer to|check|read)\b.*\b(file|doc|page|link)\b",
+        r"\b(version|v)\s*\d+\.\d+",
+    ],
+    "observation": [
+        # [transient] Factual findings and discoveries
+        r"\bfound\s+\d+\b",
+        r"\b(noticed|observed|saw|see)\s+(that|the)\b",
+        r"\b(there (is|are)|it (is|has))\b",
+        r"[✓✗!]\s+",
+        r"\b(confirmed|verified|checked)\b",
+    ],
 }
 
 # Map categories to temporal scope for retention/decay decisions
@@ -376,6 +412,11 @@ CATEGORY_TEMPORAL_SCOPE: dict[str, str] = {
     "context": "transient",  # Session/task-specific
     "bug": "transient",  # Resolved once fixed
     "todo": "transient",  # Completed or abandoned
+    "workflow": "stable",  # Deployment processes persist
+    "snippet": "transient",  # Code snippets - low value, in codebase
+    "reference": "stable",  # External resources persist
+    "observation": "transient",  # Factual findings - session-specific
+    "command": "transient",  # CLI commands - easily discoverable
 }
 
 
@@ -396,6 +437,24 @@ def get_temporal_scope(category: str | None) -> str:
 # High-value categories that should be promoted more eagerly
 # These contain critical warnings or "don't do X" guidance
 _HIGH_VALUE_CATEGORIES = {"antipattern", "landmine"}
+
+# Low-value categories that should never be promoted to hot cache
+# These are easily discoverable or transient - no need to surface them
+_NO_PROMOTE_CATEGORIES = {"command", "snippet"}
+
+
+def should_promote_category(category: str | None) -> bool:
+    """Check if a category is eligible for hot cache promotion.
+
+    Args:
+        category: Memory category or None
+
+    Returns:
+        True if the category can be promoted, False if it should never be promoted
+    """
+    if category is None:
+        return True  # Uncategorized can be promoted
+    return category not in _NO_PROMOTE_CATEGORIES
 
 
 def get_promotion_salience_threshold(category: str | None, default_threshold: float) -> float:
@@ -463,7 +522,7 @@ def infer_category(content: str) -> str | None:
         return None
 
     # Return category with highest score, with tie-breaker for more specific categories
-    # Priority: negative guidance first (surface early), then critical, then general
+    # Priority: high-value tacit knowledge first, then explicit knowledge
     priority = [
         "antipattern",  # "Don't do X" - surface early in plans
         "landmine",  # Critical: things that can break silently
@@ -473,9 +532,14 @@ def infer_category(content: str) -> str | None:
         "lesson",  # Learnings and discoveries
         "constraint",  # Limitations and requirements
         "architecture",  # System design
+        "workflow",  # Deployment and processes
         "context",  # Background and reasoning
+        "reference",  # External resources
+        "observation",  # Factual findings
         "todo",  # Future work
-        "bug",  # Issues (most generic)
+        "bug",  # Issues
+        "snippet",  # Code snippets (lowest - in codebase)
+        "command",  # CLI commands (lowest - easily discoverable)
     ]
     max_score = max(scores.values())
     candidates = [cat for cat, score in scores.items() if score == max_score]
@@ -890,6 +954,11 @@ _CATEGORY_PREFIXES: dict[str, str] = {
     "context": "CONTEXT",
     "bug": "BUG",
     "todo": "TODO",
+    "workflow": "WORKFLOW",
+    "snippet": "SNIPPET",
+    "reference": "REFERENCE",
+    "observation": "OBSERVATION",
+    "command": "COMMAND",
 }
 
 

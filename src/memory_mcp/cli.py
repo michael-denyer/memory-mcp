@@ -637,6 +637,161 @@ def status(ctx: click.Context) -> None:
         storage.close()
 
 
+@cli.command("recategorize")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview changes without updating database",
+)
+@click.option(
+    "--uncategorized-only",
+    is_flag=True,
+    default=True,
+    help="Only recategorize memories without a category (default: True)",
+)
+@click.option(
+    "--all",
+    "recategorize_all",
+    is_flag=True,
+    help="Recategorize all memories, including those with existing categories",
+)
+@click.pass_context
+def recategorize(
+    ctx: click.Context,
+    dry_run: bool,
+    uncategorized_only: bool,
+    recategorize_all: bool,
+) -> None:
+    """Re-run category inference on existing memories.
+
+    Useful after adding new category patterns to update old memories.
+
+    Examples:
+
+        # Preview what would change (dry-run)
+        memory-mcp-cli recategorize --dry-run
+
+        # Recategorize all uncategorized memories
+        memory-mcp-cli recategorize
+
+        # Recategorize ALL memories (overwrite existing categories)
+        memory-mcp-cli recategorize --all
+
+        # JSON output for scripting
+        memory-mcp-cli --json recategorize
+    """
+    use_json = ctx.obj["json"]
+    settings = get_settings()
+
+    # Import classification function
+    from memory_mcp.helpers import infer_category
+
+    def classify_category(content: str) -> str | None:
+        """Classify content using ML if enabled, else regex."""
+        if settings.ml_classification_enabled:
+            from memory_mcp.ml_classification import hybrid_classify_category
+
+            return hybrid_classify_category(content)
+        return infer_category(content)
+
+    storage = Storage(settings)
+    try:
+        # Determine which memories to process
+        if recategorize_all:
+            where_clause = "1=1"
+            filter_desc = "all"
+        else:
+            where_clause = "category IS NULL"
+            filter_desc = "uncategorized"
+
+        with storage._connection() as conn:
+            rows = conn.execute(
+                f"SELECT id, content, category FROM memories WHERE {where_clause}"
+            ).fetchall()
+
+        updates = []
+        unchanged = 0
+        for row in rows:
+            memory_id = row["id"]
+            content = row["content"]
+            old_category = row["category"]
+            new_category = classify_category(content)
+
+            if new_category != old_category:
+                updates.append(
+                    {
+                        "id": memory_id,
+                        "old": old_category,
+                        "new": new_category,
+                        "preview": content[:60].replace("\n", " "),
+                    }
+                )
+            else:
+                unchanged += 1
+
+        if not dry_run and updates:
+            with storage.transaction() as conn:
+                for update in updates:
+                    conn.execute(
+                        "UPDATE memories SET category = ? WHERE id = ?",
+                        (update["new"], update["id"]),
+                    )
+
+        result = {
+            "filter": filter_desc,
+            "total_checked": len(rows),
+            "updated": len(updates) if not dry_run else 0,
+            "would_update": len(updates) if dry_run else 0,
+            "unchanged": unchanged,
+            "dry_run": dry_run,
+            "changes": updates[:20],  # Limit to first 20 for display
+        }
+
+        if use_json:
+            click.echo(json.dumps({"success": True, **result}))
+        else:
+            action = "Would update" if dry_run else "Updated"
+            count = result["would_update"] if dry_run else result["updated"]
+
+            console.print(f"[bold]Recategorize Results ({filter_desc} memories)[/bold]")
+            console.print(f"  Total checked: [cyan]{result['total_checked']}[/cyan]")
+            console.print(f"  {action}: [green]{count}[/green]")
+            console.print(f"  Unchanged: [dim]{result['unchanged']}[/dim]")
+
+            if updates:
+                console.print("\n[bold]Changes:[/bold]")
+                table = Table(show_header=True)
+                table.add_column("ID", style="cyan", width=6)
+                table.add_column("Old", style="dim", width=12)
+                table.add_column("New", style="green", width=12)
+                table.add_column("Preview", width=50)
+                for u in updates[:20]:
+                    table.add_row(
+                        str(u["id"]),
+                        u["old"] or "(none)",
+                        u["new"] or "(none)",
+                        u["preview"],
+                    )
+                console.print(table)
+                if len(updates) > 20:
+                    console.print(f"  [dim]...and {len(updates) - 20} more[/dim]")
+
+            if dry_run:
+                console.print(
+                    "\n[yellow]Dry run - no changes made. "
+                    "Run without --dry-run to apply.[/yellow]"
+                )
+
+    except Exception as e:
+        if use_json:
+            click.echo(json.dumps({"success": False, "error": str(e)}))
+        else:
+            console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1)
+    finally:
+        storage.close()
+
+
 def main() -> int:
     """Main CLI entry point."""
     try:

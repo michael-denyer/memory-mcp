@@ -530,59 +530,56 @@ async def api_injections(
 
 def _get_sessions(s: Storage, limit: int = 50) -> list[dict]:
     """Get recent sessions with memory counts."""
-    conn = s._conn
-    rows = conn.execute(
-        """
-        SELECT
-            s.session_id,
-            s.project_path,
-            s.topic,
-            s.created_at,
-            s.ended_at,
-            COUNT(m.id) as memory_count,
-            SUM(CASE WHEN hc.memory_id IS NOT NULL THEN 1 ELSE 0 END) as hot_count
-        FROM sessions s
-        LEFT JOIN memories m ON m.session_id = s.session_id
-        LEFT JOIN hot_cache hc ON hc.memory_id = m.id
-        GROUP BY s.session_id
-        ORDER BY s.created_at DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
-    return [dict(row) for row in rows]
+    with s._connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                s.id as session_id,
+                s.project_path,
+                s.topic,
+                s.started_at as created_at,
+                s.last_activity_at as ended_at,
+                COUNT(m.id) as memory_count,
+                SUM(CASE WHEN m.is_hot = 1 THEN 1 ELSE 0 END) as hot_count
+            FROM sessions s
+            LEFT JOIN memories m ON m.session_id = s.id
+            GROUP BY s.id
+            ORDER BY s.started_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
 def _get_session(s: Storage, session_id: str) -> dict | None:
     """Get a single session by ID."""
-    conn = s._conn
-    row = conn.execute(
-        """
-        SELECT session_id, project_path, topic, created_at, ended_at
-        FROM sessions
-        WHERE session_id = ?
-        """,
-        (session_id,),
-    ).fetchone()
-    return dict(row) if row else None
+    with s._connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id as session_id, project_path, topic,
+                   started_at as created_at, last_activity_at as ended_at
+            FROM sessions
+            WHERE id = ?
+            """,
+            (session_id,),
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def _get_session_memories(s: Storage, session_id: str) -> list[dict]:
     """Get all memories for a session."""
-    conn = s._conn
-    rows = conn.execute(
-        """
-        SELECT
-            m.*,
-            CASE WHEN hc.memory_id IS NOT NULL THEN 1 ELSE 0 END as is_hot
-        FROM memories m
-        LEFT JOIN hot_cache hc ON hc.memory_id = m.id
-        WHERE m.session_id = ?
-        ORDER BY m.created_at DESC
-        """,
-        (session_id,),
-    ).fetchall()
-    return [dict(row) for row in rows]
+    with s._connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT m.*
+            FROM memories m
+            WHERE m.session_id = ?
+            ORDER BY m.created_at DESC
+            """,
+            (session_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
 @app.get("/sessions", response_class=HTMLResponse)
@@ -631,24 +628,21 @@ async def session_detail_page(session_id: str, request: Request) -> HTMLResponse
 async def api_stats_history(days: int = 30):
     """Get memory counts by day for time-series charts."""
     s = get_storage()
-    conn = s._conn
-
-    # Get daily memory counts
-    rows = conn.execute(
-        """
-        SELECT
-            date(created_at) as day,
-            COUNT(*) as count,
-            SUM(CASE WHEN is_hot = 1 THEN 1 ELSE 0 END) as hot_count
-        FROM memories
-        WHERE created_at >= date('now', ?)
-        GROUP BY date(created_at)
-        ORDER BY day
-        """,
-        (f"-{days} days",),
-    ).fetchall()
-
-    return {"days": [dict(row) for row in rows]}
+    with s._connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                date(created_at) as day,
+                COUNT(*) as count,
+                SUM(CASE WHEN is_hot = 1 THEN 1 ELSE 0 END) as hot_count
+            FROM memories
+            WHERE created_at >= date('now', ?)
+            GROUP BY date(created_at)
+            ORDER BY day
+            """,
+            (f"-{days} days",),
+        ).fetchall()
+        return {"days": [dict(row) for row in rows]}
 
 
 # ============================================================================
@@ -676,32 +670,29 @@ async def graph_page(request: Request) -> HTMLResponse:
 async def api_graph_data(limit: int = 100):
     """Get knowledge graph data for visualization."""
     s = get_storage()
-    conn = s._conn
+    with s._connection() as conn:
+        nodes_rows = conn.execute(
+            """
+            SELECT DISTINCT m.id, m.content, m.memory_type
+            FROM memories m
+            WHERE m.id IN (
+                SELECT from_memory_id FROM memory_relationships
+                UNION
+                SELECT to_memory_id FROM memory_relationships
+            )
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
 
-    # Get memories that have relationships
-    nodes_rows = conn.execute(
-        """
-        SELECT DISTINCT m.id, m.content, m.memory_type
-        FROM memories m
-        WHERE m.id IN (
-            SELECT from_memory_id FROM memory_relationships
-            UNION
-            SELECT to_memory_id FROM memory_relationships
-        )
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
-
-    # Get relationships
-    edges_rows = conn.execute(
-        """
-        SELECT from_memory_id, to_memory_id, relation_type
-        FROM memory_relationships
-        LIMIT ?
-        """,
-        (limit * 2,),
-    ).fetchall()
+        edges_rows = conn.execute(
+            """
+            SELECT from_memory_id, to_memory_id, relation_type
+            FROM memory_relationships
+            LIMIT ?
+            """,
+            (limit * 2,),
+        ).fetchall()
 
     nodes = [
         {
