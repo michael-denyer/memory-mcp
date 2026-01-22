@@ -1055,7 +1055,7 @@ class TestExtractTechEntities:
 
     def test_multiple_technologies(self):
         """Extract multiple technologies from text."""
-        text = "We use FastAPI for the backend and React for the frontend, with PostgreSQL"
+        text = "We use FastAPI for the backend, React for the frontend, PostgreSQL for the database"
         patterns = extract_tech_entities(text)
         # Should find all three
         entity_names = [p.metadata["entity_name"] for p in patterns]
