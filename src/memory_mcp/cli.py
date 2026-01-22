@@ -60,9 +60,12 @@ def log_output(ctx: click.Context, content: str | None, filepath: str | None) ->
         )
         raise SystemExit(1)
 
+    # Get project_id if project awareness is enabled
+    project_id = get_current_project_id() if settings.project_awareness_enabled else None
+
     storage = Storage(settings)
     try:
-        log_id = storage.log_output(content)
+        log_id = storage.log_output(content, project_id=project_id)
         if use_json:
             click.echo(json.dumps({"success": True, "log_id": log_id}))
         else:
@@ -84,7 +87,6 @@ def run_mining(ctx: click.Context, hours: int) -> None:
         raise SystemExit(1)
 
     from memory_mcp.mining import run_mining as do_mining
-    from memory_mcp.project import get_current_project_id
 
     storage = Storage(settings)
     try:
