@@ -317,6 +317,18 @@ After testing, clean up test data:
 
 ---
 
+### Phase 16: Compact Conversation
+
+**16.1 Run Compact**:
+After completing all tests, prompt the user to run `/compact` to:
+- Reduce conversation context size
+- Test that the session can be resumed after compaction
+- Verify memories persist across conversation summarization
+
+Note: `/compact` is a user-initiated command and cannot be run programmatically by the assistant.
+
+---
+
 ## Test Tracking
 
 Track results as you go:
@@ -377,6 +389,7 @@ Track results as you go:
 | 14.6 | Session Errors | ⬜ | |
 | 14.7 | Mining Edge Cases | ⬜ | |
 | 15 | Cleanup | ⬜ | |
+| 16.1 | Compact Conversation | ⬜ | |
 
 ## Quick Smoke Test
 
