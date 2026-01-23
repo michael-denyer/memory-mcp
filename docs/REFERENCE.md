@@ -2,6 +2,27 @@
 
 Complete API and configuration reference for Memory MCP.
 
+## Slash Commands
+
+With the Claude Code plugin (`claude plugins add michael-denyer/memory-mcp`), these commands are available:
+
+| Command | Description |
+|---------|-------------|
+| `/memory-mcp:remember` | Store a memory interactively |
+| `/memory-mcp:recall` | Search memories by query |
+| `/memory-mcp:hot-cache` | View and manage hot cache |
+| `/memory-mcp:stats` | Show memory statistics |
+| `/memory-mcp:bootstrap` | Seed from project docs |
+| `/memory-mcp:trust` | Validate or invalidate memories |
+| `/memory-mcp:link` | Connect related memories |
+| `/memory-mcp:mining` | Review mined patterns |
+| `/memory-mcp:list` | Browse all memories |
+| `/memory-mcp:forget` | Delete a memory |
+| `/memory-mcp:consolidate` | Merge duplicate memories |
+| `/memory-mcp:maintenance` | Run database maintenance |
+| `/memory-mcp:session` | Manage session context |
+| `/memory-mcp:test-all` | Run internal tests |
+
 ## Tools
 
 ### Memory Operations

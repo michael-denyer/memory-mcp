@@ -56,7 +56,7 @@ uv tool install hot-memory-mcp   # or: pip install hot-memory-mcp
 claude plugins add michael-denyer/memory-mcp
 ```
 
-The plugin gives you auto-configured hooks, slash commands, and the Memory Analyst agent.
+The plugin gives you auto-configured hooks, slash commands, and the Memory Analyst agent. MLX is auto-detected on Apple Silicon.
 
 <details>
 <summary>Manual config (no plugin)</summary>
@@ -72,15 +72,8 @@ Add to `~/.claude.json`:
   }
 }
 ```
-</details>
 
-<details>
-<summary>Apple Silicon optimization</summary>
-
-Add MLX support for faster embeddings:
-```bash
-uv tool install hot-memory-mcp[mlx]
-```
+See [Reference](docs/REFERENCE.md) for full configuration options.
 </details>
 
 Restart Claude Code. The hot cache auto-populates from your project docs.
@@ -133,17 +126,6 @@ Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's *
 
 **The Engram Insight**: Human memory doesn't search — frequently-used patterns are *already there*. That's what hot cache does for Claude.
 
-## Features
-
-- **Instant recall** — Hot cache bypasses tool calls entirely
-- **Self-organizing** — Learns what you use, promotes automatically
-- **Project-aware** — Memories auto-tagged by git repo
-- **Knowledge graph** — Link related concepts, multi-hop recall
-- **Pattern mining** — Learns from Claude's outputs
-- **Trust scoring** — Outdated info decays and sinks
-- **Local & private** — SQLite, no cloud, works offline
-- **Apple Silicon** — MLX auto-detected on M-series Macs
-
 ## Quick Reference
 
 ### Slash Commands (with plugin)
@@ -155,40 +137,25 @@ Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's *
 | `/memory-mcp:hot-cache` | Manage hot cache |
 | `/memory-mcp:stats` | Show statistics |
 | `/memory-mcp:bootstrap` | Seed from project docs |
-| `/memory-mcp:trust` | Validate or invalidate memories |
-| `/memory-mcp:link` | Connect related memories |
-| `/memory-mcp:mining` | Review mined patterns |
 
-<details>
-<summary>All 14 commands</summary>
-
-`bootstrap`, `consolidate`, `forget`, `hot-cache`, `link`, `list`, `maintenance`, `mining`, `recall`, `remember`, `session`, `stats`, `test-all`, `trust`
-</details>
+See [Reference](docs/REFERENCE.md#slash-commands) for all 14 commands.
 
 ### Core Tools
 
-```
-remember(content, type, tags)  → Store
-recall(query)                  → Search
-promote(id) / demote(id)       → Hot cache
-link_memories(from, to, type)  → Knowledge graph
-```
+| Tool | Description |
+|------|-------------|
+| `remember` | Store with semantic embedding |
+| `recall` | Search by meaning |
+| `promote` / `demote` | Hot cache management |
+| `link_memories` | Knowledge graph connections |
 
-### CLI
-
-```bash
-memory-mcp-cli bootstrap    # Seed from project docs
-memory-mcp-cli status       # Show stats
-memory-mcp-cli dashboard    # Web UI at :8765
-memory-mcp-cli consolidate  # Merge duplicates
-memory-mcp-cli hook-check   # Verify hook dependencies
-```
+See [Reference](docs/REFERENCE.md#tools) for full API.
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Reference](docs/REFERENCE.md) | Full API, configuration, MCP resources |
+| [Reference](docs/REFERENCE.md) | Full API, CLI, configuration, MCP resources |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
 
 ## Development
@@ -196,14 +163,8 @@ memory-mcp-cli hook-check   # Verify hook dependencies
 ```bash
 git clone https://github.com/michael-denyer/memory-mcp.git
 cd memory-mcp && uv sync
-uv run pytest -v  # 658 tests
+uv run pytest -v
 ```
-
-| Requirement | Value |
-|-------------|-------|
-| Python | 3.10+ |
-| First run | ~60s (model download) |
-| Startup | 2-5s |
 
 ## License
 

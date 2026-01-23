@@ -77,12 +77,23 @@ flowchart LR
 
 | Path | Purpose |
 |------|---------|
+| `.claude-plugin/` | Claude Code plugin (hooks, commands, agents) |
 | `src/memory_mcp/server/` | MCP server package (tools, resources) |
 | `src/memory_mcp/storage/` | Storage package (SQLite, vectors, hot cache) |
 | `src/memory_mcp/mining.py` | Pattern extraction |
-| `src/memory_mcp/cli.py` | CLI commands for hooks |
+| `src/memory_mcp/cli.py` | CLI commands |
 | `src/memory_mcp/config.py` | Settings and bootstrap file detection |
-| `hooks/memory-log-response.sh` | Claude Code Stop hook |
+
+## Plugin-First Approach
+
+The Claude Code plugin (`.claude-plugin/`) is the primary user interface:
+
+- **Slash commands** (`/memory-mcp:*`) - 14 commands in `.claude-plugin/commands/`
+- **Hooks** - SessionStart (bootstrap), Stop (log response), PreCompact (memory analyst)
+- **Agents** - Memory Analyst for pre-compaction knowledge extraction
+
+The CLI (`memory-mcp-cli`) and MCP tools are implementation details that power the plugin.
+Users install via `claude plugins add michael-denyer/memory-mcp`.
 
 ## Key Features by Version
 
