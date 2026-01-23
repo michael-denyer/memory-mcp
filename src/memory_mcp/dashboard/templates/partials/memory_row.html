@@ -22,9 +22,10 @@
     <td class="px-4 py-3 text-center">
         {% if memory.created_at %}
             {% set created_str = memory.created_at|string %}
-            <span class="text-xs text-gray-400" title="{{ created_str[:19] }}">
-                {{ created_str[:10] }}
-            </span>
+            <div class="flex flex-col">
+                <span class="text-xs text-gray-400">{{ created_str[:10] }}</span>
+                <span class="text-xs text-gray-500">{{ created_str[11:16] }}</span>
+            </div>
         {% else %}
             <span class="text-xs text-gray-500">—</span>
         {% endif %}

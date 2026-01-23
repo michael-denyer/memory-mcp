@@ -889,7 +889,7 @@ wheels = [
 
 [[package]]
 name = "hot-memory-mcp"
-version = "0.5.16"
+version = "0.5.17"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -897,6 +897,7 @@ dependencies = [
     { name = "fastmcp" },
     { name = "jinja2" },
     { name = "loguru" },
+    { name = "mlx-embeddings", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "rich" },
@@ -926,6 +927,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=2.0,<3" },
     { name = "jinja2", specifier = ">=3.0,<4" },
     { name = "loguru", specifier = ">=0.7,<1" },
+    { name = "mlx-embeddings", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=0.0.5" },
     { name = "mlx-embeddings", marker = "extra == 'mlx'", specifier = ">=0.0.5" },
     { name = "pydantic", specifier = ">=2.0,<3" },
     { name = "pydantic-settings", specifier = ">=2.0,<3" },

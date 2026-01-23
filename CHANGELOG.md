@@ -4,6 +4,26 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.17] - 2026-01-23
+
+### Added
+
+- **MLX auto-install on Apple Silicon** - No more manual `[mlx]` extra needed
+  - `mlx-embeddings` now included by default for `darwin + arm64`
+  - 10x faster embeddings work out of the box on M1/M2/M3 Macs
+
+### Changed
+
+- **Dashboard timestamp shows time** - Date and HH:MM now displayed in two lines
+  - Previously only showed date; time helps distinguish same-day memories
+
+### Fixed
+
+- **vec0 vector insert errors** - Handle orphaned/duplicate vector entries
+  - vec0 extension doesn't support INSERT OR REPLACE
+  - Now DELETE before INSERT in both `store_memory()` and `rebuild_vectors()`
+  - Fixes potential "UNIQUE constraint failed" errors during vector operations
+
 ## [0.5.15] - 2026-01-23
 
 ### Added

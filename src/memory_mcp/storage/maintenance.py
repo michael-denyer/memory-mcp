@@ -315,6 +315,8 @@ class MaintenanceMixin:
 
                 with self.transaction() as conn:
                     for memory_id, embedding in zip(memory_ids, embeddings):
+                        # Delete any existing vector first (vec0 doesn't support INSERT OR REPLACE)
+                        conn.execute("DELETE FROM memory_vectors WHERE rowid = ?", (memory_id,))
                         conn.execute(
                             "INSERT INTO memory_vectors (rowid, embedding) VALUES (?, ?)",
                             (memory_id, embedding.tobytes()),

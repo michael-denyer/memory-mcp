@@ -86,7 +86,7 @@ flowchart LR
 
 ## Key Features by Version
 
-### v0.5.0 (Current)
+### v0.5.x (Current Architecture)
 - **Internal refactoring**: Split large modules into focused packages
   - `storage/` with 16 mixin modules (CRUD, search, hot cache, trust, etc.)
   - `server/` with 12 tool modules organized by domain
@@ -128,6 +128,8 @@ uv run pytest -v              # All tests
 uv run pytest -k hot          # Hot cache tests only
 uv run pytest -k bootstrap    # Bootstrap tests
 uv run pytest -k relationship # Knowledge graph tests
+uv run ruff check .           # Lint
+uv run ruff format .          # Format
 ```
 
 ## Design Principles
@@ -149,3 +151,8 @@ uv run pytest -k relationship # Knowledge graph tests
 - If a feature requires manual user action, question whether it's worth it
 - New features must have sensible defaults that "just work"
 - Test with real Claude Code usage, not just unit tests
+
+### Gotchas
+
+- **vec0 doesn't support INSERT OR REPLACE**: Always DELETE before INSERT for vector operations
+- **Two CLI entrypoints**: `memory-mcp` (server) vs `memory-mcp-cli` (tools) - don't confuse them

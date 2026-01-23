@@ -1,6 +1,6 @@
 [project]
 name = "hot-memory-mcp"
-version = "0.5.16"
+version = "0.5.17"
 description = "Engram-inspired memory MCP server with hot cache and pattern mining"
 readme = "README.md"
 license = "MIT"
@@ -30,10 +30,12 @@ dependencies = [
     "uvicorn[standard]>=0.20,<1",  # ASGI server for dashboard
     "jinja2>=3.0,<4",  # Template engine for dashboard
     "transformers>=4.0,<5",  # NER-based entity extraction for pattern mining
+    # Apple Silicon gets MLX by default for 10x faster embeddings
+    "mlx-embeddings>=0.0.5; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [project.optional-dependencies]
-mlx = ["mlx-embeddings>=0.0.5"]  # Apple Silicon acceleration for embeddings
+mlx = ["mlx-embeddings>=0.0.5"]  # Explicit MLX install (for non-arm64 macs experimenting)
 
 [project.scripts]
 memory-mcp = "memory_mcp.server:main"

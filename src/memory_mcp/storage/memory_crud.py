@@ -381,6 +381,8 @@ class MemoryCrudMixin:
                 self._track_project(conn, project_id)
 
             # Insert embedding only for new memories
+            # Delete any orphaned vector entry first (vec0 doesn't support INSERT OR REPLACE)
+            conn.execute("DELETE FROM memory_vectors WHERE rowid = ?", (memory_id,))
             conn.execute(
                 "INSERT INTO memory_vectors (rowid, embedding) VALUES (?, ?)",
                 (memory_id, embedding.tobytes()),

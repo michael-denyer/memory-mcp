@@ -77,11 +77,7 @@ git clone https://github.com/michael-denyer/memory-mcp.git
 cd memory-mcp && uv sync
 ```
 
-**Apple Silicon?** Add MLX support for faster embeddings:
-```bash
-uv tool install hot-memory-mcp[mlx]
-# or: pip install hot-memory-mcp[mlx]
-```
+**Apple Silicon?** MLX embeddings are auto-installed on M1/M2/M3 Macs — 10x faster, no extra steps needed.
 
 **Included by default:**
 - **NER (Named Entity Recognition)** — Automatically identifies people, organizations, locations in your memories for better pattern mining
