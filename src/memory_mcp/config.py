@@ -31,6 +31,10 @@ class Settings(BaseSettings):
 
     # Hot cache
     hot_cache_max_items: int = Field(default=20, description="Maximum items in hot cache")
+    hot_cache_resource_enabled: bool = Field(
+        default=False,
+        description="Enable memory://hot-cache resource (use working-set instead)",
+    )
     promotion_threshold: int = Field(default=3, description="Access count to promote to hot cache")
     demotion_days: int = Field(default=14, description="Days without access before demotion")
     auto_promote: bool = Field(

@@ -248,6 +248,9 @@ def _format_clustered_memory_list(
 def hot_cache_resource() -> str:
     """Auto-injectable system context with high-confidence patterns.
 
+    Disabled by default - use memory://working-set instead for a more focused,
+    session-aware context. Enable with MEMORY_MCP_HOT_CACHE_RESOURCE_ENABLED=true.
+
     Configure Claude Code to include this resource in system prompts
     for instant recall of frequently-used knowledge.
 
@@ -262,6 +265,9 @@ def hot_cache_resource() -> str:
 
     Concise format with category prefixes and metadata for quick scanning.
     """
+    if not settings.hot_cache_resource_enabled:
+        return ""
+
     # Get current project for project-aware hot cache
     project_id = get_auto_project_id()
     hot_memories = storage.get_hot_memories(project_id=project_id)

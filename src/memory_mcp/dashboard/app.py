@@ -118,8 +118,10 @@ async def index(request: Request) -> HTMLResponse:
 async def hot_cache_page(request: Request) -> HTMLResponse:
     """Hot cache management page."""
     s = get_storage()
+    settings = get_settings()
     hot_memories = s.get_hot_memories()
     hot_stats = s.get_hot_cache_stats()
+    working_set = s.get_working_set()
 
     return templates.TemplateResponse(
         "hot_cache.html",
@@ -127,6 +129,9 @@ async def hot_cache_page(request: Request) -> HTMLResponse:
             "request": request,
             "memories": hot_memories,
             "hot_stats": hot_stats,
+            "working_set": working_set,
+            "working_set_enabled": settings.working_set_enabled,
+            "hot_cache_resource_enabled": settings.hot_cache_resource_enabled,
             "active_page": "hot_cache",
         },
     )

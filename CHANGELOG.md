@@ -4,6 +4,30 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] - 2026-01-23
+
+### Changed
+
+- **Working set is now the primary context injection** - The `memory://working-set` resource
+  (~10 items) is now the recommended and default context injection. It combines:
+  - Recently recalled memories from the current session
+  - Predicted next memories based on access patterns
+  - Top salience items from the hot cache
+
+- **Hot cache resource disabled by default** - The `memory://hot-cache` resource now returns
+  empty by default. Enable with `MEMORY_MCP_HOT_CACHE_RESOURCE_ENABLED=true` if you want
+  both resources injected. The hot cache remains the backing store for the working set.
+
+### Added
+
+- **Dashboard hot cache page redesign** - Now shows both working set and hot cache with
+  clear explanations of each:
+  - Working set: Session-aware context injected to Claude (recommended)
+  - Hot cache: Backing store of frequently-used memories
+
+- **Config option `hot_cache_resource_enabled`** - Controls whether `memory://hot-cache`
+  resource is injected (default: false)
+
 ## [0.6.4] - 2026-01-23
 
 ### Added

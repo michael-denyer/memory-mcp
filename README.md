@@ -88,8 +88,9 @@ flowchart LR
         REQ((Request))
     end
 
-    subgraph Hot["HOT CACHE · 0ms"]
-        HC[Frequent memories]
+    subgraph Hot["WORKING SET · 0ms"]
+        WS[Session context]
+        HC[(Hot cache)]
     end
 
     subgraph Cold["COLD STORAGE · ~50ms"]
@@ -97,12 +98,13 @@ flowchart LR
         KG[(Knowledge graph)]
     end
 
-    REQ -->|"auto-injected"| HC
+    REQ -->|"auto-injected"| WS
+    WS -.->|"draws from"| HC
     REQ -->|"recall()"| VS
     VS <-->|"related"| KG
 ```
 
-Memories used 3+ times auto-promote to hot cache. Unused memories demote after 14 days. Pin important ones to keep them hot forever.
+The **working set** (~10 items) is injected into every request — it combines recent recalls, predicted next memories, and top items from the hot cache. The **hot cache** (~20 items) is the backing store of frequently-used memories. Memories used 3+ times auto-promote; unused ones demote after 14 days.
 
 ## What Makes It Different
 

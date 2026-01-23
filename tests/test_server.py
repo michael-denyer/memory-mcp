@@ -381,8 +381,12 @@ class TestAutoBootstrap:
         readme = tmp_path / "README.md"
         readme.write_text("# Auto Bootstrap Test\n\n- Content line\n")
 
-        # Create fresh storage for this test (enable auto_bootstrap)
-        settings = Settings(db_path=tmp_path / "test.db", auto_bootstrap=True)
+        # Create fresh storage for this test (enable auto_bootstrap and hot_cache_resource)
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_bootstrap=True,
+            hot_cache_resource_enabled=True,
+        )
         test_storage = Storage(settings)
 
         # Monkeypatch the server's storage, settings, and cwd
