@@ -1,7 +1,7 @@
 {
   "name": "memory-mcp",
   "description": "Persistent memory for Claude Code with hot cache instant recall and semantic search. Give your AI assistant a second brain.",
-  "version": "0.5.17",
+  "version": "0.6.0",
   "author": {
     "name": "Michael Denyer",
     "url": "https://github.com/michael-denyer"

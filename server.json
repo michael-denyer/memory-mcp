@@ -6,12 +6,12 @@
     "url": "https://github.com/michael-denyer/memory-mcp",
     "source": "github"
   },
-  "version": "0.5.17",
+  "version": "0.6.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "hot-memory-mcp",
-      "version": "0.5.17",
+      "version": "0.6.0",
       "transport": {
         "type": "stdio"
       },

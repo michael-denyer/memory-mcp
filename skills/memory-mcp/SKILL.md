@@ -5,7 +5,7 @@ description: >
   recall (0ms) and semantic search for everything else (~50ms). Automatically learns
   what you use and promotes it.
 allowed-tools: "mcp__memory__*"
-version: "0.5.17"
+version: "0.6.0"
 author: "Michael Denyer <https://github.com/michael-denyer>"
 license: "MIT"
 ---

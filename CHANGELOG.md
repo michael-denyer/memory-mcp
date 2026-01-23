@@ -4,6 +4,25 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-01-23
+
+### Added
+
+- **Claude Code plugin support** - Install as a plugin for automatic integration
+  - `.claude-plugin/plugin.json` manifest with MCP server config and hooks
+  - `skills/memory-mcp/SKILL.md` comprehensive usage guide
+  - Install via: `claude plugins add michael-denyer/memory-mcp`
+
+- **SessionStart hook** - Auto-bootstrap hot cache from project docs
+  - Runs `memory-mcp-cli bootstrap --quiet` on session start
+  - Automatically seeds from CLAUDE.md, README.md, etc.
+
+- **Stop hook with log-response** - Automatic pattern mining from Claude's responses
+  - New `memory-mcp-cli log-response` command for hook integration
+  - Reads transcript, extracts last response, logs for mining
+
+- **Bootstrap --quiet flag** - Suppress output for hook usage
+
 ## [0.5.17] - 2026-01-23
 
 ### Added
