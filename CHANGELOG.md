@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Slash commands for Claude Code** - 13 new `/memory-mcp:*` commands
+- **Slash commands for Claude Code** - 14 new `/memory-mcp:*` commands
   - `/memory-mcp:remember` - Store a new memory
   - `/memory-mcp:recall` - Search memories semantically
   - `/memory-mcp:list` - List stored memories
@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `/memory-mcp:consolidate` - Consolidate duplicate memories
   - `/memory-mcp:forget` - Delete a memory permanently
   - `/memory-mcp:maintenance` - Run database maintenance
+  - `/memory-mcp:test-all` - Comprehensive interactive testing suite
 
 ## [0.6.0] - 2026-01-23
 

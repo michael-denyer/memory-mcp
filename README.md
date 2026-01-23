@@ -65,23 +65,25 @@ The system learns what you use and automatically promotes it. Your most valuable
 
 ### Option 1: Claude Code Plugin (Recommended)
 
-Install as a plugin for automatic configuration and slash commands:
+Install the package, then add the plugin for automatic configuration:
 
 ```bash
-# Claude Code CLI
+# Step 1: Install the package
+uv tool install hot-memory-mcp   # or: pip install hot-memory-mcp
+
+# Step 2: Add the plugin
 claude plugins add michael-denyer/memory-mcp
 
-# Claude Code in VS Code
-# Open command palette (Cmd+Shift+P) → "Claude: Manage Plugins" → Add from GitHub → michael-denyer/memory-mcp
+# VS Code: Command palette (Cmd+Shift+P) → "Claude: Manage Plugins" → Add from GitHub → michael-denyer/memory-mcp
 ```
 
-This gives you:
-- Auto-configured MCP server
+The plugin gives you:
+- Auto-configured MCP server (no manual `~/.claude.json` editing)
 - SessionStart hook for auto-bootstrap
 - Stop hook for pattern mining
-- 13 slash commands (`/memory-mcp:remember`, `/memory-mcp:recall`, etc.)
+- 14 slash commands (`/memory-mcp:remember`, `/memory-mcp:recall`, etc.)
 
-### Option 2: Manual Install
+### Option 2: Manual Install (No Plugin)
 
 ```bash
 # uv (recommended)
@@ -201,6 +203,7 @@ When installed as a Claude Code plugin, these slash commands are available:
 | `/memory-mcp:consolidate` | Consolidate duplicate memories |
 | `/memory-mcp:forget` | Delete a memory permanently |
 | `/memory-mcp:maintenance` | Run database maintenance |
+| `/memory-mcp:test-all` | Comprehensive interactive testing suite |
 
 ---
 
