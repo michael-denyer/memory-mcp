@@ -33,7 +33,7 @@ def hot_cache_status() -> HotCacheResponse:
     - avg_hot_score: Average hot score of items (for LRU ranking)
     """
     stats = storage.get_hot_cache_stats()
-    hot_memories = storage.get_hot_memories()
+    hot_memories = storage.get_promoted_memories()
     cache_metrics = storage.get_hot_cache_metrics()
 
     # Compute effectiveness metrics

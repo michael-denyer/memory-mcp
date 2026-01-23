@@ -381,11 +381,11 @@ class TestAutoBootstrap:
         readme = tmp_path / "README.md"
         readme.write_text("# Auto Bootstrap Test\n\n- Content line\n")
 
-        # Create fresh storage for this test (enable auto_bootstrap and hot_cache_resource)
+        # Create fresh storage for this test (enable auto_bootstrap and promoted_resource)
         settings = Settings(
             db_path=tmp_path / "test.db",
             auto_bootstrap=True,
-            hot_cache_resource_enabled=True,
+            promoted_resource_enabled=True,
         )
         test_storage = Storage(settings)
 
@@ -398,16 +398,16 @@ class TestAutoBootstrap:
         server.app._auto_bootstrap_attempted.clear()
 
         # Call the underlying function (not the FastMCP FunctionResource wrapper)
-        # The actual function is stored in hot_cache_resource.fn
-        content = server.hot_cache_resource.fn()
+        # The actual function is stored in promoted_memories_resource.fn
+        content = server.promoted_memories_resource.fn()
 
         # Should have bootstrapped and returned content
-        assert "[MEMORY: Hot Cache" in content
+        assert "[MEMORY:" in content
         assert "empty" not in content.lower()
 
         # Verify memories exist
-        hot_memories = test_storage.get_hot_memories()
-        assert len(hot_memories) >= 1
+        promoted = test_storage.get_promoted_memories()
+        assert len(promoted) >= 1
 
         test_storage.close()
 

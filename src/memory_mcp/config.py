@@ -29,13 +29,13 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Hot cache
-    hot_cache_max_items: int = Field(default=20, description="Maximum items in hot cache")
-    hot_cache_resource_enabled: bool = Field(
+    # Promoted memories (backing store for hot cache)
+    promoted_max_items: int = Field(default=20, description="Maximum promoted memories")
+    promoted_resource_enabled: bool = Field(
         default=False,
-        description="Enable memory://hot-cache resource (use working-set instead)",
+        description="Enable memory://promoted-memories resource",
     )
-    promotion_threshold: int = Field(default=3, description="Access count to promote to hot cache")
+    promotion_threshold: int = Field(default=3, description="Access count to auto-promote")
     demotion_days: int = Field(default=14, description="Days without access before demotion")
     auto_promote: bool = Field(
         default=True, description="Auto-promote memories when access count reaches threshold"
@@ -297,18 +297,14 @@ class Settings(BaseSettings):
         default=0.8, description="Score decay for expanded results (0-1)"
     )
 
-    # Working-set resource (Engram-inspired active memory)
-    working_set_enabled: bool = Field(
-        default=True, description="Enable memory://working-set resource"
+    # Hot cache resource (session-aware active memory - what gets injected)
+    hot_cache_enabled: bool = Field(default=True, description="Enable memory://hot-cache resource")
+    hot_cache_max_items: int = Field(default=10, description="Maximum items in hot cache resource")
+    hot_cache_recent_recalls_limit: int = Field(
+        default=5, description="Recent recalls to include in hot cache"
     )
-    working_set_max_items: int = Field(
-        default=10, description="Maximum items in working-set resource"
-    )
-    working_set_recent_recalls_limit: int = Field(
-        default=5, description="Recent recalls to include in working set"
-    )
-    working_set_predictions_limit: int = Field(
-        default=3, description="Predicted memories to include in working set"
+    hot_cache_predictions_limit: int = Field(
+        default=3, description="Predicted memories to include in hot cache"
     )
 
     # Project awareness (per-project memory isolation)

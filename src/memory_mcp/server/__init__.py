@@ -19,6 +19,7 @@ from memory_mcp.server.app import (
     get_similarity_confidence,
     hot_cache_resource,
     mcp,
+    promoted_memories_resource,
     settings,
     storage,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "get_similarity_confidence",
     "format_memories_for_llm",
     "hot_cache_resource",
+    "promoted_memories_resource",
     "recall",
     "remember",
     "log_output",

@@ -88,9 +88,9 @@ flowchart LR
         REQ((Request))
     end
 
-    subgraph Hot["WORKING SET · 0ms"]
-        WS[Session context]
-        HC[(Hot cache)]
+    subgraph Hot["HOT CACHE · 0ms"]
+        HC[Session context]
+        PM[(Promoted memories)]
     end
 
     subgraph Cold["COLD STORAGE · ~50ms"]
@@ -98,13 +98,13 @@ flowchart LR
         KG[(Knowledge graph)]
     end
 
-    REQ -->|"auto-injected"| WS
-    WS -.->|"draws from"| HC
+    REQ -->|"auto-injected"| HC
+    HC -.->|"draws from"| PM
     REQ -->|"recall()"| VS
     VS <-->|"related"| KG
 ```
 
-The **working set** (~10 items) is injected into every request — it combines recent recalls, predicted next memories, and top items from the hot cache. The **hot cache** (~20 items) is the backing store of frequently-used memories. Memories used 3+ times auto-promote; unused ones demote after 14 days.
+The **hot cache** (~10 items) is injected into every request — it combines recent recalls, predicted next memories, and top promoted items. **Promoted memories** (~20 items) is the backing store of frequently-used memories. Memories used 3+ times auto-promote; unused ones demote after 14 days.
 
 ## What Makes It Different
 
@@ -128,7 +128,7 @@ Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's *
 |---------------|------|-------------|
 | `/memory-mcp:remember` | `remember` | Store a memory with semantic embedding |
 | `/memory-mcp:recall` | `recall` | Search memories by meaning |
-| `/memory-mcp:hot-cache` | `promote` / `demote` | Manage hot cache |
+| `/memory-mcp:hot-cache` | `promote` / `demote` | Manage promoted memories |
 | `/memory-mcp:stats` | `memory_stats` | Show statistics |
 | `/memory-mcp:bootstrap` | `bootstrap_project` | Seed from project docs |
 | — | `link_memories` | Knowledge graph connections |

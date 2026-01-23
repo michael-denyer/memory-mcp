@@ -60,7 +60,7 @@ class HotCacheMixin:
                 (json.dumps(metrics.to_dict()),),
             )
 
-    def get_hot_memories(self, project_id: str | None = None) -> list[Memory]:
+    def get_promoted_memories(self, project_id: str | None = None) -> list[Memory]:
         """Get all memories in hot cache, ordered for optimal injection.
 
         Ordering prioritizes (most important first):
@@ -121,6 +121,11 @@ class HotCacheMixin:
         memories.sort(key=sort_key)
         return memories
 
+    # Alias for backwards compatibility
+    def get_hot_memories(self, project_id: str | None = None) -> list[Memory]:
+        """Alias for get_promoted_memories (backwards compatibility)."""
+        return self.get_promoted_memories(project_id=project_id)
+
     def get_embeddings_for_memories(self, memory_ids: list[int]) -> dict[int, np.ndarray]:
         """Get embeddings for a list of memory IDs.
 
@@ -158,25 +163,30 @@ class HotCacheMixin:
         """Get current hot cache metrics."""
         return self._ensure_hot_cache_metrics()
 
-    def get_hot_cache_stats(self) -> dict:
-        """Get hot cache statistics including metrics and computed values."""
-        hot_memories = self.get_hot_memories()
+    def get_promoted_stats(self) -> dict:
+        """Get promoted memories statistics including metrics and computed values."""
+        promoted = self.get_promoted_memories()
         metrics = self._ensure_hot_cache_metrics().to_dict()
 
         # Compute average hot score
         avg_score = 0.0
-        if hot_memories:
-            scores = [m.hot_score for m in hot_memories if m.hot_score is not None]
+        if promoted:
+            scores = [m.hot_score for m in promoted if m.hot_score is not None]
             avg_score = sum(scores) / len(scores) if scores else 0.0
 
         return {
             **metrics,
-            "current_count": len(hot_memories),
-            "max_items": self.settings.hot_cache_max_items,
+            "current_count": len(promoted),
+            "max_items": self.settings.promoted_max_items,
             "avg_hot_score": round(avg_score, 3),
-            "pinned_count": sum(1 for m in hot_memories if m.is_pinned),
+            "pinned_count": sum(1 for m in promoted if m.is_pinned),
             "promotion_rejections": get_promotion_rejection_summary(),
         }
+
+    # Alias for backwards compatibility
+    def get_hot_cache_stats(self) -> dict:
+        """Alias for get_promoted_stats (backwards compatibility)."""
+        return self.get_promoted_stats()
 
     def _find_eviction_candidate(self, conn: sqlite3.Connection) -> int | None:
         """Find the lowest-scoring non-pinned hot memory for eviction."""

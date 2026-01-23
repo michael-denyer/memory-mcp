@@ -8,25 +8,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **Working set is now the primary context injection** - The `memory://working-set` resource
+- **Renamed resources for clarity**:
+  - `memory://working-set` → `memory://hot-cache` (session-aware ~10 items, injected by default)
+  - `memory://hot-cache` → `memory://promoted-memories` (backing store ~20 items, disabled by default)
+
+- **Hot cache is now the primary context injection** - The `memory://hot-cache` resource
   (~10 items) is now the recommended and default context injection. It combines:
   - Recently recalled memories from the current session
   - Predicted next memories based on access patterns
-  - Top salience items from the hot cache
+  - Top salience promoted items
 
-- **Hot cache resource disabled by default** - The `memory://hot-cache` resource now returns
-  empty by default. Enable with `MEMORY_MCP_HOT_CACHE_RESOURCE_ENABLED=true` if you want
-  both resources injected. The hot cache remains the backing store for the working set.
+- **Promoted memories resource disabled by default** - The `memory://promoted-memories` resource
+  returns empty by default. Enable with `MEMORY_MCP_PROMOTED_RESOURCE_ENABLED=true` if you want
+  both resources injected. Promoted memories is the backing store for the hot cache.
+
+- **Config setting renames**:
+  - `working_set_enabled` → `hot_cache_enabled`
+  - `working_set_max_items` → `hot_cache_max_items`
+  - `hot_cache_max_items` → `promoted_max_items`
+  - `hot_cache_resource_enabled` → `promoted_resource_enabled`
 
 ### Added
 
-- **Dashboard hot cache page redesign** - Now shows both working set and hot cache with
+- **Dashboard hot cache page redesign** - Now shows both hot cache and promoted memories with
   clear explanations of each:
-  - Working set: Session-aware context injected to Claude (recommended)
-  - Hot cache: Backing store of frequently-used memories
+  - Hot cache: Session-aware context injected to Claude (recommended)
+  - Promoted memories: Backing store of frequently-used memories
 
-- **Config option `hot_cache_resource_enabled`** - Controls whether `memory://hot-cache`
+- **Config option `promoted_resource_enabled`** - Controls whether `memory://promoted-memories`
   resource is injected (default: false)
+
+- **Backwards compatibility aliases** - Old method names continue to work:
+  - `storage.get_working_set()` → `storage.get_hot_cache()`
+  - `storage.get_hot_memories()` → `storage.get_promoted_memories()`
+  - `storage.get_hot_cache_stats()` → `storage.get_promoted_stats()`
 
 ## [0.6.4] - 2026-01-23
 

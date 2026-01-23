@@ -326,69 +326,72 @@ class RetrievalMixin:
 
             return [self._row_to_memory(row, conn) for row in rows]
 
-    def get_working_set(self) -> list[Memory]:
-        """Get the working set: recent recalls + predictions + top hot items.
+    def get_hot_cache(self) -> list[Memory]:
+        """Get the hot cache: recent recalls + predictions + top promoted items.
 
         Combines:
         1. Recently recalled memories (from retrieval_events with was_used=1)
         2. Predicted next memories (from access patterns)
-        3. Top salience hot memories (to fill remaining slots)
+        3. Top salience promoted memories (to fill remaining slots)
 
         Returns:
-            List of memories for the working set, capped at working_set_max_items
+            List of memories for the hot cache, capped at hot_cache_max_items
         """
-        if not self.settings.working_set_enabled:
+        if not self.settings.hot_cache_enabled:
             return []
 
-        max_items = self.settings.working_set_max_items
+        max_items = self.settings.hot_cache_max_items
         seen_ids: set[int] = set()
-        working_set: list[Memory] = []
+        hot_cache: list[Memory] = []
 
         def add_memory(memory: Memory) -> bool:
-            """Add memory to working set if not seen and not full. Returns True if added."""
-            if memory.id not in seen_ids and len(working_set) < max_items:
-                working_set.append(memory)
+            """Add memory to hot cache if not seen and not full. Returns True if added."""
+            if memory.id not in seen_ids and len(hot_cache) < max_items:
+                hot_cache.append(memory)
                 seen_ids.add(memory.id)
                 return True
             return False
 
         # 1. Recent recalls (most valuable - user actually used these)
-        recent_recalls = self.get_recent_recalls(
-            limit=self.settings.working_set_recent_recalls_limit
-        )
+        recent_recalls = self.get_recent_recalls(limit=self.settings.hot_cache_recent_recalls_limit)
         for memory in recent_recalls:
             add_memory(memory)
 
         # 2. Predictions based on recent recalls (use top 3 as seeds)
-        pred_limit = self.settings.working_set_predictions_limit
+        pred_limit = self.settings.hot_cache_predictions_limit
         for memory in recent_recalls[:3]:
-            if len(working_set) >= max_items:
+            if len(hot_cache) >= max_items:
                 break
             for pred in self.predict_next_memories(memory.id, limit=pred_limit):
                 add_memory(pred.memory)
 
-        # 3. Fill with top salience hot memories
-        if len(working_set) < max_items:
-            hot_memories = self._get_hot_memories_by_salience()
-            for memory in hot_memories:
+        # 3. Fill with top salience promoted memories
+        if len(hot_cache) < max_items:
+            promoted = self._get_promoted_by_salience()
+            for memory in promoted:
                 add_memory(memory)
 
         log.debug(
-            "Working set: {} recent recalls, {} total items",
+            "Hot cache: {} recent recalls, {} total items",
             len(recent_recalls),
-            len(working_set),
+            len(hot_cache),
         )
-        return working_set
+        return hot_cache
 
-    def _get_hot_memories_by_salience(self) -> list[Memory]:
-        """Get hot memories sorted by salience score (highest first)."""
-        hot_memories = self.get_hot_memories()
-        for memory in hot_memories:
+    # Alias for backwards compatibility
+    def get_working_set(self) -> list[Memory]:
+        """Alias for get_hot_cache (backwards compatibility)."""
+        return self.get_hot_cache()
+
+    def _get_promoted_by_salience(self) -> list[Memory]:
+        """Get promoted memories sorted by salience score (highest first)."""
+        promoted = self.get_promoted_memories()
+        for memory in promoted:
             memory.salience_score = self._compute_salience_score(
                 importance_score=memory.importance_score,
                 trust_score=memory.trust_score,
                 access_count=memory.access_count,
                 last_accessed_at=memory.last_accessed_at,
             )
-        hot_memories.sort(key=lambda m: m.salience_score or 0, reverse=True)
-        return hot_memories
+        promoted.sort(key=lambda m: m.salience_score or 0, reverse=True)
+        return promoted

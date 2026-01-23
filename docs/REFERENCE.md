@@ -127,11 +127,11 @@ Environment variables (prefix `MEMORY_MCP_`):
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Sentence transformer model |
 | `EMBEDDING_BACKEND` | `auto` | `auto`, `mlx`, or `sentence-transformers` |
 
-### Hot Cache
+### Promoted Memories
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `HOT_CACHE_MAX_ITEMS` | `20` | Maximum items in hot cache |
+| `PROMOTED_MAX_ITEMS` | `20` | Maximum items in promoted memories |
 | `PROMOTION_THRESHOLD` | `3` | Access count for auto-promotion |
 | `DEMOTION_DAYS` | `14` | Days without access before demotion |
 | `AUTO_PROMOTE` | `true` | Enable automatic promotion |
@@ -164,12 +164,12 @@ Environment variables (prefix `MEMORY_MCP_`):
 | `EPISODIC_PROMOTE_THRESHOLD` | `0.6` | Minimum salience for episodic promotion |
 | `RETENTION_EPISODIC_DAYS` | `7` | Days to retain episodic memories |
 
-### Working Set
+### Hot Cache
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WORKING_SET_ENABLED` | `true` | Enable memory://working-set resource |
-| `WORKING_SET_MAX_ITEMS` | `10` | Maximum items in working set |
+| `HOT_CACHE_ENABLED` | `true` | Enable memory://hot-cache resource |
+| `HOT_CACHE_MAX_ITEMS` | `10` | Maximum items in hot cache |
 
 ### Project Awareness
 
@@ -177,7 +177,7 @@ Environment variables (prefix `MEMORY_MCP_`):
 |----------|---------|-------------|
 | `PROJECT_AWARENESS_ENABLED` | `true` | Auto-detect git project for memories |
 | `PROJECT_FILTER_RECALL` | `true` | Filter recall to current project |
-| `PROJECT_FILTER_HOT_CACHE` | `true` | Filter hot cache to current project |
+| `PROJECT_FILTER_HOT_CACHE` | `true` | Filter hot cache/promoted to current project |
 | `PROJECT_INCLUDE_GLOBAL` | `true` | Include global memories with project |
 
 ## MCP Resources
@@ -186,34 +186,34 @@ The server exposes MCP resources for instant memory access:
 
 ### Hot Cache (`memory://hot-cache`)
 
-Auto-injectable system context with high-confidence patterns. Contents are automatically available in Claude's context without tool calls.
-
-- Memories promoted to hot cache appear here
-- Keeps system prompts lean (~10-20 items max)
-- **Auto-bootstrap**: If empty, auto-seeds from project docs (README.md, CLAUDE.md, etc.)
-
-### Working Set (`memory://working-set`)
-
 Session-aware active memory context (Engram-inspired). Provides contextually relevant memories:
 
 1. Recently recalled memories (that were actually used)
 2. Predicted next memories (from access pattern learning)
-3. Top salience hot items (to fill remaining slots)
+3. Top salience promoted items (to fill remaining slots)
 
-Smaller and more focused than hot-cache (~10 items) - designed for active work context.
+Focused context (~10 items) designed for active work. **Auto-bootstrap**: If empty, auto-seeds from project docs.
+
+### Promoted Memories (`memory://promoted-memories`)
+
+Backing store of frequently-used memories. Contents available via MCP resource (disabled by default).
+
+- Memories auto-promoted after 3+ uses appear here
+- Keeps system prompts lean (~20 items max)
+- Enable injection with `MEMORY_MCP_PROMOTED_RESOURCE_ENABLED=true`
 
 ### Project Context (`memory://project-context`)
 
 Shows the current project (detected from git) and its associated memories:
 
 - Project ID (e.g., `github/owner/repo`)
-- Project-specific hot cache memories
+- Project-specific promoted memories
 - Useful for debugging project awareness
 
 ## CLI Commands
 
 ```bash
-# Bootstrap hot cache from project docs
+# Bootstrap promoted memories from project docs
 memory-mcp-cli bootstrap
 
 # Bootstrap from specific directory

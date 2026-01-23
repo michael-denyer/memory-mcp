@@ -244,36 +244,30 @@ def _format_clustered_memory_list(
 # ========== MCP Resources ==========
 
 
-@mcp.resource("memory://hot-cache")
-def hot_cache_resource() -> str:
-    """Auto-injectable system context with high-confidence patterns.
+@mcp.resource("memory://promoted-memories")
+def promoted_memories_resource() -> str:
+    """All promoted memories (~20 items) - the backing store for hot cache.
 
-    Disabled by default - use memory://working-set instead for a more focused,
-    session-aware context. Enable with MEMORY_MCP_HOT_CACHE_RESOURCE_ENABLED=true.
+    Disabled by default. The hot-cache resource (session-aware ~10 items) is
+    the recommended injection. Enable this with MEMORY_MCP_PROMOTED_RESOURCE_ENABLED=true.
 
-    Configure Claude Code to include this resource in system prompts
-    for instant recall of frequently-used knowledge.
+    Contains all frequently-used memories that have been auto-promoted based on
+    access patterns or manually promoted. The hot-cache resource draws from this.
 
-    If the hot cache is empty and documentation files exist in the current
-    directory, auto-bootstraps from README.md, CLAUDE.md, etc.
-
-    Records hit/miss metrics for observability (see hot_cache_status).
-    Logs injections for feedback loop analysis (7-day retention).
+    If empty and documentation files exist, auto-bootstraps from README.md, CLAUDE.md, etc.
 
     Project-aware: If project awareness is enabled, filters to current project
     plus global memories.
-
-    Concise format with category prefixes and metadata for quick scanning.
     """
-    if not settings.hot_cache_resource_enabled:
+    if not settings.promoted_resource_enabled:
         return ""
 
     # Get current project for project-aware hot cache
     project_id = get_auto_project_id()
-    hot_memories = storage.get_hot_memories(project_id=project_id)
+    hot_memories = storage.get_promoted_memories(project_id=project_id)
 
     if not hot_memories and _try_auto_bootstrap():
-        hot_memories = storage.get_hot_memories(project_id=project_id)
+        hot_memories = storage.get_promoted_memories(project_id=project_id)
 
     if not hot_memories:
         storage.record_hot_cache_miss()
@@ -299,48 +293,49 @@ def hot_cache_resource() -> str:
     )
 
 
-@mcp.resource("memory://working-set")
-def working_set_resource() -> str:
-    """Session-aware active memory context (Engram-inspired).
+@mcp.resource("memory://hot-cache")
+def hot_cache_resource() -> str:
+    """Session-aware active memory context - instant recall (0ms).
 
-    Provides a compact working set of contextually relevant memories:
+    The primary context injection. Provides a compact set (~10 items) of
+    contextually relevant memories:
     1. Recently recalled memories (that were actually used)
     2. Predicted next memories (from access pattern learning)
-    3. Top salience hot items (to fill remaining slots)
+    3. Top items from promoted memories (to fill remaining slots)
 
-    Smaller and more focused than hot-cache - designed for active work context.
+    This is what "hot cache" means - instantly available, no tool call needed.
     Semantic clustering groups related items together.
     Logs injections for feedback loop analysis (7-day retention).
     """
-    if not settings.working_set_enabled:
-        return "[MEMORY: Working set disabled]"
+    if not settings.hot_cache_enabled:
+        return "[MEMORY: Hot cache disabled]"
 
-    working_set = storage.get_working_set()
+    hot_memories = storage.get_hot_cache()
 
-    if not working_set:
-        return "[MEMORY: Working set empty - no recent activity]"
+    if not hot_memories:
+        return "[MEMORY: Hot cache empty - no recent activity]"
 
     # Log injections for feedback loop tracking
     project_id = get_auto_project_id()
     session_id = get_current_session_id()
-    memory_ids = [m.id for m in working_set]
+    memory_ids = [m.id for m in hot_memories]
     storage.log_injections_batch(
         memory_ids=memory_ids,
-        resource="working-set",
+        resource="hot-cache",
         session_id=session_id,
         project_id=project_id,
     )
 
-    header = "[MEMORY: Working Set - Active context]"
+    header = "[MEMORY: Hot Cache - Active context]"
 
     # Apply semantic clustering if enabled and enough memories
-    if settings.clustering_display_enabled and len(working_set) >= 4:
-        memory_ids = [m.id for m in working_set]
+    if settings.clustering_display_enabled and len(hot_memories) >= 4:
+        memory_ids = [m.id for m in hot_memories]
         embeddings = storage.get_embeddings_for_memories(memory_ids)
 
         if embeddings:
             clusters, unclustered = _cluster_memories_for_display(
-                memories=working_set,
+                memories=hot_memories,
                 embeddings=embeddings,
                 threshold=settings.clustering_display_threshold,
                 min_cluster_size=settings.clustering_min_size,
@@ -350,7 +345,7 @@ def working_set_resource() -> str:
             if clusters:
                 return _format_clustered_memory_list(clusters, unclustered, header)
 
-    return _format_memory_list(working_set, header)
+    return _format_memory_list(hot_memories, header)
 
 
 @mcp.resource("memory://project-context")
@@ -370,7 +365,7 @@ def project_context_resource() -> str:
         return "[MEMORY: No git project detected - memories will be global]"
 
     # Get project-specific hot memories
-    hot_memories = storage.get_hot_memories(project_id=project.id)
+    hot_memories = storage.get_promoted_memories(project_id=project.id)
 
     lines = [
         f"[MEMORY: Project Context - {project.name}]",

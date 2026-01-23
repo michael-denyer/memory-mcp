@@ -7,7 +7,7 @@
 This project differentiates from generic memory servers (like mcp-memory-service) through:
 
 1. **Two-Tier Memory Architecture**
-   - **Hot Cache**: Instant recall via MCP resource injection (no tool call needed)
+   - **Hot Cache**: Session-aware context injected at 0ms (no tool call needed)
    - **Cold Storage**: Semantic search for everything else
 
 2. **Salience-Based Promotion**
@@ -16,10 +16,10 @@ This project differentiates from generic memory servers (like mcp-memory-service
    - Auto-demote after 14 days without access
    - Pin important memories to prevent auto-eviction
 
-3. **Working-Set Resource**
-   - `memory://working-set`: Session-aware active context (~10 items)
-   - Combines: recently recalled, predicted next, top salience
-   - Smaller and more focused than hot-cache
+3. **Hot Cache Resource**
+   - `memory://hot-cache`: Session-aware active context (~10 items)
+   - Combines: recently recalled, predicted next, top promoted items
+   - Backed by promoted memories (~20 items)
 
 4. **Multi-Hop Recall**
    - `expand_relations=true` traverses knowledge graph
@@ -59,7 +59,7 @@ flowchart LR
 
     subgraph Hot["Hot Tier · 0ms"]
         HC[memory://hot-cache]
-        WS[memory://working-set]
+        PM[(Promoted memories)]
     end
 
     subgraph Cold["Cold Tier · ~50ms"]
@@ -68,7 +68,7 @@ flowchart LR
     end
 
     REQ -->|"auto-injected"| HC
-    REQ -->|"auto-injected"| WS
+    HC -.->|"draws from"| PM
     REQ -->|"recall()"| VS
     VS <-->|"expand_relations"| KG
 ```
@@ -103,10 +103,15 @@ The CLI (`memory-mcp-cli`) and MCP tools power the plugin internally.
   - `server/` with 12 tool modules organized by domain
   - No API changes - all imports remain backwards compatible
 
+### v0.7.0 (Current)
+- **Renamed resources for clarity**: `working-set` → `hot-cache`, `hot-cache` → `promoted-memories`
+- **Hot cache is primary injection**: Session-aware context (~10 items) auto-injected
+- **Promoted memories backing store**: ~20 items, disabled by default
+
 ### v0.3.0
 - **Salience Scoring**: Unified metric for promotion/eviction decisions
 - **Multi-Hop Recall**: `expand_relations` parameter for associative memory
-- **Working-Set Resource**: `memory://working-set` for session-aware context
+- **Hot Cache Resource**: `memory://hot-cache` for session-aware context
 - **Episodic Memory**: `end_session()` for session consolidation
 - **Consolidation CLI**: `consolidate` command for memory deduplication
 - **Fine-Grained Trust**: Contextual reasons and audit trail
@@ -152,7 +157,7 @@ uv run ruff format .          # Format
 - All defaults should be optimized for immediate value
 - `auto_promote=True`, `auto_demote=True`, `mining_auto_approve_enabled=True`
 - Auto-detect hardware (MLX on Apple Silicon)
-- Auto-bootstrap from project docs when hot cache is empty
+- Auto-bootstrap from project docs when promoted memories is empty
 - Configuration exists for power users, not as a requirement
 
 ### When Working on This Project

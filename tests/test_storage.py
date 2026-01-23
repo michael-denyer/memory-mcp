@@ -316,7 +316,7 @@ class TestHotCacheMetrics:
 
         stats = storage.get_hot_cache_stats()
         assert stats["current_count"] == 1
-        assert stats["max_items"] == storage.settings.hot_cache_max_items
+        assert stats["max_items"] == storage.settings.promoted_max_items
         assert stats["hits"] == 1
         assert stats["promotions"] == 1
         assert "avg_hot_score" in stats
@@ -3415,38 +3415,38 @@ class TestWorkingSet:
     """Tests for working set resource functionality."""
 
     def test_get_working_set_empty_when_disabled(self, tmp_path):
-        """Working set returns empty list when disabled."""
+        """Hot cache returns empty list when disabled."""
         settings = Settings(
             db_path=tmp_path / "ws.db",
-            working_set_enabled=False,
+            hot_cache_enabled=False,
         )
         stor = Storage(settings)
         try:
-            result = stor.get_working_set()
+            result = stor.get_hot_cache()
             assert result == []
         finally:
             stor.close()
 
     def test_get_working_set_includes_hot_memories(self, tmp_path):
-        """Working set includes hot memories when no recent recalls."""
+        """Hot cache includes promoted memories when no recent recalls."""
         settings = Settings(
             db_path=tmp_path / "ws.db",
-            working_set_enabled=True,
-            working_set_max_items=10,
+            hot_cache_enabled=True,
+            hot_cache_max_items=10,
             semantic_dedup_enabled=False,
         )
         stor = Storage(settings)
         try:
             # Create and promote a memory
             mid, _ = stor.store_memory(
-                content="Hot memory content for working set",
+                content="Hot memory content for hot cache",
                 memory_type=MemoryType.PROJECT,
             )
             stor.promote_to_hot(mid)
 
-            working_set = stor.get_working_set()
-            assert len(working_set) >= 1
-            assert any(m.id == mid for m in working_set)
+            hot_cache = stor.get_hot_cache()
+            assert len(hot_cache) >= 1
+            assert any(m.id == mid for m in hot_cache)
         finally:
             stor.close()
 
@@ -3496,11 +3496,11 @@ class TestWorkingSet:
             stor.close()
 
     def test_working_set_respects_max_items(self, tmp_path):
-        """Working set caps at max_items setting."""
+        """Hot cache caps at max_items setting."""
         settings = Settings(
             db_path=tmp_path / "ws.db",
-            working_set_enabled=True,
-            working_set_max_items=3,
+            hot_cache_enabled=True,
+            hot_cache_max_items=3,
             semantic_dedup_enabled=False,
         )
         stor = Storage(settings)
@@ -3508,13 +3508,13 @@ class TestWorkingSet:
             # Create and promote more memories than max
             for i in range(5):
                 mid, _ = stor.store_memory(
-                    content=f"Working set memory {i}",
+                    content=f"Hot cache memory {i}",
                     memory_type=MemoryType.PROJECT,
                 )
                 stor.promote_to_hot(mid)
 
-            working_set = stor.get_working_set()
-            assert len(working_set) <= 3
+            hot_cache = stor.get_hot_cache()
+            assert len(hot_cache) <= 3
         finally:
             stor.close()
 

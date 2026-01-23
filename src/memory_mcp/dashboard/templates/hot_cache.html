@@ -11,15 +11,15 @@
                 <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                 </svg>
-                <h3 class="font-semibold text-white">Working Set</h3>
-                {% if working_set_enabled %}
+                <h3 class="font-semibold text-white">Hot Cache</h3>
+                {% if hot_cache_enabled %}
                 <span class="px-2 py-0.5 text-xs rounded-full bg-green-900 text-green-300">Injected</span>
                 {% else %}
                 <span class="px-2 py-0.5 text-xs rounded-full bg-gray-700 text-gray-400">Disabled</span>
                 {% endif %}
             </div>
             <p class="text-gray-400 text-sm">
-                Session-aware context (~10 items). Combines recent recalls, predicted next memories, and top hot items.
+                Session-aware context (~10 items). Combines recent recalls, predicted next memories, and top promoted items.
                 <strong class="text-gray-300">Recommended for context injection.</strong>
             </p>
         </div>
@@ -28,31 +28,31 @@
                 <svg class="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"/>
                 </svg>
-                <h3 class="font-semibold text-white">Hot Cache</h3>
-                {% if hot_cache_resource_enabled %}
+                <h3 class="font-semibold text-white">Promoted Memories</h3>
+                {% if promoted_resource_enabled %}
                 <span class="px-2 py-0.5 text-xs rounded-full bg-green-900 text-green-300">Injected</span>
                 {% else %}
                 <span class="px-2 py-0.5 text-xs rounded-full bg-gray-700 text-gray-400">Storage Only</span>
                 {% endif %}
             </div>
             <p class="text-gray-400 text-sm">
-                All frequently-used memories (~20 items). Backs the working set. Enable injection with
-                <code class="text-xs bg-gray-800 px-1 rounded">MEMORY_MCP_HOT_CACHE_RESOURCE_ENABLED=true</code>
+                All frequently-used memories (~20 items). Backs the hot cache. Enable injection with
+                <code class="text-xs bg-gray-800 px-1 rounded">MEMORY_MCP_PROMOTED_RESOURCE_ENABLED=true</code>
             </p>
         </div>
     </div>
 
-    <!-- Working Set Section -->
+    <!-- Hot Cache Section -->
     <div>
         <div class="flex items-center justify-between mb-3">
             <div>
-                <h2 class="text-lg font-semibold text-white">Working Set</h2>
-                <p class="text-gray-400 text-sm">{{ working_set|length }} items &middot; Session-aware context injected to Claude</p>
+                <h2 class="text-lg font-semibold text-white">Hot Cache</h2>
+                <p class="text-gray-400 text-sm">{{ hot_cache|length }} items &middot; Session-aware context injected to Claude</p>
             </div>
         </div>
         <div class="bg-dark-900 rounded-lg border border-gray-800 divide-y divide-gray-800">
-            {% if working_set %}
-                {% for memory in working_set %}
+            {% if hot_cache %}
+                {% for memory in hot_cache %}
                 <div class="p-3 flex items-start gap-3">
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-2 mb-1">
@@ -67,30 +67,30 @@
                 {% endfor %}
             {% else %}
                 <div class="p-6 text-center text-gray-500">
-                    <p>Working set is empty</p>
-                    <p class="text-sm mt-1">Recall some memories or let auto-promotion populate the hot cache</p>
+                    <p>Hot cache is empty</p>
+                    <p class="text-sm mt-1">Recall some memories or let auto-promotion populate the promoted memories</p>
                 </div>
             {% endif %}
         </div>
     </div>
 
-    <!-- Hot Cache Section -->
+    <!-- Promoted Memories Section -->
     <div>
         <div class="flex items-center justify-between mb-3">
             <div>
-                <h2 class="text-lg font-semibold text-white">Hot Cache</h2>
+                <h2 class="text-lg font-semibold text-white">Promoted Memories</h2>
                 <p class="text-gray-400 text-sm">
-                    {{ hot_stats.get('count', 0) }} / {{ hot_stats.get('max_items', 20) }} items
-                    {% if hot_stats.get('pinned_count', 0) > 0 %}
-                    &middot; {{ hot_stats.get('pinned_count', 0) }} pinned
+                    {{ promoted_stats.get('current_count', 0) }} / {{ promoted_stats.get('max_items', 20) }} items
+                    {% if promoted_stats.get('pinned_count', 0) > 0 %}
+                    &middot; {{ promoted_stats.get('pinned_count', 0) }} pinned
                     {% endif %}
                 </p>
             </div>
         </div>
         <div id="hot-cache-list" class="space-y-3">
-            {% if memories %}
-                {% for memory in memories %}
-                    {% set is_pinned = memory.id in (hot_stats.get('pinned_ids', [])|default([], true)) %}
+            {% if promoted_memories %}
+                {% for memory in promoted_memories %}
+                    {% set is_pinned = memory.id in (promoted_stats.get('pinned_ids', [])|default([], true)) %}
                     {% include "partials/hot_item.html" %}
                 {% endfor %}
             {% else %}
@@ -98,7 +98,7 @@
                     <svg class="w-12 h-12 text-gray-600 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                     </svg>
-                    <p class="text-gray-400">No memories in hot cache</p>
+                    <p class="text-gray-400">No promoted memories</p>
                     <p class="text-gray-500 text-sm mt-1">Promote memories from the browser or let auto-promotion do its work</p>
                     <a href="/memories" class="inline-flex items-center mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
                         Browse Memories
