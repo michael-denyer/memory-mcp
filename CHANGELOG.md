@@ -4,6 +4,44 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.9] - 2026-01-23
+
+### Added
+
+- **Category-aware helpfulness decay** - Transient categories decay faster
+  - `compute_helpfulness_with_decay()` applies per-category TTL
+  - `todo`, `bug`, `context` decay in 7-14 days
+  - `constraint`, `architecture` persist 60-90 days
+  - Integrated into recall scoring for dynamic ranking
+
+- **Auto-pin for high-value memories** - Prevent eviction of critical guardrails
+  - `should_auto_pin()` helper for constraint/antipattern/landmine categories
+  - Requires trust >= 0.8 to auto-pin (validated content only)
+  - `constraint` added to `_HIGH_VALUE_CATEGORIES` for lower promotion threshold
+
+- **Low-utility memory penalty** - Auto-weaken frequently-recalled but unused memories
+  - `penalize_low_utility_memories()` runs during maintenance
+  - Trust -= 0.03 when retrieved >= 5 times but used_count = 0
+  - Helps demote noise from recall results
+
+- **Input validation for list_memories** - Reject invalid pagination params
+  - Returns error for offset < 0 or limit < 1 instead of undefined behavior
+
+### Changed
+
+- **Trust now affects recall ranking** - `recall_trust_weight` default: 0.0 → 0.1
+  - Trusted memories rank higher in composite score
+  - Still a small factor vs similarity (0.7 weight)
+
+- **LOW_UTILITY trust penalty reduced** - From -0.05 to -0.03
+  - More gradual decay for low-utility memories
+
+### Documentation
+
+- **ML classification guidance** - Added docstring clarifying appropriate uses
+  - Confidence is for category assignment, NOT ranking
+  - Use composite_score for ranking, hot_score for eviction
+
 ## [0.5.8] - 2026-01-22
 
 ### Added

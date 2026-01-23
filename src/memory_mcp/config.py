@@ -120,7 +120,7 @@ class Settings(BaseSettings):
         default=90.0, description="Default half-life in days for trust decay"
     )
     recall_trust_weight: float = Field(
-        default=0.0, description="Weight for trust score in recall ranking (0 to disable)"
+        default=0.1, description="Weight for trust score in recall ranking (0 to disable)"
     )
     recall_helpfulness_weight: float = Field(
         default=0.05,

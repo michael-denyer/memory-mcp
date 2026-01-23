@@ -6,6 +6,7 @@ from pydantic import Field
 
 from memory_mcp.helpers import invalid_memory_type_error, parse_memory_type
 from memory_mcp.logging import record_recall, record_store
+from memory_mcp.models import RecallResult
 from memory_mcp.responses import (
     MemoryResponse,
     RecallResponse,
@@ -38,6 +39,38 @@ def parse_recall_mode(mode: str | None) -> RecallMode | None:
         return RecallMode(mode)
     except ValueError:
         return None
+
+
+def build_recall_response(
+    result: RecallResult,
+    ranking_prefix: str = "",
+    related_memories: list[RelatedMemoryResponse] | None = None,
+) -> RecallResponse:
+    """Build a RecallResponse from a RecallResult with common formatting.
+
+    Args:
+        result: The RecallResult from storage.recall()
+        ranking_prefix: Optional prefix for ranking factors string
+        related_memories: Optional list of related memories to include
+
+    Returns:
+        Formatted RecallResponse ready for the client.
+    """
+    suggestions = get_promotion_suggestions(result.memories) if result.memories else None
+    formatted_context, context_summary = format_memories_for_llm(result.memories)
+
+    return RecallResponse(
+        memories=[memory_to_response(m) for m in result.memories],
+        confidence=result.confidence,
+        gated_count=result.gated_count,
+        mode=result.mode.value if result.mode else "balanced",
+        guidance=result.guidance or "",
+        ranking_factors=build_ranking_factors(result.mode, prefix=ranking_prefix),
+        formatted_context=formatted_context if formatted_context else None,
+        context_summary=context_summary,
+        promotion_suggestions=suggestions if suggestions else None,
+        related_memories=related_memories if related_memories else None,
+    )
 
 
 @mcp.tool
@@ -255,9 +288,6 @@ def recall(
             for memory_id in memory_ids:
                 storage.mark_retrieval_used(memory_id, feedback="auto")
 
-    # Generate promotion suggestions for frequently-accessed cold memories
-    suggestions = get_promotion_suggestions(result.memories) if result.memories else None
-
     # Fetch related memories if requested (for top 3 results)
     related_list: list[RelatedMemoryResponse] | None = None
     if include_related and result.memories:
@@ -275,21 +305,7 @@ def recall(
                         )
                     )
 
-    # Format memories for LLM-friendly consumption
-    formatted_context, context_summary = format_memories_for_llm(result.memories)
-
-    return RecallResponse(
-        memories=[memory_to_response(m) for m in result.memories],
-        confidence=result.confidence,
-        gated_count=result.gated_count,
-        mode=result.mode.value if result.mode else "balanced",
-        guidance=result.guidance or "",
-        ranking_factors=build_ranking_factors(result.mode),
-        formatted_context=formatted_context if formatted_context else None,
-        context_summary=context_summary,
-        promotion_suggestions=suggestions if suggestions else None,
-        related_memories=related_list if related_list else None,
-    )
+    return build_recall_response(result, related_memories=related_list)
 
 
 @mcp.tool
@@ -325,23 +341,7 @@ def recall_with_fallback(
         min_results=min_results,
     )
 
-    # Generate promotion suggestions for frequently-accessed cold memories
-    suggestions = get_promotion_suggestions(result.memories) if result.memories else None
-
-    # Format memories for LLM-friendly consumption
-    formatted_context, context_summary = format_memories_for_llm(result.memories)
-
-    return RecallResponse(
-        memories=[memory_to_response(m) for m in result.memories],
-        confidence=result.confidence,
-        gated_count=result.gated_count,
-        mode=result.mode.value if result.mode else "balanced",
-        guidance=result.guidance or "",
-        ranking_factors=build_ranking_factors(result.mode, prefix="Fallback search"),
-        formatted_context=formatted_context if formatted_context else None,
-        context_summary=context_summary,
-        promotion_suggestions=suggestions if suggestions else None,
-    )
+    return build_recall_response(result, ranking_prefix="Fallback search")
 
 
 @mcp.tool
@@ -371,6 +371,12 @@ def list_memories(
     memory_type: Annotated[str | None, Field(description="Filter by type")] = None,
 ) -> list[MemoryResponse] | dict:
     """List stored memories with pagination."""
+    # Validate pagination parameters
+    if offset < 0:
+        return error_response("offset must be >= 0")
+    if limit < 1:
+        return error_response("limit must be >= 1")
+
     mem_type = None
     if memory_type:
         mem_type = parse_memory_type(memory_type)

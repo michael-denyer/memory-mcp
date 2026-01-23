@@ -5,13 +5,9 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from typing import TYPE_CHECKING
 
 from memory_mcp.logging import get_logger
-from memory_mcp.models import AuditOperation, MemoryType
-
-if TYPE_CHECKING:
-    pass
+from memory_mcp.models import AuditOperation, MemoryType, TrustReason
 
 log = get_logger("storage.maintenance")
 
@@ -347,6 +343,53 @@ class MaintenanceMixin:
             "new_model": clear_result["new_model"],
         }
 
+    def penalize_low_utility_memories(self, min_retrievals: int = 5) -> list[int]:
+        """Apply trust penalty to memories with poor helpfulness.
+
+        Finds memories that have been retrieved at least min_retrievals times
+        but never marked as used, and applies a LOW_UTILITY trust penalty.
+
+        This helps demote memories that are frequently returned but never helpful,
+        reducing their ranking in future recalls.
+
+        Args:
+            min_retrievals: Minimum retrieved_count to consider (default 5)
+
+        Returns:
+            List of memory IDs that were penalized
+        """
+        penalized_ids = []
+
+        with self._connection() as conn:
+            # Find low-utility memories: retrieved enough times but never used
+            rows = conn.execute(
+                """
+                SELECT id FROM memories
+                WHERE retrieved_count >= ?
+                  AND used_count = 0
+                """,
+                (min_retrievals,),
+            ).fetchall()
+
+        for row in rows:
+            memory_id = row["id"]
+            result = self.adjust_trust(
+                memory_id,
+                reason=TrustReason.LOW_UTILITY,
+                note=f"retrieved {min_retrievals}+ times but never used",
+            )
+            if result is not None:
+                penalized_ids.append(memory_id)
+
+        if penalized_ids:
+            log.info(
+                "Penalized {} low-utility memories (retrieved >= {} times, used = 0)",
+                len(penalized_ids),
+                min_retrievals,
+            )
+
+        return penalized_ids
+
     def run_full_cleanup(self) -> dict:
         """Run comprehensive cleanup: stale memories, old logs, patterns, injections.
 
@@ -373,6 +416,9 @@ class MaintenanceMixin:
         # 6. Clean up old injection records (7-day retention)
         deleted_injections = self.cleanup_old_injections(retention_days=7)
 
+        # 7. Penalize low-utility memories (retrieved but never used)
+        penalized_ids = self.penalize_low_utility_memories()
+
         return {
             "hot_cache_demoted": len(demoted_ids),
             "patterns_expired": expired_patterns,
@@ -380,4 +426,5 @@ class MaintenanceMixin:
             "memories_deleted": memory_cleanup["total_deleted"],
             "memories_deleted_by_type": memory_cleanup["deleted_by_type"],
             "injections_deleted": deleted_injections,
+            "low_utility_penalized": len(penalized_ids),
         }

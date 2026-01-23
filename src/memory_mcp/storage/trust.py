@@ -212,14 +212,17 @@ class TrustMixin:
         - auto_promote is enabled in settings
         - memory is not already hot
         - category is eligible for promotion (command, snippet never promoted)
-        - salience_score >= threshold (category-aware: lower for antipattern/landmine)
+        - salience_score >= threshold (category-aware: lower for antipattern/landmine/constraint)
         - OR access_count >= promotion_threshold (legacy fallback)
         - AND helpfulness check passes (if enough retrievals):
           - If retrieved_count >= 5: used_rate must be >= 0.25
           - If retrieved_count < 5: passes by default (cold start benefit of doubt)
 
-        High-value categories (antipattern, landmine) use lower thresholds
-        so critical warnings surface early in plans.
+        High-value categories (antipattern, landmine, constraint) use lower thresholds
+        so critical warnings and guardrails surface early in plans.
+
+        Auto-pinning: High-value category memories with high trust (>= 0.8) are
+        automatically pinned to prevent eviction.
 
         Low-value categories (command, snippet) are never promoted since they're
         easily discoverable or have low recall value.
@@ -263,9 +266,9 @@ class TrustMixin:
                 importance_score, trust_score, row["access_count"], last_accessed_dt
             )
 
-            # Category-aware threshold: high-value categories (antipattern, landmine)
+            # Category-aware threshold: high-value categories (antipattern, landmine, constraint)
             # have lower thresholds to promote more eagerly
-            from memory_mcp.helpers import get_promotion_salience_threshold
+            from memory_mcp.helpers import get_promotion_salience_threshold, should_auto_pin
 
             effective_threshold = get_promotion_salience_threshold(
                 category, self.settings.salience_promotion_threshold
@@ -294,13 +297,18 @@ class TrustMixin:
                     )
                     return False
 
-            promoted = self.promote_to_hot(memory_id, PromotionSource.AUTO_THRESHOLD)
+            # Check if this high-value memory should be auto-pinned
+            auto_pin = should_auto_pin(category, trust_score)
+
+            promoted = self.promote_to_hot(memory_id, PromotionSource.AUTO_THRESHOLD, pin=auto_pin)
             if promoted:
                 log.info(
-                    "Auto-promoted memory id={} (salience={:.3f}, threshold={:.3f}, category={})",
+                    "Auto-promoted memory id={} (salience={:.3f}, threshold={:.3f}, "
+                    "category={}, pinned={})",
                     memory_id,
                     salience,
                     effective_threshold,
                     category,
+                    auto_pin,
                 )
             return promoted

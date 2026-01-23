@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from memory_mcp.logging import get_logger
 from memory_mcp.models import (
@@ -17,9 +16,6 @@ from memory_mcp.models import (
     ScoreBreakdown,
     TrustReason,
 )
-
-if TYPE_CHECKING:
-    pass
 
 log = get_logger("storage.search")
 
@@ -334,6 +330,8 @@ class SearchMixin:
                     m.session_id,
                     m.project_id,
                     m.utility_score,
+                    m.category,
+                    m.last_used_at,
                     vec_distance_cosine(v.embedding, ?) as distance
                 FROM memory_vectors v
                 JOIN memories m ON m.id = v.rowid
@@ -426,9 +424,17 @@ class SearchMixin:
                         base_trust, created_at, last_accessed_at, memory_type_enum
                     )
 
-                    # Get Bayesian helpfulness from precomputed utility_score
+                    # Get Bayesian helpfulness with category-aware recency decay
+                    from memory_mcp.helpers import compute_helpfulness_with_decay
+
                     utility_score = row["utility_score"]
-                    helpfulness = utility_score if utility_score is not None else 0.25
+                    base_helpfulness = utility_score if utility_score is not None else 0.25
+                    category = row["category"]
+                    last_used_str = row["last_used_at"]
+                    last_used_at = datetime.fromisoformat(last_used_str) if last_used_str else None
+                    helpfulness = compute_helpfulness_with_decay(
+                        base_helpfulness, last_used_at, category
+                    )
 
                     score_breakdown = self._compute_composite_score(
                         effective_similarity,

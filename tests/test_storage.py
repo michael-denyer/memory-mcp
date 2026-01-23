@@ -1041,8 +1041,8 @@ class TestHelpfulnessTracking:
         memory = result.memories[0]
         # Helpfulness component should be populated
         assert memory.helpfulness_component is not None
-        # Cold start value (0.25 * 0.05 weight = 0.0125)
-        assert abs(memory.helpfulness_component - 0.0125) < 0.001
+        # Cold start value with decay (0.25 * 0.8 for never-used * 0.05 weight = 0.01)
+        assert abs(memory.helpfulness_component - 0.01) < 0.001
 
 
 # ========== Trust Granularity Tests ==========
