@@ -7,7 +7,10 @@
   "plugins": [
     {
       "name": "memory-mcp",
-      "source": ".",
+      "source": {
+        "source": "github",
+        "repo": "michael-denyer/memory-mcp"
+      },
       "description": "Persistent memory for Claude Code with hot cache instant recall and semantic search. Give your AI assistant a second brain.",
       "version": "0.6.0",
       "author": {
