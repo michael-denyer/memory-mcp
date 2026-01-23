@@ -86,14 +86,14 @@ flowchart LR
 
 ## Plugin-First Approach
 
-The Claude Code plugin (`.claude-plugin/`) is the primary user interface:
+The Claude Code plugin (`.claude-plugin/`) is the primary distribution:
 
 - **Slash commands** (`/memory-mcp:*`) - 14 commands in `.claude-plugin/commands/`
 - **Hooks** - SessionStart (bootstrap), Stop (log response), PreCompact (memory analyst)
 - **Agents** - Memory Analyst for pre-compaction knowledge extraction
 
-The CLI (`memory-mcp-cli`) and MCP tools are implementation details that power the plugin.
 Users install via `claude plugins add michael-denyer/memory-mcp`.
+The CLI (`memory-mcp-cli`) and MCP tools power the plugin internally.
 
 ## Key Features by Version
 
