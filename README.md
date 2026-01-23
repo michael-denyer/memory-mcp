@@ -90,7 +90,6 @@ flowchart LR
 
     subgraph Hot["HOT CACHE · 0ms"]
         HC[Frequent memories]
-        WS[Working set]
     end
 
     subgraph Cold["COLD STORAGE · ~50ms"]
