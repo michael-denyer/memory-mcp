@@ -457,6 +457,8 @@ class TestPatternType:
         expected |= {"entity_technology"}
         # Decision entity type
         expected |= {"entity_decision"}
+        # Long-form contextual content
+        expected |= {"insight"}
         actual = {pt.value for pt in PatternType}
         assert expected == actual
 
@@ -640,6 +642,86 @@ class TestExtractExplanations:
         text = "x because y"
         patterns = extract_explanations(text)
         assert len(patterns) == 0
+
+
+# ========== Insight Extraction Tests ==========
+
+
+class TestExtractInsights:
+    """Tests for extract_insights function."""
+
+    def test_key_insight_marker(self):
+        """Extract paragraphs with 'key insight' marker."""
+        text = """
+The key insight here is that embedding similarity alone doesn't capture
+memory utility. A memory can be highly similar to the query but still be
+unhelpful because it's outdated or was never validated as useful.
+"""
+        from memory_mcp.mining import extract_insights
+
+        patterns = extract_insights(text)
+        assert len(patterns) >= 1
+        assert patterns[0].pattern_type == PatternType.INSIGHT
+        assert patterns[0].confidence >= 0.7  # Explicit marker = high confidence
+
+    def test_summary_marker(self):
+        """Extract paragraphs with summary markers."""
+        text = """
+In summary, the two-tier memory architecture provides instant access to
+frequently-used patterns through the hot cache while maintaining full
+semantic search capability through cold storage.
+"""
+        from memory_mcp.mining import extract_insights
+
+        patterns = extract_insights(text)
+        assert len(patterns) >= 1
+        assert "summary" in patterns[0].pattern.lower() or "two-tier" in patterns[0].pattern.lower()
+
+    def test_problem_solution_pattern(self):
+        """Extract problem/solution statements."""
+        text = """
+The problem was that memories were being retrieved but never marked as used.
+This meant the helpfulness score stayed at the cold-start default forever,
+making it impossible to distinguish helpful from unhelpful memories.
+"""
+        from memory_mcp.mining import extract_insights
+
+        patterns = extract_insights(text)
+        assert len(patterns) >= 1
+        assert patterns[0].pattern_type == PatternType.INSIGHT
+
+    def test_too_short_skipped(self):
+        """Paragraphs under 100 chars are skipped."""
+        text = "This is a short paragraph. Not enough content here."
+        from memory_mcp.mining import extract_insights
+
+        patterns = extract_insights(text)
+        assert len(patterns) == 0
+
+    def test_code_blocks_skipped(self):
+        """Code blocks are not extracted as insights."""
+        text = """```python
+def example():
+    # This is just code, not an insight about something.
+    # Even though it's long enough, it should be skipped.
+    pass
+```"""
+        from memory_mcp.mining import extract_insights
+
+        patterns = extract_insights(text)
+        assert len(patterns) == 0
+
+    def test_causal_language(self):
+        """Extract paragraphs with causal/explanatory language."""
+        text = """
+Because of this design choice, high-value categories like antipattern and
+landmine get promoted to hot cache more eagerly. This ensures that critical
+warnings surface early in planning phases, reducing the risk of mistakes.
+"""
+        from memory_mcp.mining import extract_insights
+
+        patterns = extract_insights(text)
+        assert len(patterns) >= 1
 
 
 # ========== Config Extraction Tests ==========

@@ -84,6 +84,9 @@ class PatternType(str, Enum):
     ENTITY_TECHNOLOGY = "entity_technology"  # Technology/framework/tool mentions
     ENTITY_DECISION = "entity_decision"  # Architecture/design decisions with rationale
 
+    # Long-form contextual content
+    INSIGHT = "insight"  # Key insights, summaries, and contextual explanations
+
 
 # Common CLI tool prefixes for command extraction
 COMMAND_PREFIXES = (
@@ -619,6 +622,88 @@ def extract_explanations(text: str) -> list[ExtractedPattern]:
     return patterns
 
 
+def extract_insights(text: str) -> list[ExtractedPattern]:
+    """Extract key insights and longer contextual explanations.
+
+    Captures substantive paragraphs that contain explanatory language,
+    summaries, or important context that would be valuable to remember.
+
+    Targets content like:
+    - "The key insight is..." / "The main takeaway..."
+    - "This means that..." / "In other words..."
+    - "The problem was..." / "The solution is..."
+    - Paragraphs with causal language (because, therefore, thus)
+    - Summary statements with bullets or numbered lists
+
+    Min length: 100 chars (filters trivial content)
+    Max length: 800 chars (prevents noise from huge blocks)
+    """
+    patterns = []
+
+    # Split into paragraphs (double newline or markdown section breaks)
+    paragraphs = re.split(r"\n\s*\n|\n(?=#{1,3}\s)", text)
+
+    # Indicators of valuable contextual content
+    insight_indicators = [
+        # Direct insight markers
+        r"(?:the )?(?:key|main|important|critical) (?:insight|takeaway|point|thing)",
+        r"(?:in )?summary",
+        r"(?:this|the) means",
+        r"in other words",
+        r"the (?:problem|issue|challenge) (?:is|was)",
+        r"the (?:solution|fix|answer) (?:is|was)",
+        r"(?:what|here's what) (?:this|we|you) (?:need|should)",
+        # Causal/explanatory language
+        r"because of this",
+        r"as a result",
+        r"therefore",
+        r"consequently",
+        r"this is why",
+        r"the reason (?:is|was|being)",
+        # Summary/conclusion markers
+        r"to (?:summarize|recap|sum up)",
+        r"in conclusion",
+        r"the (?:bottom line|upshot)",
+        r"(?:essentially|fundamentally|basically),",
+        # Lists with context (numbered or bulleted)
+        r"(?:here are|the following|these are) (?:the )?(?:\d+|several|some|a few)",
+    ]
+
+    # Compile pattern for efficiency
+    indicator_pattern = re.compile("|".join(insight_indicators), re.IGNORECASE)
+
+    for para in paragraphs:
+        para = para.strip()
+
+        # Skip if too short or too long
+        if len(para) < 100 or len(para) > 800:
+            continue
+
+        # Skip code blocks (already handled by extract_code_blocks)
+        if para.startswith("```") or para.startswith("    "):
+            continue
+
+        # Skip if mostly non-text (tables, URLs, etc.)
+        alpha_ratio = sum(c.isalpha() for c in para) / max(len(para), 1)
+        if alpha_ratio < 0.5:
+            continue
+
+        # Check for insight indicators
+        if indicator_pattern.search(para):
+            # Clean up whitespace
+            cleaned = " ".join(para.split())
+            # Higher confidence for explicit markers, lower for causal language
+            has_explicit_marker = any(
+                re.search(p, para, re.IGNORECASE)
+                for p in insight_indicators[:8]  # First 8 are explicit
+            )
+            confidence = 0.75 if has_explicit_marker else 0.6
+
+            patterns.append(ExtractedPattern(cleaned, PatternType.INSIGHT, confidence=confidence))
+
+    return patterns
+
+
 def extract_config(text: str) -> list[ExtractedPattern]:
     """Extract configuration facts and settings.
 
@@ -1000,6 +1085,7 @@ PATTERN_EXTRACTORS = [
     extract_architecture,
     extract_tech_stack,
     extract_explanations,
+    extract_insights,  # Long-form contextual content
     extract_config,
     # High-value extractors
     extract_dependencies,
