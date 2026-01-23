@@ -1,31 +1,49 @@
 <!-- mcp-name: io.github.michael-denyer/hot-memory-mcp -->
 <div align="center">
 
-# Memory MCP
+# 🧠 Memory MCP
 
-**Persistent memory for Claude Code**
+### Give your AI assistant a persistent second brain
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![MCP 1.0](https://img.shields.io/badge/MCP-1.0-green.svg)](https://modelcontextprotocol.io)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-2.1+-blueviolet.svg)](https://claude.ai/code)
-[![Tests](https://img.shields.io/badge/tests-654%20passed-brightgreen.svg)](#development)
 [![PyPI](https://img.shields.io/pypi/v/hot-memory-mcp.svg)](https://pypi.org/project/hot-memory-mcp/)
+
+<br />
+
+**Stop re-explaining your project every session.**
+
+Memory MCP learns what matters and keeps it ready — instant recall for the stuff you use most, semantic search for everything else.
 
 </div>
 
 ---
 
-## Why
+## The Problem
 
-Every new chat starts from scratch. You explain your architecture *again*. You paste the same patterns *again*.
+Every new chat starts from scratch. You explain your architecture *again*. You paste the same patterns *again*. Your context window bloats with repetition.
 
-Memory MCP fixes this with two tiers:
+Other memory solutions help, but they still require tool calls for every lookup — adding latency and eating into Claude's thinking budget.
 
-1. **Hot cache (0ms)** — Frequently-used knowledge auto-injected before Claude thinks. No tool call.
-2. **Cold storage (~50ms)** — Everything else, searchable by meaning.
+**Memory MCP fixes this with a two-tier architecture:**
 
-The system learns what you use and promotes it automatically.
+1. **Hot cache (0ms)** — Frequently-used knowledge auto-injected into context *before Claude even starts thinking*. No tool call needed.
+2. **Cold storage (~50ms)** — Everything else, searchable by meaning via semantic similarity.
+
+The system learns what you use and promotes it automatically. Your most valuable knowledge becomes instantly available. No manual curation required.
+
+## Before & After
+
+| 😤 Without Memory MCP | 🎯 With Memory MCP |
+|----------------------|-------------------|
+| "Let me explain our architecture again..." | Project facts persist and isolate per repo |
+| Copy-paste the same patterns every session | Patterns auto-promoted to instant access |
+| 500k+ token context windows | Hot cache keeps it lean (~20 items) |
+| Tool call latency on every memory lookup | Hot cache: **0ms** — already in context |
+| Stale information lingers forever | Trust scoring demotes outdated facts |
+| Flat list of disconnected facts | Knowledge graph connects related concepts |
 
 ## Install
 
@@ -55,6 +73,19 @@ Add to `~/.claude.json`:
 ```
 </details>
 
+<details>
+<summary>Apple Silicon optimization</summary>
+
+Add MLX support for faster embeddings:
+```bash
+uv tool install hot-memory-mcp[mlx]
+```
+</details>
+
+Restart Claude Code. The hot cache auto-populates from your project docs.
+
+> **First run**: Embedding model (~90MB) downloads automatically. Takes 30-60 seconds once.
+
 ## How It Works
 
 ```mermaid
@@ -63,24 +94,43 @@ flowchart LR
         REQ((Request))
     end
 
-    subgraph Hot["HOT · 0ms"]
+    subgraph Hot["HOT CACHE · 0ms"]
         HC[Frequent memories]
+        WS[Working set]
     end
 
-    subgraph Cold["COLD · ~50ms"]
+    subgraph Cold["COLD STORAGE · ~50ms"]
         VS[(Vector search)]
+        KG[(Knowledge graph)]
     end
 
     REQ -->|"auto-injected"| HC
     REQ -->|"recall()"| VS
+    VS <-->|"related"| KG
 ```
 
 | Tier | Latency | Behavior |
 |------|---------|----------|
-| **Hot Cache** | 0ms | Auto-injected every request |
-| **Cold Storage** | ~50ms | Semantic search on demand |
+| **Hot Cache** | 0ms | Auto-injected every request. No tool call needed. |
+| **Cold Storage** | ~50ms | Semantic search when you need deeper recall. |
 
-Memories used 3+ times auto-promote. Unused memories demote after 14 days.
+Memories used 3+ times auto-promote to hot cache. Unused memories demote after 14 days. Pin important ones to keep them hot forever.
+
+## What Makes It Different
+
+Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's **hot cache bypasses this entirely** — your most-used knowledge is already in context when Claude starts thinking.
+
+| | Memory MCP | Generic Memory Servers |
+|---|------------|------------------------|
+| **Hot cache** | Auto-injected at 0ms | Every lookup = tool call |
+| **Self-organizing** | Learns and promotes automatically | Manual curation required |
+| **Project-aware** | Auto-isolates by git repo | One big pile of memories |
+| **Knowledge graph** | Multi-hop recall across concepts | Flat list of facts |
+| **Pattern mining** | Learns from Claude's outputs | Not available |
+| **Trust scoring** | Outdated info decays and sinks | All memories equal |
+| **Setup** | One command, local SQLite | Often needs cloud setup |
+
+**The Engram Insight**: Human memory doesn't search — frequently-used patterns are *already there*. That's what hot cache does for Claude.
 
 ## Features
 
@@ -121,6 +171,7 @@ memory-mcp-cli bootstrap    # Seed from project docs
 memory-mcp-cli status       # Show stats
 memory-mcp-cli dashboard    # Web UI at :8765
 memory-mcp-cli consolidate  # Merge duplicates
+memory-mcp-cli hook-check   # Verify hook dependencies
 ```
 
 ## Documentation
@@ -135,7 +186,7 @@ memory-mcp-cli consolidate  # Merge duplicates
 ```bash
 git clone https://github.com/michael-denyer/memory-mcp.git
 cd memory-mcp && uv sync
-uv run pytest -v  # 654 tests
+uv run pytest -v  # 658 tests
 ```
 
 | Requirement | Value |
