@@ -96,6 +96,24 @@ def set_session_topic(
 
 
 @mcp.tool
+def summarize_session(
+    session_id: Annotated[str, Field(description="Session ID to summarize")],
+) -> dict:
+    """Summarize a session's key decisions, insights, and action items.
+
+    Groups session memories by semantic category to extract structured knowledge:
+    - Decisions: Choices made and their rationale
+    - Insights: Lessons learned, antipatterns, landmines, constraints
+    - Action Items: TODOs, bugs, tasks to complete
+    - Context: Background info, conventions, preferences, architecture
+
+    Use this before end_session() to review what was captured, or anytime
+    to get a structured view of a conversation's key takeaways.
+    """
+    return storage.summarize_session(session_id)
+
+
+@mcp.tool
 def end_session(
     session_id: Annotated[str, Field(description="Session ID to end")],
     promote_top: Annotated[

@@ -3377,6 +3377,100 @@ class TestEpisodicMemory:
         finally:
             stor.close()
 
+    def test_summarize_session_not_found(self, tmp_path):
+        """summarize_session returns error for unknown session."""
+        settings = Settings(db_path=tmp_path / "summarize.db")
+        stor = Storage(settings)
+        try:
+            result = stor.summarize_session("nonexistent-session")
+            assert result["success"] is False
+            assert "not found" in result["error"]
+        finally:
+            stor.close()
+
+    def test_summarize_session_groups_by_category(self, tmp_path):
+        """summarize_session groups memories by semantic category."""
+        settings = Settings(
+            db_path=tmp_path / "summarize.db",
+            semantic_dedup_enabled=False,
+        )
+        stor = Storage(settings)
+        try:
+            session_id = "test-summarize"
+            stor.create_or_get_session(session_id, topic="Test summarization")
+
+            # Create memories with different categories
+            stor.store_memory(
+                content="We chose React over Vue for performance",
+                memory_type=MemoryType.PROJECT,
+                category="decision",
+                session_id=session_id,
+            )
+            stor.store_memory(
+                content="Learned that caching needs invalidation strategy",
+                memory_type=MemoryType.PATTERN,
+                category="lesson",
+                session_id=session_id,
+            )
+            stor.store_memory(
+                content="TODO: add rate limiting to API",
+                memory_type=MemoryType.PATTERN,
+                category="todo",
+                session_id=session_id,
+            )
+            stor.store_memory(
+                content="Always use kebab-case for files",
+                memory_type=MemoryType.PROJECT,
+                category="convention",
+                session_id=session_id,
+            )
+            stor.store_memory(
+                content="Watch out - this can silently fail",
+                memory_type=MemoryType.PATTERN,
+                category="landmine",
+                session_id=session_id,
+            )
+
+            result = stor.summarize_session(session_id)
+
+            assert result["success"] is True
+            assert result["session_id"] == session_id
+            assert result["topic"] == "Test summarization"
+            assert result["total_memories"] == 5
+
+            # Check category groupings
+            assert result["summary"]["decisions_count"] == 1
+            assert result["summary"]["insights_count"] == 2  # lesson + landmine
+            assert result["summary"]["action_items_count"] == 1  # todo
+            assert result["summary"]["context_count"] == 1  # convention
+
+            # Verify content in each group
+            assert any("React" in d["content"] for d in result["decisions"])
+            assert any("caching" in i["content"] for i in result["insights"])
+            assert any("rate limiting" in a["content"] for a in result["action_items"])
+            assert any("kebab-case" in c["content"] for c in result["context"])
+        finally:
+            stor.close()
+
+    def test_summarize_session_empty(self, tmp_path):
+        """summarize_session handles session with no memories."""
+        settings = Settings(db_path=tmp_path / "summarize.db")
+        stor = Storage(settings)
+        try:
+            session_id = "empty-session"
+            stor.create_or_get_session(session_id)
+
+            result = stor.summarize_session(session_id)
+
+            assert result["success"] is True
+            assert result["total_memories"] == 0
+            assert result["decisions"] == []
+            assert result["insights"] == []
+            assert result["action_items"] == []
+            assert result["context"] == []
+        finally:
+            stor.close()
+
 
 class TestHybridSearch:
     """Tests for hybrid semantic + keyword search (v12 feature)."""
