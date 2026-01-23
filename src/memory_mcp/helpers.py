@@ -686,18 +686,10 @@ def infer_category(content: str) -> str | None:
     candidates = [cat for cat, score in scores.items() if score == max_score]
 
     # Pick highest priority among tied candidates
-    for cat in priority:
-        if cat in candidates:
-            log.debug(
-                "infer_category: category='{}' score={} candidates={} content_preview='{}'",
-                cat,
-                max_score,
-                candidates,
-                content[:60].replace("\n", " "),
-            )
-            return cat
+    result = next(
+        (cat for cat in priority if cat in candidates), candidates[0] if candidates else None
+    )
 
-    result = candidates[0] if candidates else None
     log.debug(
         "infer_category: category='{}' score={} candidates={} content_preview='{}'",
         result,
