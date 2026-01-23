@@ -4,6 +4,25 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] - 2026-01-23
+
+### Added
+
+- **Slash commands for Claude Code** - 13 new `/memory-mcp:*` commands
+  - `/memory-mcp:remember` - Store a new memory
+  - `/memory-mcp:recall` - Search memories semantically
+  - `/memory-mcp:list` - List stored memories
+  - `/memory-mcp:hot-cache` - Manage hot cache (promote/demote/pin/unpin)
+  - `/memory-mcp:stats` - Show memory statistics
+  - `/memory-mcp:bootstrap` - Bootstrap from project docs
+  - `/memory-mcp:link` - Link related memories in knowledge graph
+  - `/memory-mcp:session` - Manage conversation sessions
+  - `/memory-mcp:mining` - Pattern mining from usage
+  - `/memory-mcp:trust` - Manage memory trust scores
+  - `/memory-mcp:consolidate` - Consolidate duplicate memories
+  - `/memory-mcp:forget` - Delete a memory permanently
+  - `/memory-mcp:maintenance` - Run database maintenance
+
 ## [0.6.0] - 2026-01-23
 
 ### Added

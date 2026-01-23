@@ -63,7 +63,25 @@ The system learns what you use and automatically promotes it. Your most valuable
 
 ## Quick Start
 
-### Install
+### Option 1: Claude Code Plugin (Recommended)
+
+Install as a plugin for automatic configuration and slash commands:
+
+```bash
+# Claude Code CLI
+claude plugins add michael-denyer/memory-mcp
+
+# Claude Code in VS Code
+# Open command palette (Cmd+Shift+P) → "Claude: Manage Plugins" → Add from GitHub → michael-denyer/memory-mcp
+```
+
+This gives you:
+- Auto-configured MCP server
+- SessionStart hook for auto-bootstrap
+- Stop hook for pattern mining
+- 13 slash commands (`/memory-mcp:remember`, `/memory-mcp:recall`, etc.)
+
+### Option 2: Manual Install
 
 ```bash
 # uv (recommended)
@@ -83,7 +101,7 @@ cd memory-mcp && uv sync
 - **NER (Named Entity Recognition)** — Automatically identifies people, organizations, locations in your memories for better pattern mining
 - **ML Classification** — Semantic category inference (antipattern, decision, convention, etc.) using embedding similarity
 
-### Configure
+### Configure (Manual Install Only)
 
 Add to your MCP client config (e.g., `~/.claude.json` for Claude Code):
 
@@ -163,6 +181,26 @@ Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's *
 | **Setup** | One command, local SQLite, no API keys | Often needs cloud setup |
 
 **The Engram Insight**: Human memory doesn't search — frequently-used patterns are *already there*. That's what hot cache does for Claude.
+
+## Slash Commands
+
+When installed as a Claude Code plugin, these slash commands are available:
+
+| Command | Description |
+|---------|-------------|
+| `/memory-mcp:remember` | Store a new memory |
+| `/memory-mcp:recall` | Search memories semantically |
+| `/memory-mcp:list` | List stored memories |
+| `/memory-mcp:hot-cache` | Manage hot cache (promote/demote/pin/unpin) |
+| `/memory-mcp:stats` | Show memory statistics |
+| `/memory-mcp:bootstrap` | Bootstrap from project docs |
+| `/memory-mcp:link` | Link related memories |
+| `/memory-mcp:session` | Manage conversation sessions |
+| `/memory-mcp:mining` | Pattern mining from usage |
+| `/memory-mcp:trust` | Manage memory trust scores |
+| `/memory-mcp:consolidate` | Consolidate duplicate memories |
+| `/memory-mcp:forget` | Delete a memory permanently |
+| `/memory-mcp:maintenance` | Run database maintenance |
 
 ---
 
