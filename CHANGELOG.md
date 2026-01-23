@@ -4,7 +4,7 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.5.13] - 2026-01-23
+## [0.5.14] - 2026-01-23
 
 ### Added
 
@@ -15,6 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Hot cache metric persistence** - Metrics survive server restarts
   - Promotions, hits, misses, evictions stored in metadata table
   - Lazy-loaded on first access for performance
+
+- **Session summarization tool** - Extract structured knowledge from conversations
+  - `summarize_session(session_id)` groups memories by category
+  - Categories: decisions, insights (lessons/antipatterns/landmines), action items (todos/bugs), context
+  - Returns top 20 items per group sorted by importance
+  - Use before `end_session()` to review what will be promoted
 
 ### Changed
 
