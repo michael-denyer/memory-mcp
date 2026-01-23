@@ -173,7 +173,7 @@ def run_mining(
     # Record mining metrics
     record_mining(
         patterns_found=result["patterns_found"],
-        patterns_new=result["new_patterns"],
+        patterns_new=result["new_memories"],
         patterns_updated=result["updated_patterns"],
     )
 

@@ -472,33 +472,36 @@ _HIGH_VALUE_CATEGORIES = {"antipattern", "landmine", "constraint"}
 
 # Promotion threshold multipliers by category
 # Higher multiplier = harder to promote (requires higher salience)
-# Lower multiplier = easier to promote (allows lower salience)
-# Changed from blanket exclusion to threshold-based approach so frequently
-# used commands CAN reach hot cache if accessed enough
+# Category promotion multipliers: lower = easier to promote (lower salience needed)
+# Note: command and snippet are blocked entirely via _CATEGORY_INELIGIBLE
 _CATEGORY_PROMOTION_MULTIPLIERS = {
-    "command": 2.0,  # Require 2x normal salience (was: blocked entirely)
-    "snippet": 1.5,  # Require 1.5x normal salience (was: blocked entirely)
     "antipattern": 0.6,  # Lower threshold for warnings
     "landmine": 0.6,  # Lower threshold for gotchas
     "constraint": 0.6,  # Lower threshold for rules
 }
 
+# Categories blocked from auto-promotion entirely
+# command: Easily discoverable via shell history
+# snippet: Transient and rarely worth hot cache space
+_CATEGORY_INELIGIBLE = {"command", "snippet"}
+
 
 def should_promote_category(category: str | None) -> bool:
     """Check if a category is eligible for hot cache promotion.
 
-    All categories are now eligible for promotion - we use threshold multipliers
-    instead of blanket exclusions. This allows frequently-used commands to
-    reach hot cache if they meet the higher threshold.
+    Low-value categories (command, snippet) are blocked from auto-promotion:
+    - Commands are easily discoverable via shell history
+    - Snippets are transient and rarely worth keeping in hot cache
 
     Args:
         category: Memory category or None
 
     Returns:
-        True (all categories can be promoted with appropriate thresholds)
+        True if category can be auto-promoted, False if blocked
     """
-    # All categories are now promotable - use threshold multipliers instead
-    return True
+    if category is None:
+        return True
+    return category not in _CATEGORY_INELIGIBLE
 
 
 def get_promotion_salience_threshold(category: str | None, default_threshold: float) -> float:
@@ -1311,12 +1314,14 @@ def _get_staleness_indicator(memory: Memory) -> str | None:
 
     # Stale thresholds by memory type
     # Transient types stale faster, durable types stale slower
+    from memory_mcp.storage import MemoryType
+
     type_stale_thresholds = {
-        "episodic": 3,
-        "conversation": 7,
-        "pattern": 14,
-        "project": 21,
-        "reference": 30,
+        MemoryType.EPISODIC: 3,
+        MemoryType.CONVERSATION: 7,
+        MemoryType.PATTERN: 14,
+        MemoryType.PROJECT: 21,
+        MemoryType.REFERENCE: 30,
     }
     default_threshold = 14
 

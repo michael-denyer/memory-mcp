@@ -245,7 +245,7 @@ def recall(
     # Get current project for project-aware recall (if enabled)
     project_id = get_auto_project_id() if settings.project_filter_recall else None
 
-    log.debug(
+    log.info(
         "recall() called: query='{}' mode={} limit={} threshold={} project={}",
         query[:50],
         mode,
@@ -290,6 +290,15 @@ def recall(
         memory_ids = [m.id for m in result.memories]
         similarities = [m.similarity or 0.0 for m in result.memories]
         storage.record_retrieval_event(query, memory_ids, similarities)
+
+        # Log injection for feedback loop analysis
+        session_id = get_current_session_id()
+        storage.log_injections_batch(
+            memory_ids=memory_ids,
+            resource="recall",
+            session_id=session_id,
+            project_id=project_id,
+        )
 
         # Auto-mark as used if enabled (assumes recalled = used)
         if settings.retrieval_auto_mark_used:

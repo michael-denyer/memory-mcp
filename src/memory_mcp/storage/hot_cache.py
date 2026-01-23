@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -16,11 +17,48 @@ from memory_mcp.models import (
     PromotionSource,
 )
 
+if TYPE_CHECKING:
+    pass
+
 log = get_logger("storage.hot_cache")
 
 
 class HotCacheMixin:
     """Mixin providing hot cache methods for Storage."""
+
+    # Type stub for attribute defined in Storage.__init__
+    _hot_cache_metrics: HotCacheMetrics | None
+
+    def _ensure_hot_cache_metrics(self) -> HotCacheMetrics:
+        """Ensure hot cache metrics are loaded (lazy initialization from DB)."""
+        if self._hot_cache_metrics is None:
+            with self._connection() as conn:
+                row = conn.execute(
+                    "SELECT value FROM metadata WHERE key = 'hot_cache_metrics'"
+                ).fetchone()
+                if row:
+                    data = json.loads(row["value"])
+                    self._hot_cache_metrics = HotCacheMetrics(
+                        hits=data.get("hits", 0),
+                        misses=data.get("misses", 0),
+                        evictions=data.get("evictions", 0),
+                        promotions=data.get("promotions", 0),
+                    )
+                else:
+                    self._hot_cache_metrics = HotCacheMetrics()
+        return self._hot_cache_metrics
+
+    def _save_hot_cache_metrics(self) -> None:
+        """Persist hot cache metrics to metadata table."""
+        metrics = self._ensure_hot_cache_metrics()
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO metadata (key, value)
+                VALUES ('hot_cache_metrics', ?)
+                """,
+                (json.dumps(metrics.to_dict()),),
+            )
 
     def get_hot_memories(self, project_id: str | None = None) -> list[Memory]:
         """Get all memories in hot cache, ordered for optimal injection.
@@ -75,10 +113,8 @@ class HotCacheMixin:
             )
 
             # Real usage ratio: distinguish actual usage from auto-marking
-            # used_count = mark_memory_used calls, access_count includes all bumps
-            used = m.used_count or 0
             accessed = m.access_count or 1
-            real_usage_ratio = used / accessed if accessed > 0 else 0
+            real_usage_ratio = (m.used_count or 0) / accessed
 
             return (-last_used_ts, -decayed_trust, -real_usage_ratio)
 
@@ -110,20 +146,22 @@ class HotCacheMixin:
 
     def record_hot_cache_hit(self) -> None:
         """Record a hot cache hit (resource was read with content)."""
-        self._hot_cache_metrics.hits += 1
+        self._ensure_hot_cache_metrics().hits += 1
+        self._save_hot_cache_metrics()
 
     def record_hot_cache_miss(self) -> None:
         """Record a hot cache miss (resource was read but empty)."""
-        self._hot_cache_metrics.misses += 1
+        self._ensure_hot_cache_metrics().misses += 1
+        self._save_hot_cache_metrics()
 
     def get_hot_cache_metrics(self) -> HotCacheMetrics:
         """Get current hot cache metrics."""
-        return self._hot_cache_metrics
+        return self._ensure_hot_cache_metrics()
 
     def get_hot_cache_stats(self) -> dict:
         """Get hot cache statistics including metrics and computed values."""
         hot_memories = self.get_hot_memories()
-        metrics = self._hot_cache_metrics.to_dict()
+        metrics = self._ensure_hot_cache_metrics().to_dict()
 
         # Compute average hot score
         avg_score = 0.0
@@ -209,7 +247,8 @@ class HotCacheMixin:
                     "UPDATE memories SET is_hot = 0, promotion_source = NULL WHERE id = ?",
                     (evict_id,),
                 )
-                self._hot_cache_metrics.evictions += 1
+                self._ensure_hot_cache_metrics().evictions += 1
+                self._save_hot_cache_metrics()
                 # Eviction indicates cache pressure - log as warning
                 log.warning(
                     "Evicted memory id={} from hot cache (cache pressure, {} items)",
@@ -228,7 +267,8 @@ class HotCacheMixin:
             )
             promoted = cursor.rowcount > 0
             if promoted:
-                self._hot_cache_metrics.promotions += 1
+                self._ensure_hot_cache_metrics().promotions += 1
+                self._save_hot_cache_metrics()
                 # Manual promotions are user actions (INFO), auto-promotions are routine (DEBUG)
                 if promotion_source == PromotionSource.MANUAL:
                     log.info(

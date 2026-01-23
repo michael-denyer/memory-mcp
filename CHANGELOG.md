@@ -4,6 +4,35 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.13] - 2026-01-23
+
+### Added
+
+- **Injection logging in recall** - Track which memories are retrieved for feedback analysis
+  - `recall()` now logs all returned memories via `log_injections_batch()`
+  - Enables injection pattern analysis and hot cache quality improvement
+
+- **Hot cache metric persistence** - Metrics survive server restarts
+  - Promotions, hits, misses, evictions stored in metadata table
+  - Lazy-loaded on first access for performance
+
+### Changed
+
+- **Category gate for auto-promotion** - `command` and `snippet` categories blocked
+  - Low-value categories now rejected with `category_ineligible` reason
+  - `should_promote_category()` helper for promotion decisions
+
+- **Knowledge graph links for existing entities** - Entity patterns now tracked even when merged
+  - Fixed bug where semantic dedup prevented relationship creation
+  - Entities linked regardless of `is_new` status
+
+### Fixed
+
+- **run_mining KeyError** - MCP tool was reading `new_patterns` instead of `new_memories`
+- **Staleness thresholds** - Now use `MemoryType` enum keys for type safety
+- **Recall logging level** - Changed from DEBUG to INFO per changelog claim
+- **Auto-promotion logging** - Changed from INFO to DEBUG (routine operation)
+
 ## [0.5.12] - 2026-01-23
 
 ### Added
@@ -15,13 +44,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Staleness indicators** - Visual hints for memory freshness in hot cache
   - `_get_staleness_indicator()` returns "never verified" or "stale Xd" based on `last_used_at`
-  - Type-specific thresholds: ephemeral (7d), transient (14d), stable (30d), durable (60d)
+  - Type-specific thresholds: episodic (3d), conversation (7d), pattern (14d), project (21d), reference (30d)
   - Integrated into formatted memory output for injection context
 
 - **Injection feedback loop** - Hot cache quality improvement from usage patterns
   - `analyze_injection_patterns()` identifies high-value, low-utility, and promotion candidates
   - `improve_hot_cache_from_injections()` auto-promotes high-value cold memories
-  - Runs during `run_full_cleanup()` with configurable dry_run mode
+  - Runs during `run_full_cleanup()` (dry_run=False, actual promotions happen)
 
 - **Recall logging enhancements** - Better observability for debugging
   - Logs query preview (first 50 chars), mode, and elapsed time
@@ -173,8 +202,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **Category distribution** - Visual breakdown by memory category on overview
 
 - **Auto-mining in hook** - Pattern mining now runs automatically after each Claude response
-  - No manual intervention needed - patterns become memories immediately
-  - High-confidence patterns stored as memories on first extraction
+  - High-confidence patterns stored as memories on first extraction (if content ≥ 20 chars)
+  - Hook processes only text blocks from Claude's response
   - Hot cache promotion after reaching occurrence threshold
 
 ### Changed

@@ -262,12 +262,18 @@ class TrustMixin:
                 get_bayesian_helpfulness,
                 get_promotion_salience_threshold,
                 should_auto_pin,
+                should_promote_category,
             )
 
-            # Note: All categories are now promotable with threshold multipliers.
-            # The old blanket exclusion for command/snippet was too rigid -
-            # frequently-used commands like 'uv run pytest' should be able to
-            # reach hot cache if they meet the (higher) threshold.
+            # Category gate: block low-value categories (command, snippet)
+            if not should_promote_category(category):
+                log.debug(
+                    "Skipped promotion for memory id={} (category '{}' ineligible)",
+                    memory_id,
+                    category,
+                )
+                record_promotion_rejection("category_ineligible", memory_id)
+                return False
 
             trust_score = row["trust_score"] or 1.0
             importance_score = row["importance_score"] or 0.5
@@ -328,7 +334,7 @@ class TrustMixin:
 
             promoted = self.promote_to_hot(memory_id, PromotionSource.AUTO_THRESHOLD, pin=auto_pin)
             if promoted:
-                log.info(
+                log.debug(
                     "Auto-promoted memory id={} (salience={:.3f}, threshold={:.3f}, "
                     "category={}, pinned={})",
                     memory_id,
