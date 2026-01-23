@@ -7,7 +7,14 @@ from pydantic import Field
 from memory_mcp.config import find_bootstrap_files
 from memory_mcp.helpers import parse_memory_type
 from memory_mcp.responses import BootstrapResponse, SeedResult
-from memory_mcp.server.app import get_auto_project_id, log, mcp, settings, storage
+from memory_mcp.server.app import (
+    get_auto_project_id,
+    get_current_session_id,
+    log,
+    mcp,
+    settings,
+    storage,
+)
 from memory_mcp.storage import MemorySource, MemoryType
 from memory_mcp.text_parsing import parse_content_into_chunks
 
@@ -25,8 +32,9 @@ def _seed_from_text_impl(
     chunks = parse_content_into_chunks(content)
     created, skipped, errors = 0, 0, []
 
-    # Use project_id for project-aware memory
+    # Use project_id and session_id for project-aware memory
     project_id = get_auto_project_id()
+    session_id = get_current_session_id()
 
     for chunk in chunks:
         if len(chunk) > settings.max_content_length:
@@ -38,6 +46,7 @@ def _seed_from_text_impl(
             memory_type=mem_type,
             source=MemorySource.MANUAL,
             project_id=project_id,
+            session_id=session_id,
         )
         if is_new:
             created += 1

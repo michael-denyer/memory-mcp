@@ -5,6 +5,7 @@ These commands can be called from shell scripts and Claude Code hooks.
 
 import json
 import sys
+import uuid
 from pathlib import Path
 
 import click
@@ -352,6 +353,10 @@ def seed(ctx: click.Context, file: str, memory_type: str, promote: bool) -> None
         project_id = get_current_project_id()
 
     storage = Storage(settings)
+    # Create a session for this CLI invocation
+    session_id = str(uuid.uuid4())
+    storage.create_or_get_session(session_id, topic="CLI seed", project_path=str(path.parent))
+
     try:
         for chunk in chunks:
             if len(chunk) > settings.max_content_length:
@@ -363,6 +368,7 @@ def seed(ctx: click.Context, file: str, memory_type: str, promote: bool) -> None
                 memory_type=mem_type,
                 source=MemorySource.MANUAL,
                 project_id=project_id,
+                session_id=session_id,
             )
             if is_new:
                 created += 1

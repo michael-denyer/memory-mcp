@@ -106,8 +106,9 @@ def approve_candidate(
     if mem_type is None:
         return invalid_memory_type_error()
 
-    # Use project_id for project-aware memory
+    # Use project_id and session_id for project-aware memory
     project_id = get_auto_project_id()
+    session_id = get_current_session_id()
 
     memory_id, is_new = storage.store_memory(
         content=candidate.pattern,
@@ -115,6 +116,7 @@ def approve_candidate(
         source=MemorySource.MINED,
         tags=tags or [],
         project_id=project_id,
+        session_id=session_id,
     )
 
     storage.promote_to_hot(memory_id)

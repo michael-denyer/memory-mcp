@@ -1276,7 +1276,7 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
         tuple[int, str, int | None]
     ] = []  # (memory_id, pattern_type, source_log_id)
 
-    for log_id, content, _, log_project_id in outputs:
+    for log_id, content, _, log_project_id, log_session_id in outputs:
         patterns = extract_patterns(
             content,
             ner_enabled=settings.ner_enabled,
@@ -1317,7 +1317,7 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
                 ):
                     mem_type = _get_memory_type_for_pattern(pattern.pattern_type.value)
 
-                    # Use project_id from source log, not current session
+                    # Use project_id and session_id from source log, not current session
                     # This prevents cross-project pollution
                     memory_id, is_new = storage.store_memory(
                         content=pattern.pattern,
@@ -1325,6 +1325,7 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
                         source=MemorySource.MINED,
                         tags=["mined"],
                         project_id=log_project_id,
+                        session_id=log_session_id,
                         source_log_id=log_id,
                     )
 

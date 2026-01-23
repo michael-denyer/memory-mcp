@@ -2364,6 +2364,22 @@ class TestSessionProvenance:
             assert row is not None
             assert row["session_id"] == "persist-session"
 
+    def test_get_recent_outputs_includes_session_id(self, storage):
+        """get_recent_outputs returns session_id in tuple."""
+        storage.create_or_get_session("output-session")
+        storage.log_output("Output for mining", session_id="output-session", project_id="test-proj")
+
+        outputs = storage.get_recent_outputs(hours=1)
+
+        assert len(outputs) >= 1
+        # Tuple format: (log_id, content, timestamp, project_id, session_id)
+        last_output = outputs[0]
+        assert len(last_output) == 5
+        log_id, content, timestamp, project_id, session_id = last_output
+        assert content == "Output for mining"
+        assert project_id == "test-proj"
+        assert session_id == "output-session"
+
 
 class TestBootstrap:
     """Tests for bootstrap_from_files functionality."""

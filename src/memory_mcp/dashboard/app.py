@@ -1,5 +1,6 @@
 """FastAPI application for the Memory MCP dashboard."""
 
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -397,12 +398,17 @@ async def api_approve_pattern(pattern_id: int, request: Request) -> HTMLResponse
     if not pattern:
         return HTMLResponse(content="")
 
+    # Create a session for dashboard approvals
+    session_id = str(uuid.uuid4())
+    s.create_or_get_session(session_id, topic="Dashboard approval")
+
     mem_type = _pattern_type_to_memory_type(pattern.pattern_type)
     memory_id, _ = s.store_memory(
         content=pattern.pattern,
         memory_type=mem_type,
         source=MemorySource.MINED,
         tags=["approved"],
+        session_id=session_id,
     )
     s.promote_to_hot(memory_id)
     s.delete_mined_pattern(pattern_id)

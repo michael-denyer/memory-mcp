@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -65,6 +66,11 @@ class BootstrapMixin:
 
             project_id = get_current_project_id()
 
+        # Create a session for this bootstrap operation
+        session_id = str(uuid.uuid4())
+        project_path = str(file_paths[0].parent) if file_paths else None
+        self.create_or_get_session(session_id, topic="Bootstrap", project_path=project_path)
+
         files_found = len(file_paths)
 
         for path in file_paths:
@@ -124,6 +130,7 @@ class BootstrapMixin:
                         source=MemorySource.MANUAL,
                         tags=tag_list,
                         project_id=project_id,
+                        session_id=session_id,
                     )
                 except ValidationError as e:
                     errors.append(f"{path.name}: {e}")

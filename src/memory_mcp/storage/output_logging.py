@@ -68,7 +68,7 @@ class OutputLoggingMixin:
 
     def get_recent_outputs(
         self, hours: int = 24, project_id: str | None = None
-    ) -> list[tuple[int, str, datetime, str | None]]:
+    ) -> list[tuple[int, str, datetime, str | None, str | None]]:
         """Get recent output logs, optionally filtered by project.
 
         Args:
@@ -77,15 +77,15 @@ class OutputLoggingMixin:
                         If None, returns all logs (backwards compatible).
 
         Returns:
-            List of tuples: (log_id, content, timestamp, project_id).
-            The project_id is preserved for each log so mining can use the
-            source project rather than the current session's project.
+            List of tuples: (log_id, content, timestamp, project_id, session_id).
+            The project_id and session_id are preserved for each log so mining
+            can use the source project/session rather than the current one.
         """
         with self._connection() as conn:
             if project_id:
                 rows = conn.execute(
                     """
-                    SELECT id, content, timestamp, project_id FROM output_log
+                    SELECT id, content, timestamp, project_id, session_id FROM output_log
                     WHERE timestamp > datetime('now', ?)
                       AND project_id = ?
                     ORDER BY timestamp DESC
@@ -95,7 +95,7 @@ class OutputLoggingMixin:
             else:
                 rows = conn.execute(
                     """
-                    SELECT id, content, timestamp, project_id FROM output_log
+                    SELECT id, content, timestamp, project_id, session_id FROM output_log
                     WHERE timestamp > datetime('now', ?)
                     ORDER BY timestamp DESC
                     """,
@@ -108,6 +108,7 @@ class OutputLoggingMixin:
                     row["content"],
                     datetime.fromisoformat(row["timestamp"]),
                     row["project_id"],
+                    row["session_id"],
                 )
                 for row in rows
             ]

@@ -4,6 +4,28 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.1] - 2026-01-23
+
+### Fixed
+
+- **Session linkage for memories** - All memory creation paths now properly link memories to
+  sessions, fixing the dashboard sessions page which showed 0 memories per session. Affected paths:
+  - CLI `seed` command
+  - MCP `seed_from_text` tool
+  - MCP `approve_candidate` tool
+  - Bootstrap from files
+  - Dashboard pattern approval
+  - Mining auto-approve
+
+- **Hot cache memory type display** - Fixed `MemoryType.PATTERN` showing instead of `pattern`
+  in the hot cache dashboard page
+
+### Changed
+
+- **`get_recent_outputs()` now returns session_id** - The tuple format changed from
+  `(log_id, content, timestamp, project_id)` to `(log_id, content, timestamp, project_id, session_id)`
+  to support session-aware mining
+
 ## [0.7.0] - 2026-01-23
 
 ### Changed
