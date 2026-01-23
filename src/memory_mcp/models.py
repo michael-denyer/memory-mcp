@@ -176,6 +176,7 @@ class Memory:
     trust_component: float | None = None  # trust * weight
     helpfulness_component: float | None = None  # utility_score * weight
     keyword_score: float | None = None  # FTS keyword match score (hybrid search)
+    intent_boost: float | None = None  # Intent-based category boost (query intent matching)
 
 
 @dataclass

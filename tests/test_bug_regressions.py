@@ -255,10 +255,12 @@ class TestSchemaVersioning:
 
     def test_new_database_gets_version(self):
         """New database should have schema version set."""
+        from memory_mcp.migrations import SCHEMA_VERSION
+
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(db_path=Path(tmpdir) / "new.db")
             storage = Storage(settings)
-            assert storage.get_schema_version() == 17  # v17: mined pattern memory linkage
+            assert storage.get_schema_version() == SCHEMA_VERSION
             storage.close()
 
     def test_wal_mode_enabled(self):

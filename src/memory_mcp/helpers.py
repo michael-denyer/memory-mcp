@@ -1427,3 +1427,111 @@ def format_hot_cache_concise(
     lines.append("(If helpful, call mark_memory_used(id) to improve ranking)")
 
     return "\n".join(lines)
+
+
+# ========== Query Intent Detection ==========
+
+# Intent patterns map keyword patterns to preferred categories
+# Categories listed in priority order (first is most preferred)
+INTENT_PATTERNS: dict[str, tuple[list[str], list[str]]] = {
+    # (keywords, preferred_categories)
+    "debugging": (
+        ["bug", "fix", "error", "issue", "broken", "fail", "crash", "exception"],
+        ["bug", "antipattern", "landmine", "pattern"],
+    ),
+    "howto": (
+        ["how to", "how do i", "how can i", "how should i", "what is the way"],
+        ["reference", "pattern", "command", "snippet"],
+    ),
+    "architecture": (
+        ["architecture", "design", "structure", "pattern", "layout", "organize"],
+        ["architecture", "project", "decision"],
+    ),
+    "decision": (
+        ["why", "decision", "chose", "choice", "rationale", "reason", "tradeoff"],
+        ["decision", "constraint", "lesson"],
+    ),
+    "convention": (
+        ["rule", "convention", "conventions", "standard", "guideline", "best practice", "style"],
+        ["convention", "constraint", "preference"],
+    ),
+    "setup": (
+        ["setup", "install", "configure", "config", "env", "environment"],
+        ["reference", "command", "project"],
+    ),
+    "api": (
+        ["api", "endpoint", "route", "request", "response", "rest", "graphql"],
+        ["reference", "pattern", "api"],
+    ),
+    "todo": (
+        ["todo", "task", "remaining", "pending", "next", "backlog"],
+        ["todo", "bug"],
+    ),
+}
+
+
+def infer_query_intent(query: str) -> dict[str, float]:
+    """Infer intent from query keywords to boost matching memory categories.
+
+    Returns a dict of category → boost score (0.0 to 1.0).
+    Categories matching query intent get a boost in recall ranking.
+
+    This is a cheap heuristic (regex-based) that adds no latency.
+    It's NOT a filter - just a ranking signal.
+
+    Args:
+        query: Search query string
+
+    Returns:
+        Dict mapping category names to boost scores (0.0-1.0).
+        Empty dict if no intent detected.
+
+    Example:
+        >>> infer_query_intent("how to fix authentication bug")
+        {'bug': 0.5, 'antipattern': 0.4, 'landmine': 0.3, 'pattern': 0.2,
+         'reference': 0.5, 'pattern': 0.4, 'command': 0.3, 'snippet': 0.2}
+    """
+    import re
+
+    query_lower = query.lower()
+    category_boosts: dict[str, float] = {}
+
+    for intent_name, (keywords, categories) in INTENT_PATTERNS.items():
+        # Check if any keyword matches
+        for keyword in keywords:
+            if re.search(rf"\b{re.escape(keyword)}\b", query_lower):
+                # Keyword matched - add boosts for preferred categories
+                # First category gets highest boost, decreasing for later ones
+                for i, category in enumerate(categories):
+                    # Boost decays: 0.5, 0.4, 0.3, 0.2 for positions 0, 1, 2, 3
+                    boost = max(0.2, 0.5 - (i * 0.1))
+                    # Take max if category already has a boost (from another intent)
+                    category_boosts[category] = max(category_boosts.get(category, 0), boost)
+                break  # Only match first keyword per intent
+
+    return category_boosts
+
+
+def compute_intent_boost(
+    category: str | None,
+    intent_boosts: dict[str, float],
+    max_boost: float = 0.15,
+) -> float:
+    """Compute intent-based ranking boost for a memory.
+
+    Args:
+        category: Memory's category (e.g., "bug", "convention")
+        intent_boosts: Intent boosts from infer_query_intent()
+        max_boost: Maximum boost to apply (default 0.15 = 15% boost)
+
+    Returns:
+        Boost value to add to composite score (0.0 to max_boost)
+    """
+    if not category or not intent_boosts:
+        return 0.0
+
+    # Get boost for this category (if any)
+    raw_boost = intent_boosts.get(category, 0.0)
+
+    # Scale to max_boost
+    return raw_boost * max_boost / 0.5  # 0.5 is max raw boost

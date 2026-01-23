@@ -323,6 +323,11 @@ class SearchMixin:
         effective_limit = limit if limit is not None else mode_config.limit
         effective_threshold = threshold if threshold is not None else mode_config.threshold
 
+        # Infer query intent for category-based ranking boost
+        from memory_mcp.helpers import infer_query_intent
+
+        intent_boosts = infer_query_intent(query)
+
         query_embedding = self._embedding_engine.embed(query)
 
         with self._connection() as conn:
@@ -467,10 +472,16 @@ class SearchMixin:
                         weights=mode_config,
                     )
 
+                    # Apply intent-based category boost
+                    from memory_mcp.helpers import compute_intent_boost
+
+                    intent_boost = compute_intent_boost(category, intent_boosts)
+                    final_score = score_breakdown.total + intent_boost
+
                     memory = self._row_to_memory(row, conn, similarity=similarity)
                     memory.recency_score = recency_score
                     memory.trust_score_decayed = trust_decayed
-                    memory.composite_score = score_breakdown.total
+                    memory.composite_score = final_score
                     # Populate weighted components for transparency
                     memory.similarity_component = score_breakdown.similarity_component
                     memory.recency_component = score_breakdown.recency_component
@@ -479,6 +490,8 @@ class SearchMixin:
                     memory.helpfulness_component = score_breakdown.helpfulness_component
                     # Store keyword score for debugging/transparency
                     memory.keyword_score = keyword_score if keyword_score > 0 else None
+                    # Store intent boost for debugging/transparency
+                    memory.intent_boost = intent_boost if intent_boost > 0 else None
                     candidates.append(memory)
                 else:
                     gated_count += 1
