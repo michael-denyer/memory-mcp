@@ -1,0 +1,50 @@
+{
+  "name": "memory-mcp",
+  "description": "Persistent memory for Claude Code with hot cache instant recall and semantic search. Give your AI assistant a second brain.",
+  "version": "0.5.17",
+  "author": {
+    "name": "Michael Denyer",
+    "url": "https://github.com/michael-denyer"
+  },
+  "repository": "https://github.com/michael-denyer/memory-mcp",
+  "license": "MIT",
+  "homepage": "https://github.com/michael-denyer/memory-mcp",
+  "keywords": [
+    "memory",
+    "mcp",
+    "hot-cache",
+    "semantic-search",
+    "knowledge-graph",
+    "pattern-mining"
+  ],
+  "mcpServers": {
+    "memory": {
+      "command": "memory-mcp",
+      "description": "Memory MCP server with hot cache and semantic search"
+    }
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memory-mcp-cli bootstrap --quiet"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memory-mcp-cli log-response"
+          }
+        ]
+      }
+    ]
+  }
+}

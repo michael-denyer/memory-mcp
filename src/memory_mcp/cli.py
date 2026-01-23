@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from memory_mcp.config import find_bootstrap_files, get_settings
+from memory_mcp.mining import run_mining as run_mining_impl
 from memory_mcp.project import get_current_project_id
 from memory_mcp.storage import MemorySource, MemoryType, Storage
 from memory_mcp.text_parsing import parse_content_into_chunks
@@ -70,6 +71,125 @@ def log_output(ctx: click.Context, content: str | None, filepath: str | None) ->
             click.echo(json.dumps({"success": True, "log_id": log_id}))
         else:
             click.echo(f"Logged output (id={log_id})")
+    finally:
+        storage.close()
+
+
+@cli.command("log-response")
+@click.pass_context
+def log_response(ctx: click.Context) -> None:
+    """Log Claude's response from hook input for pattern mining.
+
+    This is called by Claude Code's Stop hook. It reads the hook input from stdin,
+    extracts the transcript path, and logs the assistant's last response.
+
+    The hook input JSON should contain either:
+    - transcript_path: Direct path to the transcript file
+    - session_id + project_path: To derive the transcript location
+    """
+    import subprocess
+
+    settings = get_settings()
+
+    if not settings.mining_enabled:
+        return  # Silent exit if mining disabled
+
+    # Read hook input from stdin
+    hook_input = sys.stdin.read().strip()
+    if not hook_input:
+        return
+
+    try:
+        data = json.loads(hook_input)
+    except json.JSONDecodeError:
+        return
+
+    # Find transcript path
+    transcript_path = data.get("transcript_path") or data.get("transcriptPath")
+
+    if not transcript_path or not Path(transcript_path).exists():
+        # Try to derive from session_id
+        session_id = data.get("session_id") or data.get("sessionId")
+        project_path = (
+            data.get("project_path")
+            or data.get("projectPath")
+            or data.get("cwd")
+            or data.get("workspace_path")
+        )
+
+        if session_id and project_path:
+            project_slug = project_path.replace("/", "-")
+            candidate = Path.home() / ".claude" / "projects" / project_slug / f"{session_id}.jsonl"
+            if candidate.exists():
+                transcript_path = str(candidate)
+
+    if not transcript_path or not Path(transcript_path).exists():
+        return
+
+    # Read last 200 lines of transcript (JSONL format)
+    try:
+        result = subprocess.run(
+            ["tail", "-200", transcript_path],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        transcript_tail = result.stdout
+    except Exception:
+        return
+
+    if not transcript_tail:
+        return
+
+    # Extract last assistant message
+    last_response = None
+    last_user_msg = None
+
+    for line in reversed(transcript_tail.strip().split("\n")):
+        try:
+            entry = json.loads(line)
+            msg = entry.get("message", {})
+            role = msg.get("role")
+            content = msg.get("content", [])
+
+            text_parts = [c.get("text", "") for c in content if c.get("type") == "text"]
+            text = "\n".join(text_parts)
+
+            if role == "assistant" and text and last_response is None:
+                last_response = text
+            elif role == "user" and text and last_user_msg is None:
+                last_user_msg = text[:500]  # Truncate user message
+
+            if last_response and last_user_msg:
+                break
+        except json.JSONDecodeError:
+            continue
+
+    if not last_response:
+        return
+
+    # Combine user message with response for richer context
+    if last_user_msg:
+        content = f"USER: {last_user_msg}\n\nASSISTANT: {last_response}"
+    else:
+        content = last_response
+
+    # Skip if too short
+    if len(content) < 20:
+        return
+
+    # Truncate if too long
+    if len(content) > settings.max_content_length:
+        content = content[: settings.max_content_length]
+
+    # Log the content
+    project_id = get_current_project_id() if settings.project_awareness_enabled else None
+
+    storage = Storage(settings)
+    try:
+        storage.log_output(content, project_id=project_id)
+        # Run mining
+        run_mining_impl(storage, hours=1, project_id=project_id)
     finally:
         storage.close()
 
@@ -216,6 +336,12 @@ def seed(ctx: click.Context, file: str, memory_type: str, promote: bool) -> None
     multiple=True,
     help="Tags to apply to all memories",
 )
+@click.option(
+    "-q",
+    "--quiet",
+    is_flag=True,
+    help="Suppress output (for hooks)",
+)
 @click.pass_context
 def bootstrap(
     ctx: click.Context,
@@ -224,6 +350,7 @@ def bootstrap(
     memory_type: str,
     promote: bool,
     tags: tuple[str, ...],
+    quiet: bool,
 ) -> None:
     """Bootstrap hot cache from project documentation files.
 
@@ -259,6 +386,8 @@ def bootstrap(
     # Handle empty repo case
     if not file_paths:
         message = "No documentation files found. Create README.md or CLAUDE.md to bootstrap."
+        if quiet:
+            return
         if use_json:
             click.echo(
                 json.dumps(
@@ -292,6 +421,9 @@ def bootstrap(
         )
     finally:
         storage.close()
+
+    if quiet:
+        return
 
     if use_json:
         click.echo(json.dumps(result))
