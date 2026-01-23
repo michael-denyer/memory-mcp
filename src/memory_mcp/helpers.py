@@ -11,11 +11,14 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from memory_mcp.logging import get_logger
 from memory_mcp.models import DisplayCluster, Memory, MemoryType
 from memory_mcp.responses import FormattedMemory, error_response
 
 if TYPE_CHECKING:
     import numpy as np
+
+log = get_logger("helpers")
 
 
 def parse_memory_type(memory_type: str) -> MemoryType | None:
@@ -82,7 +85,18 @@ def get_bayesian_helpfulness(
     Returns:
         Estimated helpfulness rate between 0 and 1
     """
-    return (used_count + alpha) / (retrieved_count + alpha + beta)
+    result = (used_count + alpha) / (retrieved_count + alpha + beta)
+
+    log.debug(
+        "get_bayesian_helpfulness: rate={:.3f} (used={}, retrieved={}, alpha={}, beta={})",
+        result,
+        used_count,
+        retrieved_count,
+        alpha,
+        beta,
+    )
+
+    return result
 
 
 def get_similarity_confidence(
@@ -587,7 +601,13 @@ def compute_helpfulness_with_decay(
     if last_used_at is None:
         # Never used - apply slight penalty but don't zero out
         # This gives cold-start memories a chance
-        return utility_score * 0.8
+        result = utility_score * 0.8
+        log.debug(
+            "compute_helpfulness_with_decay: result={:.3f} (utility={:.3f}, penalty=0.8)",
+            result,
+            utility_score,
+        )
+        return result
 
     ttl_days = get_category_ttl(category)
 
@@ -597,8 +617,20 @@ def compute_helpfulness_with_decay(
 
     days_since_use = (now - last_used_at).total_seconds() / 86400
     decay = decay_base ** (days_since_use / ttl_days)
+    result = utility_score * decay
 
-    return utility_score * decay
+    log.debug(
+        "compute_helpfulness_with_decay: result={:.3f} (utility={:.3f}, decay={:.3f}, "
+        "days_since={:.1f}, ttl={}, category={})",
+        result,
+        utility_score,
+        decay,
+        days_since_use,
+        ttl_days,
+        category,
+    )
+
+    return result
 
 
 def infer_category(content: str) -> str | None:
@@ -624,6 +656,10 @@ def infer_category(content: str) -> str | None:
             scores[category] = score
 
     if not scores:
+        log.debug(
+            "infer_category: no patterns matched, content_preview='{}'",
+            content[:60].replace("\n", " "),
+        )
         return None
 
     # Return category with highest score, with tie-breaker for more specific categories
@@ -652,9 +688,24 @@ def infer_category(content: str) -> str | None:
     # Pick highest priority among tied candidates
     for cat in priority:
         if cat in candidates:
+            log.debug(
+                "infer_category: category='{}' score={} candidates={} content_preview='{}'",
+                cat,
+                max_score,
+                candidates,
+                content[:60].replace("\n", " "),
+            )
             return cat
 
-    return candidates[0] if candidates else None
+    result = candidates[0] if candidates else None
+    log.debug(
+        "infer_category: category='{}' score={} candidates={} content_preview='{}'",
+        result,
+        max_score,
+        candidates,
+        content[:60].replace("\n", " "),
+    )
+    return result
 
 
 # ========== Importance Scoring (MemGPT-inspired) ==========
@@ -728,8 +779,21 @@ def compute_importance_score(
     entity_score = min(1.0, entity_matches * 0.2)
 
     total = length_score * length_weight + code_score * code_weight + entity_score * entity_weight
+    result = round(min(1.0, max(0.0, total)), 3)
 
-    return round(min(1.0, max(0.0, total)), 3)
+    log.debug(
+        "compute_importance: {:.3f} (len={:.2f}*{}, code={:.2f}*{}, ent={:.2f}*{}) chars={}",
+        result,
+        length_score,
+        length_weight,
+        code_score,
+        code_weight,
+        entity_score,
+        entity_weight,
+        len(content),
+    )
+
+    return result
 
 
 def get_importance_breakdown(
@@ -794,10 +858,10 @@ def compute_salience_score(
     trust_score: float,
     access_count: int,
     last_accessed_at: datetime | None,
-    importance_weight: float = 0.25,
-    trust_weight: float = 0.25,
-    access_weight: float = 0.25,
-    recency_weight: float = 0.25,
+    importance_weight: float = 0.15,
+    trust_weight: float = 0.15,
+    access_weight: float = 0.40,
+    recency_weight: float = 0.30,
     recency_halflife_days: float = 14.0,
     max_access_count: int = 20,
 ) -> float:
@@ -833,8 +897,23 @@ def compute_salience_score(
         + access_normalized * access_weight
         + recency_score * recency_weight
     )
+    result = round(min(1.0, max(0.0, salience)), 3)
 
-    return round(min(1.0, max(0.0, salience)), 3)
+    log.debug(
+        "compute_salience_score: salience={:.3f} (importance={:.2f}*{}, trust={:.2f}*{}, "
+        "access={:.2f}*{}, recency={:.2f}*{})",
+        result,
+        importance_score,
+        importance_weight,
+        trust_score,
+        trust_weight,
+        access_normalized,
+        access_weight,
+        recency_score,
+        recency_weight,
+    )
+
+    return result
 
 
 def get_salience_breakdown(
@@ -842,10 +921,10 @@ def get_salience_breakdown(
     trust_score: float,
     access_count: int,
     last_accessed_at: datetime | None,
-    importance_weight: float = 0.25,
-    trust_weight: float = 0.25,
-    access_weight: float = 0.25,
-    recency_weight: float = 0.25,
+    importance_weight: float = 0.15,
+    trust_weight: float = 0.15,
+    access_weight: float = 0.40,
+    recency_weight: float = 0.30,
     recency_halflife_days: float = 14.0,
     max_access_count: int = 20,
 ) -> dict:

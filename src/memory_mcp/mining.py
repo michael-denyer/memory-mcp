@@ -1252,6 +1252,7 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
                 )
             else:
                 # New pattern - store as memory immediately if confidence is sufficient
+                created_memory_id = None
                 if pattern.confidence >= settings.mining_auto_approve_confidence:
                     mem_type = _get_memory_type_for_pattern(pattern.pattern_type.value)
 
@@ -1266,6 +1267,7 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
 
                     if is_new:
                         new_memories += 1
+                        created_memory_id = memory_id
 
                         # Track entity patterns for knowledge graph linking
                         if pattern.pattern_type.value in (
@@ -1274,13 +1276,17 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
                         ):
                             entity_memories.append((memory_id, pattern.pattern_type.value, log_id))
 
-                # Also track in mined_patterns for occurrence counting
-                storage.upsert_mined_pattern(
+                # Track in mined_patterns for occurrence counting
+                pattern_id = storage.upsert_mined_pattern(
                     pattern.pattern,
                     pattern.pattern_type.value,
                     source_log_id=log_id,
                     confidence=pattern.confidence,
                 )
+
+                # Link pattern to its memory for exact-match promotion
+                if created_memory_id is not None:
+                    storage.link_pattern_to_memory(pattern_id, created_memory_id)
 
     # Promote high-occurrence patterns to hot cache
     if settings.mining_auto_approve_enabled:
@@ -1290,12 +1296,21 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
         for candidate in candidates:
             # Check if meets hot cache promotion thresholds
             if candidate.occurrence_count >= settings.mining_auto_approve_occurrences:
-                # Find the memory for this pattern and promote it
-                memories = storage.recall(candidate.pattern, limit=1, threshold=0.95).memories
-                if memories:
-                    memory = memories[0]
+                memory_id_to_promote = None
+
+                # Prefer exact match via linked memory_id (avoids semantic search issues)
+                if candidate.memory_id is not None:
+                    memory_id_to_promote = candidate.memory_id
+                else:
+                    # Fallback to semantic search if no linked memory_id
+                    # (for patterns created before v17 migration)
+                    memories = storage.recall(candidate.pattern, limit=1, threshold=0.95).memories
+                    if memories:
+                        memory_id_to_promote = memories[0].id
+
+                if memory_id_to_promote is not None:
                     # promote_to_hot returns True if promoted (or already hot)
-                    if storage.promote_to_hot(memory.id):
+                    if storage.promote_to_hot(memory_id_to_promote):
                         promoted_to_hot += 1
 
     # Create knowledge graph links for entities

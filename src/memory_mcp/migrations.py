@@ -12,7 +12,7 @@ from memory_mcp.logging import get_logger
 log = get_logger("migrations")
 
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 SCHEMA = """
 -- Schema version tracking
@@ -528,6 +528,22 @@ def migrate_v15_to_v16(conn: sqlite3.Connection) -> None:
     log.info("Added helpfulness tracking columns (v16)")
 
 
+def migrate_v16_to_v17(conn: sqlite3.Connection) -> None:
+    """Add memory_id to mined_patterns for exact-match promotion.
+
+    When patterns are approved and stored as memories, link the memory_id
+    back to the pattern so promotion can use exact match instead of
+    semantic search (which can miss short patterns or match wrong memories).
+    """
+    add_column_if_missing(
+        conn, "mined_patterns", "memory_id", "INTEGER REFERENCES memories(id) ON DELETE SET NULL"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mined_patterns_memory ON mined_patterns(memory_id)"
+    )
+    log.info("Added memory_id column to mined_patterns for exact-match promotion (v17)")
+
+
 # ========== Migration Runner ==========
 
 
@@ -563,6 +579,8 @@ def run_migrations(conn: sqlite3.Connection, from_version: int, settings: Settin
         migrate_v14_to_v15(conn)
     if from_version < 16:
         migrate_v15_to_v16(conn)
+    if from_version < 17:
+        migrate_v16_to_v17(conn)
 
 
 def check_schema_version(conn: sqlite3.Connection) -> None:
