@@ -50,6 +50,8 @@ Thumbs.db
 
 # Claude local settings
 .claude/settings.local.json
+.claude/skills/release/
+.claude/skills/publish/
 
 # MCP registry auth tokens
 .mcpregistry_*
