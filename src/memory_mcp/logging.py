@@ -234,3 +234,35 @@ def update_hot_cache_stats(size: int, max_size: int, pinned: int) -> None:
 
     utilization = size / max_size if max_size > 0 else 0.0
     metrics.set_gauge("hot_cache.utilization", utilization)
+
+
+def record_promotion_rejection(reason: str, memory_id: int | None = None) -> None:
+    """Record metrics for promotion rejection.
+
+    Tracks why memories were rejected for hot cache promotion to help
+    identify patterns and tune thresholds.
+
+    Args:
+        reason: Rejection reason code (category_ineligible, threshold_not_met,
+                low_helpfulness)
+        memory_id: Optional memory ID for detailed logging
+    """
+    metrics.increment("promotion.rejections.total")
+    metrics.increment(f"promotion.rejections.{reason}")
+
+    log = get_logger("promotion")
+    log.debug("promotion_rejected: reason={} memory_id={}", reason, memory_id)
+
+
+def get_promotion_rejection_summary() -> dict[str, int]:
+    """Get summary of promotion rejection reasons.
+
+    Returns:
+        Dict mapping rejection reasons to counts
+    """
+    prefix = "promotion.rejections."
+    return {
+        k.replace(prefix, ""): v
+        for k, v in metrics._counters.items()
+        if k.startswith(prefix) and k != f"{prefix}total"
+    }

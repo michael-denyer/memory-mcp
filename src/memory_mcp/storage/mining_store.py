@@ -99,6 +99,8 @@ class MiningStoreMixin:
     def _row_to_mined_pattern(self, row: sqlite3.Row) -> MinedPattern:
         """Convert a database row to a MinedPattern."""
         status = PatternStatus(row["status"]) if row["status"] else PatternStatus.PENDING
+        # Handle memory_id column (may not exist in older databases before migration)
+        memory_id = row["memory_id"] if "memory_id" in row.keys() else None
         return MinedPattern(
             id=row["id"],
             pattern=row["pattern"],
@@ -111,7 +113,25 @@ class MiningStoreMixin:
             source_log_id=row["source_log_id"],
             confidence=row["confidence"] or 0.5,
             score=row["score"] or 0.0,
+            memory_id=memory_id,
         )
+
+    def link_pattern_to_memory(self, pattern_id: int, memory_id: int) -> bool:
+        """Link a mined pattern to its created memory for exact-match promotion.
+
+        Args:
+            pattern_id: Pattern ID to update.
+            memory_id: Memory ID that was created from this pattern.
+
+        Returns:
+            True if updated, False if pattern not found.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE mined_patterns SET memory_id = ? WHERE id = ?",
+                (memory_id, pattern_id),
+            )
+            return cursor.rowcount > 0
 
     def get_promotion_candidates(
         self,

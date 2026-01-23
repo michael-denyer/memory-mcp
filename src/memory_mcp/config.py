@@ -257,17 +257,19 @@ class Settings(BaseSettings):
 
     # Salience scoring (Engram-inspired unified metric)
     # Combines importance + trust + access + recency for promotion/eviction decisions
+    # Weights are access-heavy: hot cache exists to surface frequently-used patterns
+    # Access (0.40) + Recency (0.30) = 70% usage-based, 30% content-based
     salience_importance_weight: float = Field(
-        default=0.25, description="Weight for importance score in salience"
+        default=0.15, description="Weight for importance score in salience"
     )
     salience_trust_weight: float = Field(
-        default=0.25, description="Weight for trust score in salience"
+        default=0.15, description="Weight for trust score in salience"
     )
     salience_access_weight: float = Field(
-        default=0.25, description="Weight for normalized access count in salience"
+        default=0.40, description="Weight for normalized access count in salience"
     )
     salience_recency_weight: float = Field(
-        default=0.25, description="Weight for recency in salience"
+        default=0.30, description="Weight for recency in salience"
     )
     salience_recency_halflife_days: float = Field(
         default=14.0, description="Half-life for recency decay in salience"

@@ -258,7 +258,7 @@ class TestSchemaVersioning:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(db_path=Path(tmpdir) / "new.db")
             storage = Storage(settings)
-            assert storage.get_schema_version() == 16  # v16: helpfulness tracking
+            assert storage.get_schema_version() == 17  # v17: mined pattern memory linkage
             storage.close()
 
     def test_wal_mode_enabled(self):

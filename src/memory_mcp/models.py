@@ -232,6 +232,7 @@ class MinedPattern:
     source_log_id: int | None = None  # Originating output_log ID
     confidence: float = 0.5  # Extraction confidence (0-1)
     score: float = 0.0  # Computed promotion score
+    memory_id: int | None = None  # Linked memory ID for exact-match promotion
 
 
 @dataclass

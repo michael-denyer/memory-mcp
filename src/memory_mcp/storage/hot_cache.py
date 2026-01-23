@@ -8,7 +8,7 @@ from datetime import datetime
 
 import numpy as np
 
-from memory_mcp.logging import get_logger
+from memory_mcp.logging import get_logger, get_promotion_rejection_summary
 from memory_mcp.models import (
     AuditOperation,
     HotCacheMetrics,
@@ -117,6 +117,7 @@ class HotCacheMixin:
             "max_items": self.settings.hot_cache_max_items,
             "avg_hot_score": round(avg_score, 3),
             "pinned_count": sum(1 for m in hot_memories if m.is_pinned),
+            "promotion_rejections": get_promotion_rejection_summary(),
         }
 
     def _find_eviction_candidate(self, conn: sqlite3.Connection) -> int | None:

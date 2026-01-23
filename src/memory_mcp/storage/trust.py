@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from memory_mcp.logging import get_logger
+from memory_mcp.logging import get_logger, record_promotion_rejection
 from memory_mcp.models import (
     TRUST_REASON_DEFAULTS,
     MemoryType,
@@ -214,9 +214,10 @@ class TrustMixin:
         - category is eligible for promotion (command, snippet never promoted)
         - salience_score >= threshold (category-aware: lower for antipattern/landmine/constraint)
         - OR access_count >= promotion_threshold (legacy fallback)
-        - AND helpfulness check passes (if enough retrievals):
-          - If retrieved_count >= 5: used_rate must be >= 0.25
-          - If retrieved_count < 5: passes by default (cold start benefit of doubt)
+        - AND Bayesian helpfulness check passes:
+          - Uses Beta-Binomial posterior for smooth cold-start handling
+          - New memories (retrieved < 3) get benefit of doubt
+          - Heavily-retrieved-but-unused memories (helpfulness < 0.20) are blocked
 
         High-value categories (antipattern, landmine, constraint) use lower thresholds
         so critical warnings and guardrails surface early in plans.
@@ -254,6 +255,7 @@ class TrustMixin:
                     memory_id,
                     category,
                 )
+                record_promotion_rejection("category_ineligible", memory_id)
                 return False
 
             trust_score = row["trust_score"] or 1.0
@@ -278,24 +280,42 @@ class TrustMixin:
             meets_access_threshold = row["access_count"] >= self.settings.promotion_threshold
 
             if not (meets_salience_threshold or meets_access_threshold):
+                log.debug(
+                    "Skipped promotion for memory id={} (salience={:.3f} < {:.3f}, "
+                    "access={} < {}, category={})",
+                    memory_id,
+                    salience,
+                    effective_threshold,
+                    row["access_count"],
+                    self.settings.promotion_threshold,
+                    category,
+                )
+                record_promotion_rejection("threshold_not_met", memory_id)
                 return False
 
-            # Helpfulness gate: if we have enough retrieval data, require minimum used_rate
+            # Helpfulness gate: use Bayesian helpfulness to avoid cold-start trap
+            # New memories get benefit of doubt via prior; heavily-retrieved-but-unused fail
             retrieved_count = row["retrieved_count"] or 0
             used_count = row["used_count"] or 0
-            helpfulness_warmup_threshold = 5  # Require 5 retrievals before gating
 
-            if retrieved_count >= helpfulness_warmup_threshold:
-                used_rate = used_count / retrieved_count
-                min_used_rate = 0.25  # Require 25% usage rate
-                if used_rate < min_used_rate:
-                    log.debug(
-                        "Skipped promotion for memory id={} (used_rate={:.2f} < {:.2f})",
-                        memory_id,
-                        used_rate,
-                        min_used_rate,
-                    )
-                    return False
+            from memory_mcp.helpers import get_bayesian_helpfulness
+
+            bayesian_helpfulness = get_bayesian_helpfulness(used_count, retrieved_count)
+            min_helpfulness = 0.20  # Bayesian threshold (stricter than raw 25% due to prior)
+
+            # Only gate if we have meaningful retrieval data (avoid blocking brand new memories)
+            if retrieved_count >= 3 and bayesian_helpfulness < min_helpfulness:
+                log.debug(
+                    "Skipped promotion for memory id={} (bayesian_helpfulness={:.2f} < {:.2f}, "
+                    "used={}, retrieved={})",
+                    memory_id,
+                    bayesian_helpfulness,
+                    min_helpfulness,
+                    used_count,
+                    retrieved_count,
+                )
+                record_promotion_rejection("low_helpfulness", memory_id)
+                return False
 
             # Check if this high-value memory should be auto-pinned
             auto_pin = should_auto_pin(category, trust_score)

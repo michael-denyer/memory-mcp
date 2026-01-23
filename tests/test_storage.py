@@ -566,15 +566,15 @@ class TestAutoPromotion:
 
         memory_id, _ = stor.store_memory("New memory cold start", MemoryType.PROJECT)
 
-        # Manually set retrieved_count below warmup threshold
+        # Manually set retrieved_count below warmup threshold (now 3, was 5)
         with stor.transaction() as conn:
             conn.execute(
-                """UPDATE memories SET retrieved_count = 4, used_count = 0,
+                """UPDATE memories SET retrieved_count = 2, used_count = 0,
                    access_count = 10 WHERE id = ?""",
                 (memory_id,),
             )
 
-        # retrieved_count < 5, so helpfulness check is skipped
+        # retrieved_count < 3, so helpfulness check is skipped
         # Should promote based on access_count alone
         result = stor.check_auto_promote(memory_id)
         assert result is True
@@ -1530,7 +1530,7 @@ class TestMemoryRelationships:
     def test_schema_version_is_16(self, storage):
         """Schema version should be 16 after migration."""
         version = storage.get_schema_version()
-        assert version == 16
+        assert version == 17
 
     def test_expand_via_relations(self, storage):
         """expand_via_relations adds related memories with decayed scores."""
@@ -2380,7 +2380,7 @@ class TestPredictiveCache:
     def test_schema_version_is_16(self, predictive_storage):
         """Schema version should be 16 after migration."""
         version = predictive_storage.get_schema_version()
-        assert version == 16
+        assert version == 17
 
     def test_access_sequences_table_exists(self, predictive_storage):
         """access_sequences table should exist."""
@@ -3403,4 +3403,4 @@ class TestHybridSearch:
     def test_schema_version_is_16(self, hybrid_storage):
         """Schema version should be 16 for hybrid search."""
         version = hybrid_storage.get_schema_version()
-        assert version == 16
+        assert version == 17
