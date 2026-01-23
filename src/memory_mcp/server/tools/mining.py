@@ -144,6 +144,43 @@ def reject_candidate(
 
 
 @mcp.tool
+def bulk_reject_candidates(
+    pattern_ids: Annotated[
+        list[int] | None,
+        Field(description="List of pattern IDs to reject"),
+    ] = None,
+    pattern_type_prefix: Annotated[
+        str | None,
+        Field(
+            description="Reject patterns whose type starts with this prefix "
+            "(e.g., 'entity_' matches entity_misc, entity_person, entity_org)"
+        ),
+    ] = None,
+) -> dict:
+    """Bulk reject multiple mining candidates at once.
+
+    Provide either pattern_ids (list of specific IDs) OR pattern_type_prefix
+    (e.g., 'entity_' to reject all entity extractions).
+    """
+    if not pattern_ids and not pattern_type_prefix:
+        return error_response("Must provide either pattern_ids or pattern_type_prefix")
+
+    try:
+        deleted = storage.delete_mined_patterns_bulk(
+            pattern_ids=pattern_ids,
+            pattern_type_prefix=pattern_type_prefix,
+        )
+        return success_response(
+            f"Bulk rejected {deleted} patterns",
+            deleted_count=deleted,
+            pattern_ids=pattern_ids,
+            pattern_type_prefix=pattern_type_prefix,
+        )
+    except ValueError as e:
+        return error_response(str(e))
+
+
+@mcp.tool
 def run_mining(
     hours: Annotated[int, Field(description="Hours of logs to process")] = 24,
 ) -> dict:

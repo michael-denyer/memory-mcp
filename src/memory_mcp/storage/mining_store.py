@@ -224,6 +224,65 @@ class MiningStoreMixin:
                 )
             return deleted
 
+    def delete_mined_patterns_bulk(
+        self,
+        pattern_ids: list[int] | None = None,
+        pattern_type_prefix: str | None = None,
+    ) -> int:
+        """Delete multiple mined patterns at once.
+
+        Args:
+            pattern_ids: List of pattern IDs to delete. If provided, deletes
+                these specific patterns.
+            pattern_type_prefix: Delete patterns whose type starts with this
+                prefix (e.g., 'entity_' matches entity_misc, entity_person).
+
+        Returns:
+            Number of patterns deleted.
+
+        Raises:
+            ValueError: If neither pattern_ids nor pattern_type_prefix is provided.
+        """
+        if not pattern_ids and not pattern_type_prefix:
+            raise ValueError("Must provide either pattern_ids or pattern_type_prefix")
+
+        with self.transaction() as conn:
+            if pattern_ids:
+                # Delete by specific IDs
+                placeholders = ",".join("?" * len(pattern_ids))
+                cursor = conn.execute(
+                    f"DELETE FROM mined_patterns WHERE id IN ({placeholders})",
+                    pattern_ids,
+                )
+            else:
+                # Delete by pattern type prefix
+                cursor = conn.execute(
+                    "DELETE FROM mined_patterns WHERE pattern_type LIKE ?",
+                    (f"{pattern_type_prefix}%",),
+                )
+
+            deleted = cursor.rowcount
+            if deleted > 0:
+                self._record_audit(
+                    conn,
+                    AuditOperation.DELETE_PATTERN,
+                    details=json.dumps(
+                        {
+                            "bulk_delete": True,
+                            "count": deleted,
+                            "pattern_ids": pattern_ids[:10] if pattern_ids else None,
+                            "pattern_type_prefix": pattern_type_prefix,
+                        }
+                    ),
+                )
+                log.info(
+                    "Bulk deleted {} patterns (ids={}, type_prefix={})",
+                    deleted,
+                    pattern_ids[:5] if pattern_ids else None,
+                    pattern_type_prefix,
+                )
+            return deleted
+
     def expire_stale_patterns(self, days: int = 30) -> int:
         """Expire pending patterns that haven't been seen in N days.
 
