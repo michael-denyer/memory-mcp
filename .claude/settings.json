@@ -3,5 +3,6 @@
     "allow": [
       "mcp__memory__get_session"
     ]
-  }
+  },
+  "enabledMcpjsonServers": ["beads"]
 }
