@@ -435,8 +435,8 @@ def get_temporal_scope(category: str | None) -> str:
 
 
 # High-value categories that should be promoted more eagerly
-# These contain critical warnings or "don't do X" guidance
-_HIGH_VALUE_CATEGORIES = {"antipattern", "landmine"}
+# These contain critical warnings, constraints, or "don't do X" guidance
+_HIGH_VALUE_CATEGORIES = {"antipattern", "landmine", "constraint"}
 
 # Low-value categories that should never be promoted to hot cache
 # These are easily discoverable or transient - no need to surface them
@@ -460,7 +460,7 @@ def should_promote_category(category: str | None) -> bool:
 def get_promotion_salience_threshold(category: str | None, default_threshold: float) -> float:
     """Get salience threshold for auto-promotion based on category.
 
-    High-value categories (antipattern, landmine) use a lower threshold
+    High-value categories (antipattern, landmine, constraint) use a lower threshold
     so they get promoted to hot cache quickly and surface early in plans.
 
     Args:
@@ -474,6 +474,29 @@ def get_promotion_salience_threshold(category: str | None, default_threshold: fl
         # Lower threshold for high-value warnings (30% vs default 50%)
         return min(0.3, default_threshold * 0.6)
     return default_threshold
+
+
+def should_auto_pin(category: str | None, trust_score: float = 1.0) -> bool:
+    """Check if a memory should be auto-pinned when promoted.
+
+    Memories with constraint/guardrail content are pinned to prevent
+    auto-eviction. This ensures critical project rules stay in hot cache.
+
+    Criteria for auto-pin:
+    - Category is constraint, antipattern, or landmine
+    - Trust score is high (>= 0.8) indicating validated content
+
+    Args:
+        category: Memory category
+        trust_score: Current trust score (0-1)
+
+    Returns:
+        True if memory should be pinned on promotion
+    """
+    if category not in _HIGH_VALUE_CATEGORIES:
+        return False
+    # Only auto-pin if trust is high (validated content)
+    return trust_score >= 0.8
 
 
 def get_demotion_multiplier(category: str | None) -> float:
@@ -494,6 +517,88 @@ def get_demotion_multiplier(category: str | None) -> float:
         "transient": 0.5,  # 14 days -> 7 days
     }
     return multipliers.get(scope, 1.0)
+
+
+# Category-specific TTL (time-to-staleness) for helpfulness decay
+# Higher values = longer retention, lower = faster decay
+_CATEGORY_TTL_DAYS: dict[str, float] = {
+    "constraint": 90.0,  # Long-lived: "must use X"
+    "architecture": 60.0,  # Core system knowledge
+    "antipattern": 60.0,  # "Don't do X" persists
+    "landmine": 60.0,  # Critical warnings persist
+    "convention": 45.0,  # Project rules
+    "workflow": 45.0,  # Deployment processes
+    "decision": 30.0,  # May change with context
+    "preference": 30.0,  # Evolves over time
+    "lesson": 30.0,  # Learnings persist
+    "pattern": 30.0,  # Code patterns
+    "reference": 30.0,  # External links
+    "todo": 14.0,  # Short-lived task items
+    "bug": 14.0,  # Resolved once fixed
+    "observation": 14.0,  # Session findings
+    "context": 7.0,  # Very transient
+    "snippet": 7.0,  # Code snippets are ephemeral
+    "command": 7.0,  # CLI commands - easily re-discoverable
+}
+
+
+def get_category_ttl(category: str | None) -> float:
+    """Get the time-to-staleness (TTL) in days for a category.
+
+    Used for helpfulness recency decay. Memories in transient categories
+    have shorter TTLs and their helpfulness decays faster.
+
+    Args:
+        category: Memory category or None
+
+    Returns:
+        TTL in days (default 30.0 for unknown/None categories)
+    """
+    if category is None:
+        return 30.0  # Default for uncategorized
+    return _CATEGORY_TTL_DAYS.get(category, 30.0)
+
+
+def compute_helpfulness_with_decay(
+    utility_score: float,
+    last_used_at: datetime | None,
+    category: str | None = None,
+    decay_base: float = 0.95,
+) -> float:
+    """Apply category-aware recency decay to helpfulness score.
+
+    Uses the formula: utility_score * decay_base^(days_since_use / category_ttl)
+
+    This ensures:
+    - Recently used memories maintain high helpfulness
+    - Transient categories (todo, bug, context) decay faster
+    - Durable categories (constraint, architecture) decay slower
+    - Never-used memories (last_used_at = None) get slight penalty (0.8x)
+
+    Args:
+        utility_score: Bayesian helpfulness from usage tracking
+        last_used_at: When the memory was last marked as used
+        category: Memory category for TTL lookup
+        decay_base: Base decay rate (default 0.95)
+
+    Returns:
+        Helpfulness score with decay applied (0-1)
+    """
+    if last_used_at is None:
+        # Never used - apply slight penalty but don't zero out
+        # This gives cold-start memories a chance
+        return utility_score * 0.8
+
+    ttl_days = get_category_ttl(category)
+
+    now = datetime.now(timezone.utc)
+    if last_used_at.tzinfo is None:
+        last_used_at = last_used_at.replace(tzinfo=timezone.utc)
+
+    days_since_use = (now - last_used_at).total_seconds() / 86400
+    decay = decay_base ** (days_since_use / ttl_days)
+
+    return utility_score * decay
 
 
 def infer_category(content: str) -> str | None:

@@ -2,11 +2,29 @@
 
 Uses few-shot learning with embedding prototypes instead of rigid regex patterns.
 Categories are defined by example phrases that capture the semantic meaning.
+
+IMPORTANT: Classification confidence is NOT a ranking signal.
+-------------------------------------------------------------
+The similarity score from classification reflects "fit to category prototype",
+not memory utility or quality. High confidence means the content clearly matches
+a category's semantic space, but says nothing about whether the memory is:
+- Accurate or trustworthy (use trust_score for that)
+- Useful to recall (use helpfulness/utility_score for that)
+- Recently validated (use last_accessed_at for that)
+
+Appropriate uses for ML confidence:
+- Category assignment (threshold gate): OK
+- Category-specific promotion gates (e.g., lower threshold for landmines): OK
+- Tie-breaking within same category: Weak signal, OK
+
+Inappropriate uses:
+- General recall ranking: WRONG (use composite score instead)
+- Hot cache eviction priority: WRONG (use hot_score instead)
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, overload
 
 import numpy as np
 
@@ -139,6 +157,22 @@ class EmbeddingClassifier:
         self._initialized = True
         log.info("Initialized {} category prototypes", len(self._prototype_embeddings))
 
+    @overload
+    def classify(
+        self,
+        embedding: np.ndarray,
+        threshold: float = ...,
+        return_scores: Literal[False] = ...,
+    ) -> str | None: ...
+
+    @overload
+    def classify(
+        self,
+        embedding: np.ndarray,
+        threshold: float = ...,
+        return_scores: Literal[True] = ...,
+    ) -> tuple[str | None, dict[str, float]]: ...
+
     def classify(
         self,
         embedding: np.ndarray,
@@ -189,20 +223,16 @@ class EmbeddingClassifier:
             Category string, or None if below threshold.
         """
         embedding = self._provider.embed(text)
-        result = self.classify(embedding, threshold, return_scores=False)
-        # When return_scores=False, result is str | None
-        return result if isinstance(result, str) or result is None else result[0]
+        # When return_scores=False, classify returns str | None directly
+        return self.classify(embedding, threshold, return_scores=False)
 
     def get_category_scores(self, embedding: np.ndarray) -> dict[str, float]:
         """Get similarity scores for all categories.
 
         Useful for debugging or showing category confidence.
         """
-        result = self.classify(embedding, threshold=0.0, return_scores=True)
-        # When return_scores=True, result is (category, scores) tuple
-        if isinstance(result, tuple):
-            return result[1]
-        return {}
+        _, scores = self.classify(embedding, threshold=0.0, return_scores=True)
+        return scores
 
 
 # Singleton classifier instance (lazy-loaded)
@@ -245,8 +275,7 @@ def ml_classify_category(
         embedding = provider.embed(content)
 
     classifier = get_classifier(provider)
-    result = classifier.classify(embedding, threshold, return_scores=False)
-    return result if isinstance(result, str) or result is None else result[0]
+    return classifier.classify(embedding, threshold, return_scores=False)
 
 
 def hybrid_classify_category(
@@ -279,12 +308,9 @@ def hybrid_classify_category(
             embedding = provider.embed(content)
 
         classifier = get_classifier(provider)
-        result = classifier.classify(embedding, threshold=ml_threshold, return_scores=True)
-        # When return_scores=True, result is (category, scores) tuple
-        if isinstance(result, tuple):
-            ml_category, scores = result
-        else:
-            ml_category, scores = result, {}
+        ml_category, scores = classifier.classify(
+            embedding, threshold=ml_threshold, return_scores=True
+        )
 
         if ml_category is not None:
             log.debug(

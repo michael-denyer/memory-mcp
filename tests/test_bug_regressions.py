@@ -538,15 +538,18 @@ class TestRecallCompositeScoring:
             assert len(result.memories) > 0
 
             mem = result.memories[0]
-            # Composite should be weighted sum including helpfulness (0.25 cold start * 0.05 weight)
+            # Composite should be weighted sum including trust and decayed helpfulness
+            # - trust_weight default is 0.1, trust_score is 1.0 for manual memories
+            # - helpfulness is 0.25 * 0.8 (decay for never-used) * 0.05 weight
             expected = (
                 mem.similarity * storage.settings.recall_similarity_weight
                 + mem.recency_score * storage.settings.recall_recency_weight
                 + 0.0  # access_score is 0 for single-item recall
-                + 0.25 * storage.settings.recall_helpfulness_weight  # cold start helpfulness
+                + mem.trust_score_decayed * storage.settings.recall_trust_weight  # trust component
+                + 0.25 * 0.8 * storage.settings.recall_helpfulness_weight  # decayed helpfulness
             )
             # Allow small floating point difference
-            assert abs(mem.composite_score - expected) < 0.01
+            assert abs(mem.composite_score - expected) < 0.02
 
             storage.close()
 

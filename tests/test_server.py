@@ -930,3 +930,57 @@ class TestContextShaping:
             assert result.formatted_context is not None
             assert len(result.formatted_context) == len(result.memories)
             assert "Found" in result.context_summary
+
+
+# ========== Input Validation Tests ==========
+
+
+class TestInputValidation:
+    """Tests for input validation in tool functions."""
+
+    def test_list_memories_rejects_negative_offset(self, storage, monkeypatch):
+        """list_memories returns error for negative offset."""
+        from memory_mcp.server.tools import cold_storage
+
+        monkeypatch.setattr(cold_storage, "storage", storage)
+        monkeypatch.setattr(cold_storage, "settings", storage.settings)
+
+        list_fn = cold_storage.list_memories.fn
+        result = list_fn(offset=-1)
+
+        # Should return error dict, not results
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert "offset" in result["error"]
+
+    def test_list_memories_rejects_zero_limit(self, storage, monkeypatch):
+        """list_memories returns error for limit < 1."""
+        from memory_mcp.server.tools import cold_storage
+
+        monkeypatch.setattr(cold_storage, "storage", storage)
+        monkeypatch.setattr(cold_storage, "settings", storage.settings)
+
+        list_fn = cold_storage.list_memories.fn
+        result = list_fn(limit=0)
+
+        # Should return error dict, not results
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert "limit" in result["error"]
+
+    def test_list_memories_accepts_valid_params(self, storage, monkeypatch):
+        """list_memories works with valid offset and limit."""
+        from memory_mcp.server.tools import cold_storage
+
+        monkeypatch.setattr(cold_storage, "storage", storage)
+        monkeypatch.setattr(cold_storage, "settings", storage.settings)
+
+        # Store a memory
+        storage.store_memory("Test memory", MemoryType.PROJECT)
+
+        list_fn = cold_storage.list_memories.fn
+        result = list_fn(limit=5, offset=0)
+
+        # Should return list, not error
+        assert isinstance(result, list)
+        assert len(result) >= 1

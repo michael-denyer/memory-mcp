@@ -111,7 +111,7 @@ TRUST_REASON_DEFAULTS: dict[TrustReason, float] = {
     TrustReason.PARTIALLY_INCORRECT: -0.15,
     TrustReason.FACTUALLY_WRONG: -0.30,
     TrustReason.SUPERSEDED: -0.05,
-    TrustReason.LOW_UTILITY: -0.05,
+    TrustReason.LOW_UTILITY: -0.03,
     TrustReason.CONTRADICTION_RESOLVED: -0.20,
 }
 
