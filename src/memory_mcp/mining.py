@@ -1292,6 +1292,10 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
             if _may_contain_secrets(pattern.pattern):
                 continue
 
+            # Skip short fragments (too short to be useful knowledge)
+            if len(pattern.pattern) < settings.mining_min_pattern_length:
+                continue
+
             if is_existing:
                 # Update occurrence count in mined_patterns table
                 updated_patterns += 1
@@ -1303,8 +1307,14 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
                 )
             else:
                 # New pattern - store as memory immediately if confidence is sufficient
+                # Skip low-value categories (command, snippet) - they go to mined_patterns only
                 created_memory_id = None
-                if pattern.confidence >= settings.mining_auto_approve_confidence:
+                skip_memory_storage = pattern.pattern_type.value in ("command", "snippet")
+
+                if (
+                    not skip_memory_storage
+                    and pattern.confidence >= settings.mining_auto_approve_confidence
+                ):
                     mem_type = _get_memory_type_for_pattern(pattern.pattern_type.value)
 
                     # Use project_id from source log, not current session

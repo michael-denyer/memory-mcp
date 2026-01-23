@@ -1,6 +1,6 @@
 [project]
 name = "hot-memory-mcp"
-version = "0.5.14"
+version = "0.5.15"
 description = "Engram-inspired memory MCP server with hot cache and pattern mining"
 readme = "README.md"
 license = "MIT"

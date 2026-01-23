@@ -61,6 +61,9 @@ class Settings(BaseSettings):
 
     # Mining
     mining_enabled: bool = Field(default=True, description="Enable pattern mining")
+    mining_min_pattern_length: int = Field(
+        default=30, description="Minimum character length for mined patterns (skip short fragments)"
+    )
     log_retention_days: int = Field(default=7, description="Days to retain output logs")
 
     # Auto-approve high-confidence patterns (reduces manual intervention)

@@ -18,6 +18,17 @@
     <td class="px-4 py-3">
         <p class="text-sm text-gray-200 line-clamp-2 max-w-md">{{ memory.content }}</p>
     </td>
+    <!-- Created At -->
+    <td class="px-4 py-3 text-center">
+        {% if memory.created_at %}
+            {% set created_str = memory.created_at|string %}
+            <span class="text-xs text-gray-400" title="{{ created_str[:19] }}">
+                {{ created_str[:10] }}
+            </span>
+        {% else %}
+            <span class="text-xs text-gray-500">—</span>
+        {% endif %}
+    </td>
     <!-- Trust Score -->
     <td class="px-4 py-3 text-center">
         {% set trust = memory.trust_score|default(0.7) %}

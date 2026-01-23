@@ -4,6 +4,30 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.15] - 2026-01-23
+
+### Added
+
+- **Intent-based recall ranking** - Boost memories matching query intent
+  - `infer_query_intent()` detects query purpose (debugging, howto, architecture, etc.)
+  - `compute_intent_boost()` applies category-based ranking boost (up to 15%)
+  - Cheap regex heuristic with zero latency impact
+  - Intents: debugging, howto, architecture, decision, convention, setup, api, todo
+
+- **Mining minimum length threshold** - Skip short fragments
+  - `mining_min_pattern_length` config (default: 30 chars)
+  - Prevents storing noise like "Yes" or "OK" as memories
+
+- **Dashboard timestamp column** - Memory creation dates visible
+  - "Created" column shows when each memory was stored
+  - Helps distinguish new issues from legacy problems
+
+### Changed
+
+- **Command/snippet blocking in mining** - Low-value patterns stored as mined_patterns only
+  - Commands and snippets no longer auto-stored as memories
+  - Still tracked in mined_patterns for reference if needed
+
 ## [0.5.14] - 2026-01-23
 
 ### Added
