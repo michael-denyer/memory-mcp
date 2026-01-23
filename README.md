@@ -10,6 +10,7 @@
 [![MCP 1.0](https://img.shields.io/badge/MCP-1.0-green.svg)](https://modelcontextprotocol.io)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-2.1+-blueviolet.svg)](https://claude.ai/code)
 [![PyPI](https://img.shields.io/pypi/v/hot-memory-mcp.svg)](https://pypi.org/project/hot-memory-mcp/)
+[![CI](https://github.com/michael-denyer/memory-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/michael-denyer/memory-mcp/actions)
 
 <br />
 
@@ -154,6 +155,15 @@ Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's *
 | `/memory-mcp:hot-cache` | Manage hot cache |
 | `/memory-mcp:stats` | Show statistics |
 | `/memory-mcp:bootstrap` | Seed from project docs |
+| `/memory-mcp:trust` | Validate or invalidate memories |
+| `/memory-mcp:link` | Connect related memories |
+| `/memory-mcp:mining` | Review mined patterns |
+
+<details>
+<summary>All 14 commands</summary>
+
+`bootstrap`, `consolidate`, `forget`, `hot-cache`, `link`, `list`, `maintenance`, `mining`, `recall`, `remember`, `session`, `stats`, `test-all`, `trust`
+</details>
 
 ### Core Tools
 
