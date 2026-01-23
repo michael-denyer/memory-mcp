@@ -7,7 +7,6 @@ from enum import Enum
 from typing import Any
 
 from memory_mcp.embeddings import content_hash
-from memory_mcp.project import get_current_project_id
 from memory_mcp.storage import MemoryType, Storage
 
 # Patterns that indicate potentially sensitive content - never auto-approve
@@ -47,6 +46,58 @@ def _may_contain_secrets(text: str) -> bool:
     Used to prevent auto-approval of patterns that might contain secrets.
     """
     return bool(_SENSITIVE_REGEX.search(text))
+
+
+# Redaction patterns: (compiled_regex, replacement)
+# These are more specific than detection patterns - they match actual secret values
+_REDACTION_PATTERNS: list[tuple[re.Pattern, str]] = []
+
+
+def _init_redaction_patterns() -> None:
+    """Initialize compiled redaction patterns (lazy load)."""
+    global _REDACTION_PATTERNS
+    if _REDACTION_PATTERNS:
+        return
+
+    patterns = [
+        # API keys with specific formats
+        (r"sk-[A-Za-z0-9]{48,}", "[OPENAI_KEY_REDACTED]"),
+        (r"ghp_[A-Za-z0-9]{36,}", "[GITHUB_PAT_REDACTED]"),
+        (r"gho_[A-Za-z0-9]{36,}", "[GITHUB_OAUTH_REDACTED]"),
+        (r"AKIA[0-9A-Z]{16}", "[AWS_KEY_REDACTED]"),
+        # Key-value pairs with secrets (captures the key, redacts value)
+        (
+            r"((?:password|passwd|secret|token|api[_-]?key|auth[_-]?token|private[_-]?key)"
+            r"\s*[:=]\s*)['\"]?[A-Za-z0-9_\-./+]{8,}['\"]?",
+            r"\1[REDACTED]",
+        ),
+        # Connection strings with credentials
+        (r"(://[^:]+:)[^@]+(@)", r"\1[REDACTED]\2"),
+        # Bearer tokens
+        (r"(bearer\s+)[A-Za-z0-9\-_.]{20,}", r"\1[REDACTED]"),
+    ]
+
+    _REDACTION_PATTERNS.extend((re.compile(p, re.IGNORECASE), r) for p, r in patterns)
+
+
+def redact_secrets(text: str) -> str:
+    """Redact detected secrets from text before storage.
+
+    Replaces detected secrets with [REDACTED] or specific redaction markers.
+    This should be called BEFORE storing content to prevent secret persistence.
+
+    Args:
+        text: Content that may contain secrets
+
+    Returns:
+        Text with secrets redacted
+    """
+    _init_redaction_patterns()
+
+    result = text
+    for pattern, replacement in _REDACTION_PATTERNS:
+        result = pattern.sub(replacement, result)
+    return result
 
 
 # Global lazy-loaded NER pipeline
@@ -1204,6 +1255,11 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
     Patterns are stored as memories immediately when they meet the minimum
     confidence threshold. Hot cache promotion happens separately when patterns
     reach the occurrence threshold.
+
+    Project Attribution:
+        Each mined memory inherits the project_id from its source log, not the
+        current session. This prevents cross-project pollution when mining logs
+        from multiple projects.
     """
     from memory_mcp.storage import MemorySource
 
@@ -1220,12 +1276,7 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
         tuple[int, str, int | None]
     ] = []  # (memory_id, pattern_type, source_log_id)
 
-    # Get project_id for memory storage
-    mem_project_id = None
-    if settings.project_awareness_enabled:
-        mem_project_id = get_current_project_id()
-
-    for log_id, content, _ in outputs:
+    for log_id, content, _, log_project_id in outputs:
         patterns = extract_patterns(
             content,
             ner_enabled=settings.ner_enabled,
@@ -1256,12 +1307,14 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
                 if pattern.confidence >= settings.mining_auto_approve_confidence:
                     mem_type = _get_memory_type_for_pattern(pattern.pattern_type.value)
 
+                    # Use project_id from source log, not current session
+                    # This prevents cross-project pollution
                     memory_id, is_new = storage.store_memory(
                         content=pattern.pattern,
                         memory_type=mem_type,
                         source=MemorySource.MINED,
                         tags=["mined"],
-                        project_id=mem_project_id,
+                        project_id=log_project_id,
                         source_log_id=log_id,
                     )
 

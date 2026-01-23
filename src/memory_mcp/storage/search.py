@@ -72,13 +72,15 @@ class SearchMixin:
         created_at: datetime,
         last_accessed_at: datetime | None = None,
         memory_type: MemoryType | None = None,
+        access_count: int = 0,
     ) -> float:
-        """Compute time-decayed trust score.
+        """Compute time-decayed trust score with usage-aware adjustment.
 
         Trust decays based on time since last meaningful interaction:
         - If recently accessed, decay is based on last_accessed_at (refresh on use)
         - Otherwise, decay is based on created_at
         - Decay rate varies by memory type (project decays slowest, conversation fastest)
+        - Frequently-used memories decay slower (usage multiplier)
 
         This means memories that are actively used maintain their trust,
         while unused memories slowly decay - aligning with Engram's principle
@@ -89,16 +91,31 @@ class SearchMixin:
             created_at: When the memory was created
             last_accessed_at: When the memory was last accessed (optional)
             memory_type: Type of memory for per-type decay rate
+            access_count: Number of times memory has been accessed (for usage-aware decay)
 
         Returns:
-            Trust score with exponential decay applied based on staleness.
+            Trust score with exponential decay applied based on staleness,
+            adjusted for usage frequency.
         """
+        import math
+
         halflife_days = self._get_trust_decay_halflife(memory_type)
         reference_time = last_accessed_at if last_accessed_at else created_at
         days_since_activity = (datetime.now() - reference_time).total_seconds() / 86400
 
-        decay = 2 ** (-days_since_activity / halflife_days)
-        return base_trust * decay
+        # Base exponential decay
+        base_decay = 2 ** (-days_since_activity / halflife_days)
+
+        # Usage multiplier: frequently-used memories decay slower
+        # log(1) = 0, log(10) ≈ 2.3, log(100) ≈ 4.6
+        # Multiplier ranges from 1.0 (unused) to 1.5 (heavily used)
+        usage_factor = min(1.5, 1.0 + 0.1 * math.log(max(1, access_count + 1)))
+
+        # Apply usage factor only if there's actual decay happening
+        # (avoids inflating trust above base for fresh memories)
+        adjusted_decay = base_decay * usage_factor if base_decay < 1.0 else base_decay
+
+        return base_trust * min(1.0, adjusted_decay)
 
     def _compute_access_score(self, access_count: int, max_access: int) -> float:
         """Normalize access count to 0-1 range."""
@@ -416,12 +433,17 @@ class SearchMixin:
                     access_score = self._compute_access_score(row["access_count"], max_access)
 
                     # Compute trust with time decay (refreshed by access, per-type rate)
+                    # Usage-aware: frequently-used memories decay slower
                     memory_type_enum = (
                         MemoryType(row["memory_type"]) if row["memory_type"] else None
                     )
                     base_trust = row["trust_score"] if row["trust_score"] is not None else 1.0
                     trust_decayed = self._compute_trust_decay(
-                        base_trust, created_at, last_accessed_at, memory_type_enum
+                        base_trust,
+                        created_at,
+                        last_accessed_at,
+                        memory_type_enum,
+                        row["access_count"] or 0,
                     )
 
                     # Get Bayesian helpfulness with category-aware recency decay

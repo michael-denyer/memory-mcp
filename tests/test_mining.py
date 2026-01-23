@@ -1268,3 +1268,282 @@ class TestExtractDecisionEntities:
         patterns = extract_decision_entities(text)
         assert len(patterns) >= 1
         assert patterns[0].metadata["has_rationale"] is True
+
+
+# ========== Redaction Tests ==========
+
+
+class TestRedaction:
+    """Tests for secret redaction utilities."""
+
+    def test_may_contain_secrets_detects_password(self):
+        """Detect password= patterns."""
+        from memory_mcp.redaction import may_contain_secrets
+
+        assert may_contain_secrets("password: secret123")
+        assert may_contain_secrets("passwd=mypassword")
+        assert not may_contain_secrets("the password was reset yesterday")
+
+    def test_may_contain_secrets_detects_tokens(self):
+        """Detect token and api_key patterns."""
+        from memory_mcp.redaction import may_contain_secrets
+
+        assert may_contain_secrets("token = abc123def456")
+        assert may_contain_secrets("api_key: sk-1234567890")
+        assert may_contain_secrets("auth-token = xyz")
+
+    def test_may_contain_secrets_detects_connection_strings(self):
+        """Detect credentials in connection strings."""
+        from memory_mcp.redaction import may_contain_secrets
+
+        assert may_contain_secrets("postgres://user:pass@localhost/db")
+        assert may_contain_secrets("mongodb+srv://admin:secret@cluster.mongodb.net")
+
+    def test_may_contain_secrets_detects_aws_keys(self):
+        """Detect AWS access keys."""
+        from memory_mcp.redaction import may_contain_secrets
+
+        assert may_contain_secrets("AKIAIOSFODNN7EXAMPLE")
+
+    def test_redact_secrets_openai_key(self):
+        """Redact OpenAI API keys."""
+        from memory_mcp.redaction import redact_secrets
+
+        text = "Use this key: sk-1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdef"
+        result = redact_secrets(text)
+        assert "sk-1234567890" not in result
+        assert "[OPENAI_KEY_REDACTED]" in result
+
+    def test_redact_secrets_github_pat(self):
+        """Redact GitHub personal access tokens."""
+        from memory_mcp.redaction import redact_secrets
+
+        text = "GitHub token: ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+        result = redact_secrets(text)
+        assert "ghp_abcdefghijklmnopqrstuvwxyz" not in result
+        assert "[GITHUB_PAT_REDACTED]" in result
+
+    def test_redact_secrets_password_value(self):
+        """Redact password values."""
+        from memory_mcp.redaction import redact_secrets
+
+        text = "password = 'mysecretpassword123'"
+        result = redact_secrets(text)
+        assert "mysecretpassword123" not in result
+        assert "[REDACTED]" in result
+
+    def test_redact_secrets_connection_string(self):
+        """Redact credentials in connection strings."""
+        from memory_mcp.redaction import redact_secrets
+
+        text = "postgres://admin:verysecret@localhost:5432/mydb"
+        result = redact_secrets(text)
+        assert "verysecret" not in result
+        assert "[REDACTED]" in result
+        # Should preserve structure
+        assert "postgres://" in result
+        assert "@localhost" in result
+
+    def test_redact_secrets_bearer_token(self):
+        """Redact bearer tokens."""
+        from memory_mcp.redaction import redact_secrets
+
+        text = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.long-token"
+        result = redact_secrets(text)
+        assert "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" not in result
+        assert "[REDACTED]" in result
+
+    def test_redact_secrets_preserves_safe_content(self):
+        """Safe content is not altered."""
+        from memory_mcp.redaction import redact_secrets
+
+        text = "This is normal code with functions and variables."
+        result = redact_secrets(text)
+        assert result == text
+
+    def test_redact_secrets_multiple_secrets(self):
+        """Multiple secrets in same text are all redacted."""
+        from memory_mcp.redaction import redact_secrets
+
+        text = """
+        api_key = "sk-1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdef"
+        password: anothersecret123
+        """
+        result = redact_secrets(text)
+        assert "sk-1234567890" not in result
+        assert "anothersecret123" not in result
+
+
+# ========== Staleness and Decayed Trust Tests ==========
+
+
+def _make_test_memory(
+    memory_type: str = "project",
+    trust_score: float = 1.0,
+    access_count: int = 0,
+    last_accessed_at=None,
+    last_used_at=None,
+    created_at=None,
+):
+    """Helper to create Memory objects for tests with all required fields."""
+    from datetime import datetime
+
+    from memory_mcp.models import Memory, MemorySource
+
+    now = datetime.now()
+    return Memory(
+        id=1,
+        content="Test content",
+        content_hash="abc123",
+        memory_type=memory_type,
+        source=MemorySource.MANUAL,
+        is_hot=False,
+        is_pinned=False,
+        promotion_source=None,
+        tags=[],
+        access_count=access_count,
+        last_accessed_at=last_accessed_at,
+        created_at=created_at or now,
+        trust_score=trust_score,
+        last_used_at=last_used_at,
+    )
+
+
+class TestStalenessIndicator:
+    """Tests for staleness indicator in memory formatting."""
+
+    def test_never_verified_memory(self):
+        """Memory with no last_used_at shows 'never verified'."""
+        from memory_mcp.helpers import _get_staleness_indicator
+
+        memory = _make_test_memory(last_used_at=None)
+        staleness = _get_staleness_indicator(memory)
+        assert staleness == "never verified"
+
+    def test_recently_verified_memory(self):
+        """Memory verified recently shows no staleness indicator."""
+        from datetime import datetime, timedelta
+
+        from memory_mcp.helpers import _get_staleness_indicator
+
+        memory = _make_test_memory(
+            created_at=datetime.now() - timedelta(days=30),
+            last_used_at=datetime.now() - timedelta(days=1),  # Verified yesterday
+        )
+        staleness = _get_staleness_indicator(memory)
+        assert staleness is None
+
+    def test_stale_project_memory(self):
+        """Project memory stale after 21+ days shows indicator."""
+        from datetime import datetime, timedelta
+
+        from memory_mcp.helpers import _get_staleness_indicator
+
+        memory = _make_test_memory(
+            memory_type="project",
+            created_at=datetime.now() - timedelta(days=60),
+            last_used_at=datetime.now() - timedelta(days=30),  # Stale
+        )
+        staleness = _get_staleness_indicator(memory)
+        assert staleness is not None
+        assert "stale" in staleness
+        assert "30d" in staleness
+
+    def test_episodic_memory_stales_faster(self):
+        """Episodic memory stales after just 3 days."""
+        from datetime import datetime, timedelta
+
+        from memory_mcp.helpers import _get_staleness_indicator
+
+        memory = _make_test_memory(
+            memory_type="episodic",
+            created_at=datetime.now() - timedelta(days=10),
+            last_used_at=datetime.now() - timedelta(days=5),  # 5 days > 3 threshold
+        )
+        staleness = _get_staleness_indicator(memory)
+        assert staleness is not None
+        assert "stale" in staleness
+
+
+class TestDecayedTrust:
+    """Tests for decayed trust computation."""
+
+    def test_fresh_memory_full_trust(self):
+        """Recently accessed memory maintains full trust."""
+        from datetime import datetime
+
+        from memory_mcp.helpers import _compute_decayed_trust
+
+        memory = _make_test_memory(
+            trust_score=1.0,
+            created_at=datetime.now(),
+            last_accessed_at=datetime.now(),
+        )
+        decayed = _compute_decayed_trust(memory)
+        # Should be very close to 1.0
+        assert decayed >= 0.99
+
+    def test_stale_memory_decayed_trust(self):
+        """Stale memory has lower decayed trust."""
+        from datetime import datetime, timedelta
+
+        from memory_mcp.helpers import _compute_decayed_trust
+
+        memory = _make_test_memory(
+            trust_score=1.0,
+            created_at=datetime.now() - timedelta(days=180),
+            last_accessed_at=datetime.now() - timedelta(days=180),  # Very stale
+        )
+        decayed = _compute_decayed_trust(memory)
+        # Should be significantly below 1.0 due to decay
+        assert decayed < 0.5
+
+    def test_confidence_label_uses_decayed_trust(self):
+        """Confidence label should reflect decayed trust, not raw."""
+        from datetime import datetime, timedelta
+
+        from memory_mcp.helpers import _get_confidence_label
+
+        # High raw trust but very stale
+        memory = _make_test_memory(
+            memory_type="project",
+            trust_score=1.0,  # High raw trust
+            created_at=datetime.now() - timedelta(days=365),
+            last_accessed_at=datetime.now() - timedelta(days=365),  # Very stale
+        )
+        confidence = _get_confidence_label(memory)
+        # Should be low or medium due to decay, not high
+        assert confidence in ("low", "medium")
+
+    def test_usage_aware_decay_slows_for_high_access(self):
+        """Frequently-used memories decay slower than rarely-used ones."""
+        from datetime import datetime, timedelta
+
+        from memory_mcp.helpers import _compute_decayed_trust
+
+        stale_time = datetime.now() - timedelta(days=90)
+
+        # Memory with low access count
+        low_access = _make_test_memory(
+            trust_score=1.0,
+            access_count=1,
+            created_at=stale_time,
+            last_accessed_at=stale_time,
+        )
+
+        # Memory with high access count
+        high_access = _make_test_memory(
+            trust_score=1.0,
+            access_count=50,
+            created_at=stale_time,
+            last_accessed_at=stale_time,
+        )
+
+        low_decayed = _compute_decayed_trust(low_access)
+        high_decayed = _compute_decayed_trust(high_access)
+
+        # High access memory should retain more trust due to usage multiplier
+        assert high_decayed > low_decayed
+        # But both should be decayed from original 1.0
+        assert low_decayed < 1.0
+        assert high_decayed < 1.0

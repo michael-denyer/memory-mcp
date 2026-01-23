@@ -142,6 +142,9 @@ def record_recall(
     gated_count: int,
     hot_hit: bool,
     threshold: float,
+    query_preview: str | None = None,
+    mode: str | None = None,
+    elapsed_ms: float | None = None,
 ) -> None:
     """Record metrics for a recall operation.
 
@@ -151,6 +154,9 @@ def record_recall(
         gated_count: Number of results below threshold (not returned).
         hot_hit: Whether any result came from hot cache.
         threshold: Similarity threshold used for gating.
+        query_preview: First 80 chars of query (for debugging).
+        mode: Recall mode (precision/balanced/exploratory).
+        elapsed_ms: Time taken for recall operation in milliseconds.
     """
     metrics.increment("recall.total")
     metrics.increment("recall.results_returned", results_count)
@@ -161,14 +167,21 @@ def record_recall(
         metrics.increment("recall.empty")
 
     log = get_logger("metrics")
+
+    # Build log message with optional context
+    preview = f'"{query_preview[:80]}"' if query_preview else f"({query_length} chars)"
+    mode_str = mode or "balanced"
+    elapsed_str = f" elapsed={elapsed_ms:.1f}ms" if elapsed_ms is not None else ""
+
     log.debug(
-        "recall: query_len={query_len} results={results} gated={gated} "
-        "hot_hit={hot_hit} threshold={threshold}",
-        query_len=query_length,
-        results=results_count,
-        gated=gated_count,
-        hot_hit=hot_hit,
-        threshold=threshold,
+        "recall: query={} mode={} results={} gated={} hot={} threshold={:.2f}{}",
+        preview,
+        mode_str,
+        results_count,
+        gated_count,
+        hot_hit,
+        threshold,
+        elapsed_str,
     )
 
 

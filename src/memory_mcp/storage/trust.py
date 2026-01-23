@@ -77,14 +77,25 @@ class TrustMixin:
                 (memory_id, reason.value, old_trust, new_trust, delta, similarity, note),
             )
 
-            log.info(
-                "Adjusted trust for memory id={}: {:.2f} -> {:.2f} (reason={}, delta={:.3f})",
-                memory_id,
-                old_trust,
-                new_trust,
-                reason.value,
-                delta,
-            )
+            # Significant trust changes (|delta| >= 0.1) are INFO, minor tweaks are DEBUG
+            if abs(delta) >= 0.1:
+                log.info(
+                    "Trust change id={}: {:.2f} -> {:.2f} (reason={}, delta={:.3f})",
+                    memory_id,
+                    old_trust,
+                    new_trust,
+                    reason.value,
+                    delta,
+                )
+            else:
+                log.debug(
+                    "Trust tweak id={}: {:.2f} -> {:.2f} (reason={}, delta={:.3f})",
+                    memory_id,
+                    old_trust,
+                    new_trust,
+                    reason.value,
+                    delta,
+                )
             return new_trust
 
     def strengthen_trust(
@@ -251,18 +262,12 @@ class TrustMixin:
                 get_bayesian_helpfulness,
                 get_promotion_salience_threshold,
                 should_auto_pin,
-                should_promote_category,
             )
 
-            # Check if category is eligible for promotion
-            if not should_promote_category(category):
-                log.debug(
-                    "Skipped promotion for memory id={} (category={} not eligible)",
-                    memory_id,
-                    category,
-                )
-                record_promotion_rejection("category_ineligible", memory_id)
-                return False
+            # Note: All categories are now promotable with threshold multipliers.
+            # The old blanket exclusion for command/snippet was too rigid -
+            # frequently-used commands like 'uv run pytest' should be able to
+            # reach hot cache if they meet the (higher) threshold.
 
             trust_score = row["trust_score"] or 1.0
             importance_score = row["importance_score"] or 0.5

@@ -419,6 +419,9 @@ class MaintenanceMixin:
         # 7. Penalize low-utility memories (retrieved but never used)
         penalized_ids = self.penalize_low_utility_memories()
 
+        # 8. Improve hot cache based on injection feedback (non-dry-run)
+        injection_feedback = self.improve_hot_cache_from_injections(days=7, dry_run=False)
+
         return {
             "hot_cache_demoted": len(demoted_ids),
             "patterns_expired": expired_patterns,
@@ -427,4 +430,6 @@ class MaintenanceMixin:
             "memories_deleted_by_type": memory_cleanup["deleted_by_type"],
             "injections_deleted": deleted_injections,
             "low_utility_penalized": len(penalized_ids),
+            "injection_feedback_promoted": len(injection_feedback.get("promoted", [])),
+            "injection_feedback_warnings": len(injection_feedback.get("warnings", [])),
         }

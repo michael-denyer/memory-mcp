@@ -277,3 +277,182 @@ class InjectionTrackingMixin:
             if deleted > 0:
                 log.info("Cleaned up {} old injection records", deleted)
             return deleted
+
+    def analyze_injection_patterns(self, days: int = 7) -> dict:
+        """Analyze injection patterns to identify high-value and low-utility memories.
+
+        Correlates injection counts with actual usage to identify:
+        1. High-value: Frequently injected AND frequently used (should stay hot)
+        2. Low-utility: Frequently injected but rarely/never used (consider demotion)
+        3. Co-injected pairs: Memories that frequently appear together
+
+        Args:
+            days: Number of days to analyze
+
+        Returns:
+            Dictionary with pattern analysis results
+        """
+        with self._connection() as conn:
+            # Get memories with injection counts and usage correlation
+            memory_stats = conn.execute(
+                """
+                SELECT
+                    i.memory_id,
+                    COUNT(*) as injection_count,
+                    m.used_count,
+                    m.retrieved_count,
+                    m.utility_score,
+                    m.is_hot,
+                    m.category
+                FROM injection_log i
+                JOIN memories m ON m.id = i.memory_id
+                WHERE i.injected_at >= datetime('now', ?)
+                GROUP BY i.memory_id
+                ORDER BY injection_count DESC
+                """,
+                (f"-{days} days",),
+            ).fetchall()
+
+            # Categorize memories
+            high_value = []  # Injected AND used
+            low_utility = []  # Injected but not used
+            candidates_for_promotion = []  # Not hot but high injection+usage
+
+            for row in memory_stats:
+                injection_count = row["injection_count"]
+                used_count = row["used_count"] or 0
+                utility_score = row["utility_score"] or 0.25
+
+                entry = {
+                    "memory_id": row["memory_id"],
+                    "injection_count": injection_count,
+                    "used_count": used_count,
+                    "utility_score": round(utility_score, 3),
+                    "is_hot": bool(row["is_hot"]),
+                    "category": row["category"],
+                }
+
+                # High value: injected 3+ times and used at least once
+                if injection_count >= 3 and used_count > 0:
+                    high_value.append(entry)
+
+                # Low utility: injected 5+ times but never used
+                if injection_count >= 5 and used_count == 0:
+                    low_utility.append(entry)
+
+                # Candidate for promotion: not hot but high injection AND usage
+                if not row["is_hot"] and injection_count >= 5 and utility_score >= 0.3:
+                    candidates_for_promotion.append(entry)
+
+            # Find co-injected pairs (memories that appear together within same minute)
+            co_injected = conn.execute(
+                """
+                SELECT
+                    a.memory_id as memory_a,
+                    b.memory_id as memory_b,
+                    COUNT(*) as co_occurrence
+                FROM injection_log a
+                JOIN injection_log b ON a.resource = b.resource
+                    AND a.memory_id < b.memory_id
+                    AND a.injected_at >= datetime('now', ?)
+                    AND b.injected_at >= datetime('now', ?)
+                    AND abs(julianday(a.injected_at) - julianday(b.injected_at)) < 0.0007
+                GROUP BY a.memory_id, b.memory_id
+                HAVING COUNT(*) >= 3
+                ORDER BY co_occurrence DESC
+                LIMIT 10
+                """,
+                (f"-{days} days", f"-{days} days"),
+            ).fetchall()
+
+            co_pairs = [
+                {
+                    "memory_a": row["memory_a"],
+                    "memory_b": row["memory_b"],
+                    "co_occurrence": row["co_occurrence"],
+                }
+                for row in co_injected
+            ]
+
+            return {
+                "days": days,
+                "total_memories_analyzed": len(memory_stats),
+                "high_value": high_value[:20],  # Top 20
+                "low_utility": low_utility[:20],  # Top 20
+                "candidates_for_promotion": candidates_for_promotion[:10],
+                "co_injected_pairs": co_pairs,
+                "summary": {
+                    "high_value_count": len(high_value),
+                    "low_utility_count": len(low_utility),
+                    "promotion_candidates": len(candidates_for_promotion),
+                    "co_injection_pairs": len(co_pairs),
+                },
+            }
+
+    def improve_hot_cache_from_injections(self, days: int = 7, dry_run: bool = True) -> dict:
+        """Use injection patterns to improve hot cache quality.
+
+        Takes action based on injection analysis:
+        1. Promote frequently-injected, high-utility memories
+        2. Log warnings for injected-but-never-used memories (optional demotion)
+
+        Args:
+            days: Number of days to analyze
+            dry_run: If True, only report what would be done (default True)
+
+        Returns:
+            Dictionary with actions taken or recommended
+        """
+        from memory_mcp.models import PromotionSource
+
+        analysis = self.analyze_injection_patterns(days)
+        actions = {
+            "dry_run": dry_run,
+            "promoted": [],
+            "warnings": [],
+        }
+
+        # Promote candidates that are frequently injected with good utility
+        for candidate in analysis["candidates_for_promotion"]:
+            memory_id = candidate["memory_id"]
+            if dry_run:
+                actions["promoted"].append(
+                    {
+                        "action": "would_promote",
+                        **candidate,
+                    }
+                )
+            else:
+                if self.promote_to_hot(memory_id, PromotionSource.FEEDBACK):
+                    actions["promoted"].append(
+                        {
+                            "action": "promoted",
+                            **candidate,
+                        }
+                    )
+                    log.info(
+                        "Promoted memory {} based on injection feedback "
+                        "(injected={}, utility={:.2f})",
+                        memory_id,
+                        candidate["injection_count"],
+                        candidate["utility_score"],
+                    )
+
+        # Warn about low-utility memories (don't auto-demote - too risky)
+        for low_util in analysis["low_utility"]:
+            memory_id = low_util["memory_id"]
+            actions["warnings"].append(
+                {
+                    "memory_id": memory_id,
+                    "injection_count": low_util["injection_count"],
+                    "message": "Injected but never used - consider demotion",
+                }
+            )
+            log.warning(
+                "Memory {} injected {} times but never used (is_hot={})",
+                memory_id,
+                low_util["injection_count"],
+                low_util["is_hot"],
+            )
+
+        return actions

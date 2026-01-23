@@ -4,6 +4,50 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.12] - 2026-01-23
+
+### Added
+
+- **Secret redaction** - Defense-in-depth for output logging
+  - New `redaction.py` module with `may_contain_secrets()` and `redact_secrets()` functions
+  - Secrets redacted BEFORE storage in `log_output()` to prevent persistence
+  - Patterns: API keys (OpenAI, GitHub, AWS), connection strings, bearer tokens, key-value secrets
+
+- **Staleness indicators** - Visual hints for memory freshness in hot cache
+  - `_get_staleness_indicator()` returns "never verified" or "stale Xd" based on `last_used_at`
+  - Type-specific thresholds: ephemeral (7d), transient (14d), stable (30d), durable (60d)
+  - Integrated into formatted memory output for injection context
+
+- **Injection feedback loop** - Hot cache quality improvement from usage patterns
+  - `analyze_injection_patterns()` identifies high-value, low-utility, and promotion candidates
+  - `improve_hot_cache_from_injections()` auto-promotes high-value cold memories
+  - Runs during `run_full_cleanup()` with configurable dry_run mode
+
+- **Recall logging enhancements** - Better observability for debugging
+  - Logs query preview (first 50 chars), mode, and elapsed time
+  - INFO level for visibility into recall patterns
+
+- **Ranking explanation improvements** - More complete factor breakdown
+  - `build_ranking_factors()` now includes trust_weight, helpfulness_weight
+  - Shows "[keyword boost active]" when hybrid search triggers
+
+### Changed
+
+- **Usage-aware trust decay** - Frequently-used memories decay slower
+  - Log-based multiplier: `min(1.5, 1.0 + 0.1 * log(access_count + 1))`
+  - Applied in both recall scoring and hot cache ordering
+  - Rewards memories that prove useful over time
+
+- **Hot cache ordering uses decayed trust** - Penalizes stale items
+  - Sort key: session recency → decayed trust → real usage ratio
+  - `real_usage_ratio = used_count / access_count` filters auto-marked noise
+  - Prevents stale high-trust items from dominating injection
+
+- **Log level optimization** - Reduced noise, better signal
+  - Eviction: DEBUG → WARNING (cache pressure is notable)
+  - Auto-promotion: INFO → DEBUG (routine operation)
+  - Trust changes: INFO for Δ ≥ 0.1, DEBUG for minor tweaks
+
 ## [0.5.11] - 2026-01-23
 
 ### Added

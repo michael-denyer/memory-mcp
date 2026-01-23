@@ -80,9 +80,12 @@ if [ -z "$MEMORY_MCP_DIR" ]; then
     MEMORY_MCP_DIR="$(dirname "$SCRIPT_DIR")"
 fi
 
-# Extract the last assistant message with text content from the transcript
-# Transcript format: JSONL with {message: {role: "assistant", content: [{type: "text", text: "..."}]}}
-LAST_RESPONSE=$(tail -200 "$TRANSCRIPT_PATH" 2>/dev/null | \
+# Extract the last assistant and user messages from the transcript
+# Transcript format: JSONL with {message: {role: "...", content: [{type: "text", text: "..."}]}}
+TRANSCRIPT_TAIL=$(tail -200 "$TRANSCRIPT_PATH" 2>/dev/null)
+
+# Extract last assistant message with text content
+LAST_RESPONSE=$(printf '%s' "$TRANSCRIPT_TAIL" | \
     jq -rs '
         [.[] | select(.message.role? == "assistant") | select(.message.content[]?.type == "text")]
         | last
@@ -92,14 +95,33 @@ LAST_RESPONSE=$(tail -200 "$TRANSCRIPT_PATH" 2>/dev/null | \
         | if . == "" then empty else . end
     ' 2>/dev/null)
 
+# Extract last user message (truncated to 500 chars to avoid noise)
+LAST_USER_MSG=$(printf '%s' "$TRANSCRIPT_TAIL" | \
+    jq -rs '
+        [.[] | select(.message.role? == "user") | select(.message.content[]?.type == "text")]
+        | last
+        | .message.content
+        | map(select(.type == "text") | .text)
+        | join("\n")
+        | if . == "" then empty else .[0:500] end
+    ' 2>/dev/null)
+
 if [ -z "$LAST_RESPONSE" ] || [ "$LAST_RESPONSE" = "null" ]; then
     # No response found, exit silently
     exit 0
 fi
 
-# Skip if response is too short (likely just acknowledgments)
-if [ ${#LAST_RESPONSE} -lt 50 ]; then
+# Skip if combined content is too short (lowered from 50 to 20 for short constraints)
+COMBINED_LEN=$(( ${#LAST_RESPONSE} + ${#LAST_USER_MSG} ))
+if [ $COMBINED_LEN -lt 20 ]; then
     exit 0
+fi
+
+# Combine user message with assistant response for richer mining context
+if [ -n "$LAST_USER_MSG" ] && [ "$LAST_USER_MSG" != "null" ]; then
+    LAST_RESPONSE="USER: $LAST_USER_MSG
+
+ASSISTANT: $LAST_RESPONSE"
 fi
 
 # Log the response using memory-mcp-cli

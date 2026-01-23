@@ -66,7 +66,10 @@ def build_ranking_factors(mode: RecallMode | None, prefix: str = "") -> str:
         mode_config.similarity_weight,
         mode_config.recency_weight,
         mode_config.access_weight,
-        prefix,
+        trust_weight=settings.recall_trust_weight,
+        helpfulness_weight=settings.recall_helpfulness_weight,
+        hybrid_enabled=settings.hybrid_search_enabled,
+        prefix=prefix,
     )
 
 

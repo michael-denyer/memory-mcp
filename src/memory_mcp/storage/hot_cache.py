@@ -27,16 +27,20 @@ class HotCacheMixin:
 
         Ordering prioritizes (most important first):
         1. last_used_at (session recency - memories recently marked helpful)
-        2. trust_score (reliability signal)
-        3. last_accessed_at (general recency fallback)
+        2. decayed_trust (reliability signal with staleness penalty)
+        3. real_usage_ratio (used_count / access_count - filters auto-marked noise)
 
         This provides cheap, non-embedding curation without per-request filtering.
+        Uses decayed trust instead of raw trust_score to prevent stale items from
+        dominating the injection despite not being used recently.
 
         Args:
             project_id: Optional project filter. If provided and project_filter_hot_cache
                 is enabled, returns only memories for this project (+ global if
                 project_include_global is enabled).
         """
+        from memory_mcp.models import MemoryType
+
         memories = []
         with self._connection() as conn:
             # Build query with optional project filter
@@ -55,12 +59,28 @@ class HotCacheMixin:
             for row in rows:
                 memories.append(self._row_to_memory(row, conn))
 
-        # Sort by: session recency (last_used_at), trust, general recency
-        # None values get timestamp 0 (sort last), negated for descending order
+        # Sort by: session recency, decayed trust, real usage ratio
+        # Uses decayed trust to penalize stale items even with high raw trust
         def sort_key(m: Memory) -> tuple:
             last_used_ts = m.last_used_at.timestamp() if m.last_used_at else 0
-            last_accessed_ts = m.last_accessed_at.timestamp() if m.last_accessed_at else 0
-            return (-last_used_ts, -(m.trust_score or 0), -last_accessed_ts)
+
+            # Compute decayed trust (penalizes staleness, rewards usage)
+            memory_type = MemoryType(m.memory_type) if m.memory_type else None
+            decayed_trust = self._compute_trust_decay(
+                m.trust_score or 1.0,
+                m.created_at,
+                m.last_accessed_at,
+                memory_type,
+                m.access_count or 0,
+            )
+
+            # Real usage ratio: distinguish actual usage from auto-marking
+            # used_count = mark_memory_used calls, access_count includes all bumps
+            used = m.used_count or 0
+            accessed = m.access_count or 1
+            real_usage_ratio = used / accessed if accessed > 0 else 0
+
+            return (-last_used_ts, -decayed_trust, -real_usage_ratio)
 
         memories.sort(key=sort_key)
         return memories
@@ -190,7 +210,12 @@ class HotCacheMixin:
                     (evict_id,),
                 )
                 self._hot_cache_metrics.evictions += 1
-                log.debug("Evicted memory id={} from hot cache (lowest score)", evict_id)
+                # Eviction indicates cache pressure - log as warning
+                log.warning(
+                    "Evicted memory id={} from hot cache (cache pressure, {} items)",
+                    evict_id,
+                    self.settings.hot_cache_max_items,
+                )
 
             # Promote the memory
             cursor = conn.execute(
@@ -204,12 +229,21 @@ class HotCacheMixin:
             promoted = cursor.rowcount > 0
             if promoted:
                 self._hot_cache_metrics.promotions += 1
-                log.info(
-                    "Promoted memory id={} to hot cache (source={}, pinned={})",
-                    memory_id,
-                    promotion_source.value,
-                    pin,
-                )
+                # Manual promotions are user actions (INFO), auto-promotions are routine (DEBUG)
+                if promotion_source == PromotionSource.MANUAL:
+                    log.info(
+                        "Promoted memory id={} to hot cache (source={}, pinned={})",
+                        memory_id,
+                        promotion_source.value,
+                        pin,
+                    )
+                else:
+                    log.debug(
+                        "Auto-promoted memory id={} to hot cache (source={}, pinned={})",
+                        memory_id,
+                        promotion_source.value,
+                        pin,
+                    )
             return promoted
 
     def demote_from_hot(self, memory_id: int) -> bool:

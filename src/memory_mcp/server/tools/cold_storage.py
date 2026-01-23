@@ -254,6 +254,9 @@ def recall(
         project_id,
     )
 
+    import time
+
+    start_time = time.perf_counter()
     result = storage.recall(
         query=query,
         limit=limit,
@@ -263,18 +266,23 @@ def recall(
         expand_relations=expand_relations,
         project_id=project_id,
     )
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
 
-    # Record metrics
+    # Record metrics with enhanced context
     hot_hit = any(m.is_hot for m in result.memories)
     effective_threshold = (
         threshold if threshold is not None else settings.default_confidence_threshold
     )
+    effective_mode = result.mode.value if result.mode else "balanced"
     record_recall(
         query_length=len(query),
         results_count=len(result.memories),
         gated_count=result.gated_count,
         hot_hit=hot_hit,
         threshold=effective_threshold,
+        query_preview=query,
+        mode=effective_mode,
+        elapsed_ms=elapsed_ms,
     )
 
     # Record retrieval events for quality tracking (RAG-inspired)

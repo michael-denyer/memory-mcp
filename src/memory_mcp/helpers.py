@@ -244,6 +244,9 @@ def build_ranking_factors(
     similarity_weight: float,
     recency_weight: float,
     access_weight: float,
+    trust_weight: float = 0.0,
+    helpfulness_weight: float = 0.0,
+    hybrid_enabled: bool = False,
     prefix: str = "",
 ) -> str:
     """Build ranking factors explanation string for recall responses.
@@ -253,18 +256,33 @@ def build_ranking_factors(
         similarity_weight: Weight for similarity factor (0-1)
         recency_weight: Weight for recency factor (0-1)
         access_weight: Weight for access factor (0-1)
+        trust_weight: Weight for trust factor (0-1)
+        helpfulness_weight: Weight for helpfulness factor (0-1)
+        hybrid_enabled: Whether keyword boost is active
         prefix: Optional prefix to prepend
 
     Returns:
         Human-readable ranking factors string
     """
-    sim_w = int(similarity_weight * 100)
-    rec_w = int(recency_weight * 100)
-    acc_w = int(access_weight * 100)
-    base = (
-        f"Mode: {mode_name} | "
-        f"Ranked by: similarity ({sim_w}%) + recency ({rec_w}%) + access ({acc_w}%)"
-    )
+    factors = []
+
+    # Only include factors with non-zero weight
+    if similarity_weight > 0:
+        factors.append(f"similarity ({int(similarity_weight * 100)}%)")
+    if recency_weight > 0:
+        factors.append(f"recency ({int(recency_weight * 100)}%)")
+    if access_weight > 0:
+        factors.append(f"access ({int(access_weight * 100)}%)")
+    if trust_weight > 0:
+        factors.append(f"trust ({int(trust_weight * 100)}%)")
+    if helpfulness_weight > 0:
+        factors.append(f"helpfulness ({int(helpfulness_weight * 100)}%)")
+
+    base = f"Mode: {mode_name} | Ranked by: " + " + ".join(factors)
+
+    if hybrid_enabled:
+        base += " [keyword boost active]"
+
     return f"{prefix} | {base}" if prefix else base
 
 
@@ -452,30 +470,44 @@ def get_temporal_scope(category: str | None) -> str:
 # These contain critical warnings, constraints, or "don't do X" guidance
 _HIGH_VALUE_CATEGORIES = {"antipattern", "landmine", "constraint"}
 
-# Low-value categories that should never be promoted to hot cache
-# These are easily discoverable or transient - no need to surface them
-_NO_PROMOTE_CATEGORIES = {"command", "snippet"}
+# Promotion threshold multipliers by category
+# Higher multiplier = harder to promote (requires higher salience)
+# Lower multiplier = easier to promote (allows lower salience)
+# Changed from blanket exclusion to threshold-based approach so frequently
+# used commands CAN reach hot cache if accessed enough
+_CATEGORY_PROMOTION_MULTIPLIERS = {
+    "command": 2.0,  # Require 2x normal salience (was: blocked entirely)
+    "snippet": 1.5,  # Require 1.5x normal salience (was: blocked entirely)
+    "antipattern": 0.6,  # Lower threshold for warnings
+    "landmine": 0.6,  # Lower threshold for gotchas
+    "constraint": 0.6,  # Lower threshold for rules
+}
 
 
 def should_promote_category(category: str | None) -> bool:
     """Check if a category is eligible for hot cache promotion.
 
+    All categories are now eligible for promotion - we use threshold multipliers
+    instead of blanket exclusions. This allows frequently-used commands to
+    reach hot cache if they meet the higher threshold.
+
     Args:
         category: Memory category or None
 
     Returns:
-        True if the category can be promoted, False if it should never be promoted
+        True (all categories can be promoted with appropriate thresholds)
     """
-    if category is None:
-        return True  # Uncategorized can be promoted
-    return category not in _NO_PROMOTE_CATEGORIES
+    # All categories are now promotable - use threshold multipliers instead
+    return True
 
 
 def get_promotion_salience_threshold(category: str | None, default_threshold: float) -> float:
     """Get salience threshold for auto-promotion based on category.
 
-    High-value categories (antipattern, landmine, constraint) use a lower threshold
-    so they get promoted to hot cache quickly and surface early in plans.
+    Uses multipliers to adjust thresholds by category:
+    - High-value categories (antipattern, landmine, constraint): Lower threshold
+    - Low-value categories (command, snippet): Higher threshold
+    - Others: Default threshold
 
     Args:
         category: Memory category or None
@@ -484,10 +516,14 @@ def get_promotion_salience_threshold(category: str | None, default_threshold: fl
     Returns:
         Salience threshold to use for promotion decision
     """
-    if category in _HIGH_VALUE_CATEGORIES:
-        # Lower threshold for high-value warnings (30% vs default 50%)
-        return min(0.3, default_threshold * 0.6)
-    return default_threshold
+    if category is None:
+        return default_threshold
+
+    multiplier = _CATEGORY_PROMOTION_MULTIPLIERS.get(category, 1.0)
+    adjusted = default_threshold * multiplier
+
+    # Clamp to reasonable bounds
+    return max(0.1, min(0.95, adjusted))
 
 
 def should_auto_pin(category: str | None, trust_score: float = 1.0) -> bool:
@@ -1152,10 +1188,57 @@ def _get_category_prefix(memory: Memory) -> str:
     return ""
 
 
+def _compute_decayed_trust(memory: Memory) -> float:
+    """Compute time-decayed trust for a memory with usage-aware adjustment.
+
+    Uses exponential decay based on staleness to penalize memories
+    that haven't been accessed recently. Frequently-used memories
+    decay slower, reflecting their proven reliability.
+
+    Args:
+        memory: Memory to compute decayed trust for
+
+    Returns:
+        Decayed trust score (0.0 to 1.0)
+    """
+    import math
+    from datetime import datetime
+
+    # Type-specific decay half-lives (days)
+    # Mirrors settings defaults but simplified for helper context
+    type_halflife_days = {
+        "project": 90,
+        "pattern": 60,
+        "reference": 180,
+        "conversation": 14,
+        "episodic": 7,
+    }
+    default_halflife = 90
+
+    halflife = type_halflife_days.get(memory.memory_type, default_halflife)
+    reference_time = memory.last_accessed_at if memory.last_accessed_at else memory.created_at
+    days_since_activity = (datetime.now() - reference_time).total_seconds() / 86400
+
+    # Base exponential decay
+    base_decay = 2 ** (-days_since_activity / halflife)
+
+    # Usage multiplier: frequently-used memories decay slower
+    # Multiplier ranges from 1.0 (unused) to 1.5 (heavily used)
+    access_count = memory.access_count or 0
+    usage_factor = min(1.5, 1.0 + 0.1 * math.log(max(1, access_count + 1)))
+
+    # Apply usage factor only if there's actual decay happening
+    adjusted_decay = base_decay * usage_factor if base_decay < 1.0 else base_decay
+
+    return (memory.trust_score or 1.0) * min(1.0, adjusted_decay)
+
+
 def _get_confidence_label(memory: Memory) -> str:
     """Get confidence label for memory.
 
-    Uses trust score as proxy for confidence.
+    Uses decayed trust score to account for staleness.
+    Stale memories with high raw trust will show lower confidence
+    to signal that they may need re-verification.
 
     Args:
         memory: Memory to get confidence for
@@ -1163,9 +1246,10 @@ def _get_confidence_label(memory: Memory) -> str:
     Returns:
         'high', 'medium', or 'low'
     """
-    if memory.trust_score >= 0.8:
+    decayed_trust = _compute_decayed_trust(memory)
+    if decayed_trust >= 0.8:
         return "high"
-    elif memory.trust_score >= 0.5:
+    elif decayed_trust >= 0.5:
         return "medium"
     return "low"
 
@@ -1205,6 +1289,45 @@ def _format_verified_date(memory: Memory) -> str | None:
     return None
 
 
+def _get_staleness_indicator(memory: Memory) -> str | None:
+    """Get staleness indicator for memory.
+
+    Shows a warning when memory hasn't been verified recently,
+    signaling to the LLM that the information may need re-verification.
+
+    Args:
+        memory: Memory to check staleness for
+
+    Returns:
+        Staleness warning string or None if fresh
+    """
+    from datetime import datetime
+
+    # If never verified (no last_used_at), warn about it
+    if not memory.last_used_at:
+        return "never verified"
+
+    days_since_use = (datetime.now() - memory.last_used_at).days
+
+    # Stale thresholds by memory type
+    # Transient types stale faster, durable types stale slower
+    type_stale_thresholds = {
+        "episodic": 3,
+        "conversation": 7,
+        "pattern": 14,
+        "project": 21,
+        "reference": 30,
+    }
+    default_threshold = 14
+
+    threshold = type_stale_thresholds.get(memory.memory_type, default_threshold)
+
+    if days_since_use >= threshold:
+        return f"stale {days_since_use}d"
+
+    return None
+
+
 def format_memory_concise(
     memory: Memory,
     max_chars: int = 200,
@@ -1235,9 +1358,14 @@ def format_memory_concise(
     metadata_parts = [f"id:{memory.id}"]
 
     if include_metadata:
-        # Confidence
+        # Confidence (uses decayed trust)
         confidence = _get_confidence_label(memory)
         metadata_parts.append(f"confidence: {confidence}")
+
+        # Staleness warning (optional - only if stale)
+        staleness = _get_staleness_indicator(memory)
+        if staleness:
+            metadata_parts.append(staleness)
 
         # Source (optional)
         source = _get_source_label(memory)
