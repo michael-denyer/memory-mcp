@@ -246,9 +246,15 @@ class TrustMixin:
 
             category = row["category"]
 
-            # Check if category is eligible for promotion
-            from memory_mcp.helpers import should_promote_category
+            # Import helper functions for promotion decisions
+            from memory_mcp.helpers import (
+                get_bayesian_helpfulness,
+                get_promotion_salience_threshold,
+                should_auto_pin,
+                should_promote_category,
+            )
 
+            # Check if category is eligible for promotion
             if not should_promote_category(category):
                 log.debug(
                     "Skipped promotion for memory id={} (category={} not eligible)",
@@ -270,8 +276,6 @@ class TrustMixin:
 
             # Category-aware threshold: high-value categories (antipattern, landmine, constraint)
             # have lower thresholds to promote more eagerly
-            from memory_mcp.helpers import get_promotion_salience_threshold, should_auto_pin
-
             effective_threshold = get_promotion_salience_threshold(
                 category, self.settings.salience_promotion_threshold
             )
@@ -297,9 +301,6 @@ class TrustMixin:
             # New memories get benefit of doubt via prior; heavily-retrieved-but-unused fail
             retrieved_count = row["retrieved_count"] or 0
             used_count = row["used_count"] or 0
-
-            from memory_mcp.helpers import get_bayesian_helpfulness
-
             bayesian_helpfulness = get_bayesian_helpfulness(used_count, retrieved_count)
             min_helpfulness = 0.20  # Bayesian threshold (stricter than raw 25% due to prior)
 

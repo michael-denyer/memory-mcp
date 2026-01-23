@@ -4,6 +4,44 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.11] - 2026-01-23
+
+### Added
+
+- **Promotion rejection tracking** - Observability for hot cache promotion decisions
+  - `record_promotion_rejection()` tracks reasons: category_ineligible, threshold_not_met, low_helpfulness
+  - `get_promotion_rejection_summary()` exposes counts in hot cache stats
+  - Helps tune thresholds and understand promotion patterns
+
+- **Exact-match pattern promotion** - Prevent semantic drift in mining
+  - `memory_id` column on mined_patterns (schema v17) links patterns to created memories
+  - `link_pattern_to_memory()` creates the link during pattern storage
+  - Auto-promotion prefers exact match, falls back to semantic search
+
+- **Structured logging for scoring functions** - DEBUG logs for all scoring decisions
+  - `infer_category()`, `compute_importance_score()`, `compute_salience_score()`
+  - `get_bayesian_helpfulness()`, `compute_helpfulness_with_decay()`
+  - Parameter breakdown helps debug promotion/ranking decisions
+
+### Changed
+
+- **Salience weights rebalanced for usage** - Hot cache now access-heavy
+  - Access: 0.25 → 0.40 (usage is key signal)
+  - Recency: 0.25 → 0.30 (recent patterns more relevant)
+  - Trust: 0.25 → 0.15 (still matters but secondary)
+  - Importance: 0.25 → 0.15 (content value secondary to usage)
+
+- **Cold-start threshold lowered** - Faster feedback loop
+  - Bayesian helpfulness gate now triggers at 3 retrievals (was 5)
+  - New memories get benefit of doubt; heavily-retrieved-but-unused blocked
+
+## [0.5.10] - 2026-01-23
+
+### Added
+
+- **Insight extractor** - Extract long-form contextual content from output logs
+  - Pattern matching for architectural decisions, conventions, lessons learned
+
 ## [0.5.9] - 2026-01-23
 
 ### Added
