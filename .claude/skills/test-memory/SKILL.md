@@ -1,12 +1,29 @@
 ---
 name: test-memory
 description: Comprehensive interactive testing of all Memory MCP features
-disable-model-invocation: true
+allowed-tools: "mcp__memory__*"
 ---
 
 # Memory MCP Live Testing Skill
 
 Run `/test-memory` to start a guided testing session. Walk through each phase, execute tests, and track results.
+
+## Prerequisites
+
+Install memory-mcp from the marketplace:
+
+```bash
+# Add the marketplace
+/plugin marketplace add michael-denyer/memory-mcp
+
+# Install the plugin
+/plugin install memory-mcp@michael-denyer/memory-mcp
+```
+
+Or install directly:
+```bash
+/plugin install github:michael-denyer/memory-mcp
+```
 
 ## Phases
 
