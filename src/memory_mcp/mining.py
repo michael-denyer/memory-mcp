@@ -1322,12 +1322,14 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
                         new_memories += 1
                         created_memory_id = memory_id
 
-                        # Track entity patterns for knowledge graph linking
-                        if pattern.pattern_type.value in (
-                            "entity_technology",
-                            "entity_decision",
-                        ):
-                            entity_memories.append((memory_id, pattern.pattern_type.value, log_id))
+                    # Track entity patterns for knowledge graph linking
+                    # Note: Track even when is_new=False (merged with existing) - the memory
+                    # exists and should be linked to other memories from the same output log
+                    if pattern.pattern_type.value in (
+                        "entity_technology",
+                        "entity_decision",
+                    ):
+                        entity_memories.append((memory_id, pattern.pattern_type.value, log_id))
 
                 # Track in mined_patterns for occurrence counting
                 pattern_id = storage.upsert_mined_pattern(

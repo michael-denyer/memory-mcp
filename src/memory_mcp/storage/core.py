@@ -88,7 +88,7 @@ class Storage(
         self._lock = threading.RLock()  # Reentrant lock for nested calls
         # Use settings-aware embedding engine, not global singleton
         self._embedding_engine = EmbeddingEngine(self.settings)
-        self._hot_cache_metrics = HotCacheMetrics()
+        self._hot_cache_metrics: HotCacheMetrics | None = None  # Lazy-loaded from DB
         log.info("Storage initialized with db_path={}", self.settings.db_path)
 
     @property

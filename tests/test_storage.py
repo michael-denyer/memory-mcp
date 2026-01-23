@@ -386,6 +386,37 @@ class TestHotCacheMetrics:
         # because decayed trust penalizes staleness
         assert ids.index(id1) < ids.index(id2)
 
+    def test_metrics_persist_across_restarts(self, tmp_path):
+        """Hot cache metrics should persist across Storage restarts."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            semantic_dedup_enabled=False,
+        )
+
+        # First storage instance - accumulate some metrics
+        stor1 = Storage(settings)
+        memory_id, _ = stor1.store_memory("Test content", MemoryType.PROJECT)
+        stor1.promote_to_hot(memory_id)
+        stor1.record_hot_cache_hit()
+        stor1.record_hot_cache_hit()
+        stor1.record_hot_cache_miss()
+
+        metrics1 = stor1.get_hot_cache_metrics()
+        assert metrics1.promotions == 1
+        assert metrics1.hits == 2
+        assert metrics1.misses == 1
+        stor1.close()
+
+        # Second storage instance - should load persisted metrics
+        stor2 = Storage(settings)
+        metrics2 = stor2.get_hot_cache_metrics()
+
+        assert metrics2.promotions == 1
+        assert metrics2.hits == 2
+        assert metrics2.misses == 1
+        assert metrics2.evictions == 0
+        stor2.close()
+
 
 # ========== Auto-Promotion Tests ==========
 
@@ -487,17 +518,18 @@ class TestAutoPromotion:
         # but at least command should have a higher bar
         stor.close()
 
-    def test_command_category_can_promote_with_high_access(self, tmp_path):
-        """Command category CAN be promoted if it meets the higher threshold.
+    def test_command_category_blocked_from_promotion(self, tmp_path):
+        """Command category is blocked from auto-promotion.
 
-        This tests that the new threshold-based approach allows frequently-used
-        commands (like 'uv run pytest') to reach hot cache.
+        Low-value categories (command, snippet) are blocked entirely because:
+        - Commands are easily discoverable via shell history
+        - Snippets are transient and rarely worth hot cache space
         """
         settings = Settings(
             db_path=tmp_path / "test.db",
             auto_promote=True,
             promotion_threshold=5,  # Low access threshold
-            salience_promotion_threshold=0.5,  # Command needs 1.0 (2x), achievable with high access
+            salience_promotion_threshold=0.5,
         )
         stor = Storage(settings)
 
@@ -507,16 +539,16 @@ class TestAutoPromotion:
         with stor.transaction() as conn:
             conn.execute("UPDATE memories SET category = 'command' WHERE id = ?", (command_id,))
 
-        # Many accesses to boost salience and meet access threshold
+        # Many accesses - would normally trigger promotion
         for _ in range(20):
             stor.update_access(command_id)
 
-        # Should promote via access_count threshold (20 >= 5)
-        # This verifies command is no longer blanket-blocked
-        stor.check_auto_promote(command_id)
-        # Note: Already promoted on first check, so second check returns False
+        # Should NOT promote - command category is ineligible
+        result = stor.check_auto_promote(command_id)
+        assert result is False  # Promotion blocked
+
         memory = stor.get_memory(command_id)
-        assert memory.is_hot is True  # Should be in hot cache now
+        assert memory.is_hot is False  # Should NOT be in hot cache
 
         stor.close()
 
