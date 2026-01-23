@@ -107,6 +107,20 @@ flowchart LR
 - **Session Tracking**: `get_or_create_session`, `get_session_memories`
 - **Pin/Unpin**: `pin_memory`, `unpin_memory`
 
+## CLI Entrypoints
+
+Two separate entrypoints exist - don't confuse them:
+
+```bash
+# MCP server (stdio transport) - used by Claude Code
+memory-mcp
+
+# CLI tools (dashboard, bootstrap, consolidate, etc.)
+memory-mcp-cli dashboard --port 8050
+memory-mcp-cli bootstrap
+memory-mcp-cli consolidate
+```
+
 ## Testing
 
 ```bash
