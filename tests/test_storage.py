@@ -2045,6 +2045,81 @@ class TestAutoLinkOnStore:
 
         storage.close()
 
+    @pytest.mark.integration
+    @pytest.mark.skip(reason="Uses importlib.reload polluting module cache; run separately")
+    def test_auto_link_with_real_embeddings(self, tmp_path):
+        """Integration test: auto-link with real sentence-transformer embeddings.
+
+        Uses real embeddings (not mocked) to verify auto-link works
+        with production-level similarity scores.
+
+        Skip if sentence-transformers not available (e.g., CI without GPU).
+
+        Note: This test bypasses the autouse mock_embedding_engine fixture by
+        importing the real class directly via importlib and manually constructing it.
+        Run separately: pytest -k test_auto_link_with_real_embeddings
+        """
+        pytest.importorskip("sentence_transformers", reason="sentence-transformers required")
+
+        import importlib
+
+        # Reload the module to bypass the mock patches
+        import memory_mcp.embeddings as emb_module
+
+        importlib.reload(emb_module)
+
+        # Create storage with real embeddings
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            auto_link_enabled=True,
+            auto_link_threshold=0.7,  # Production-level threshold
+            auto_link_max=3,
+            semantic_dedup_enabled=False,
+            auto_detect_contradictions=False,
+        )
+
+        # Now we can get the real EmbeddingEngine (takes settings, not model_name)
+        real_embedding_engine_cls = emb_module.EmbeddingEngine
+        real_engine = real_embedding_engine_cls(settings=settings)
+
+        # Also reload storage.core to get unpatched Storage
+        import memory_mcp.storage.core as core_module
+
+        importlib.reload(core_module)
+        real_storage_cls = core_module.Storage
+
+        storage = real_storage_cls(settings)
+        # Replace the engine (in case it still used the old patched class)
+        storage.embedding_engine = real_engine
+
+        try:
+            # Store semantically related memories about Python async
+            mid1, _ = storage.store_memory(
+                "Python asyncio provides async/await concurrency for I/O tasks.",
+                MemoryType.PROJECT,
+            )
+            mid2, _ = storage.store_memory(
+                "Using async/await in Python enables non-blocking programming.",
+                MemoryType.PROJECT,
+            )
+
+            # Verify relationship was auto-created
+            related = storage.get_related(mid2, direction="outgoing")
+            related_ids = [m.id for m, r in related]
+
+            # With real embeddings, these should be similar enough to link
+            assert mid1 in related_ids, (
+                f"Expected memory {mid1} to be auto-linked to {mid2}. "
+                f"Found related: {related_ids}"
+            )
+
+            # Verify the relationship type
+            for m, r in related:
+                if m.id == mid1:
+                    assert r.relation_type == "relates_to"
+        finally:
+            storage.close()
+
 
 class TestAutoContradictionDetection:
     """Tests for automatic contradiction detection when storing memories."""

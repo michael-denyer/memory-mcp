@@ -55,6 +55,12 @@ class RetrievalMixin:
                 )
                 event_ids.append(cursor.lastrowid)
 
+                # Increment retrieved_count for utility score calculation
+                conn.execute(
+                    "UPDATE memories SET retrieved_count = retrieved_count + 1 WHERE id = ?",
+                    (memory_id,),
+                )
+
         log.debug(
             "Recorded {} retrieval events for query_hash={}",
             len(event_ids),

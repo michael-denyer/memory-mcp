@@ -858,6 +858,98 @@ def status(ctx: click.Context) -> None:
         storage.close()
 
 
+@cli.command("hook-check")
+@click.pass_context
+def hook_check(ctx: click.Context) -> None:
+    """Check hook dependencies and database connectivity.
+
+    Validates that the memory-mcp hook can run successfully:
+    - uv command is available
+    - jq command is available
+    - Database is accessible and writable
+    - Hook script exists
+
+    Examples:
+
+        # Check hook dependencies
+        memory-mcp-cli hook-check
+
+        # JSON output for scripting
+        memory-mcp-cli --json hook-check
+    """
+    import shutil
+
+    use_json = ctx.obj["json"]
+    checks: list[tuple[str, bool, str]] = []
+
+    # Check uv
+    uv_path = shutil.which("uv")
+    if uv_path:
+        checks.append(("uv", True, uv_path))
+    else:
+        checks.append(("uv", False, "Not found - install from https://astral.sh/uv"))
+
+    # Check jq
+    jq_path = shutil.which("jq")
+    if jq_path:
+        checks.append(("jq", True, jq_path))
+    else:
+        checks.append(("jq", False, "Not found - install with: brew install jq"))
+
+    # Check database
+    settings = get_settings()
+    try:
+        storage = Storage(settings)
+        stats = storage.get_stats()
+        storage.close()
+        checks.append(("database", True, f"{stats['total_memories']} memories"))
+    except Exception as e:
+        checks.append(("database", False, str(e)))
+
+    # Check hook script
+    hook_script = Path(__file__).parent.parent.parent / "hooks" / "memory-log-response.sh"
+    if hook_script.exists():
+        checks.append(("hook_script", True, str(hook_script)))
+    else:
+        checks.append(("hook_script", False, f"Not found at {hook_script}"))
+
+    # Check log directory
+    log_dir = Path.home() / ".memory-mcp"
+    if log_dir.exists():
+        log_file = log_dir / "hook.log"
+        if log_file.exists():
+            checks.append(("log_file", True, str(log_file)))
+        else:
+            checks.append(("log_file", True, f"{log_dir} (no logs yet)"))
+    else:
+        checks.append(("log_file", True, "Will be created on first run"))
+
+    all_ok = all(c[1] for c in checks)
+
+    if use_json:
+        click.echo(
+            json.dumps(
+                {
+                    "success": all_ok,
+                    "checks": [
+                        {"name": name, "ok": ok, "message": msg} for name, ok, msg in checks
+                    ],
+                }
+            )
+        )
+    else:
+        console.print("[bold]Hook Dependency Check[/bold]")
+        for name, ok, msg in checks:
+            status = "[green]✓[/green]" if ok else "[red]✗[/red]"
+            console.print(f"  {status} {name}: {msg}")
+
+        if all_ok:
+            console.print("\n[green]All checks passed![/green]")
+        else:
+            console.print("\n[red]Some checks failed. Fix the issues above.[/red]")
+            raise SystemExit(1)
+
+
 @cli.command("recategorize")
 @click.option(
     "--dry-run",

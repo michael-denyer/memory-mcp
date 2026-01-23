@@ -251,10 +251,11 @@ class Settings(BaseSettings):
         default=True, description="Track which recalled memories were actually used"
     )
     retrieval_auto_mark_used: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "Auto-mark recalled memories as used. When True, memories returned by recall() "
-            "are automatically marked as used since the LLM explicitly requested them."
+            "Auto-mark recalled memories as used. When False (default), use "
+            "mark_memory_used() to explicitly track which memories were actually helpful. "
+            "Set True to assume all recalled memories are used."
         ),
     )
 

@@ -30,6 +30,16 @@ set -e
 # Ensure common user-level bin paths are available when run from VS Code
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
+# Setup logging directory and file
+LOG_DIR="$HOME/.memory-mcp"
+mkdir -p "$LOG_DIR"
+HOOK_LOG="$LOG_DIR/hook.log"
+
+# Log function with timestamp
+log_msg() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$HOOK_LOG"
+}
+
 # Check for required dependencies
 if ! command -v jq &> /dev/null; then
     echo "Error: jq is required but not installed." >&2
@@ -136,22 +146,36 @@ fi
 
 # Log the response using memory-mcp-cli
 # Use subshell for uv to avoid changing cwd, pass project-id explicitly
+log_msg "Processing response (${#LAST_RESPONSE} chars) project=${PROJECT_PATH:-none} session=${SESSION_ID:-none}"
+
+LOG_OUTPUT_RESULT=0
 if command -v uv &> /dev/null; then
-    echo "$LAST_RESPONSE" | (cd "$MEMORY_MCP_DIR" && uv run memory-mcp-cli log-output $CLI_ARGS) 2>/dev/null || true
+    if ! echo "$LAST_RESPONSE" | (cd "$MEMORY_MCP_DIR" && uv run memory-mcp-cli log-output $CLI_ARGS) 2>>"$HOOK_LOG"; then
+        LOG_OUTPUT_RESULT=$?
+        log_msg "ERROR: log-output failed with exit code $LOG_OUTPUT_RESULT"
+    fi
 elif command -v memory-mcp-cli &> /dev/null; then
-    echo "$LAST_RESPONSE" | memory-mcp-cli log-output $CLI_ARGS 2>/dev/null || true
+    if ! echo "$LAST_RESPONSE" | memory-mcp-cli log-output $CLI_ARGS 2>>"$HOOK_LOG"; then
+        LOG_OUTPUT_RESULT=$?
+        log_msg "ERROR: log-output failed with exit code $LOG_OUTPUT_RESULT"
+    fi
 elif [ -x "$HOME/.local/bin/memory-mcp-cli" ]; then
-    echo "$LAST_RESPONSE" | "$HOME/.local/bin/memory-mcp-cli" log-output $CLI_ARGS 2>/dev/null || true
+    if ! echo "$LAST_RESPONSE" | "$HOME/.local/bin/memory-mcp-cli" log-output $CLI_ARGS 2>>"$HOOK_LOG"; then
+        LOG_OUTPUT_RESULT=$?
+        log_msg "ERROR: log-output failed with exit code $LOG_OUTPUT_RESULT"
+    fi
 else
+    log_msg "ERROR: No memory-mcp-cli found (uv, memory-mcp-cli, ~/.local/bin)"
     exit 0
 fi
 
-# Run mining to extract and store patterns as memories
-LOG_FILE="${MEMORY_MCP_DIR}/.mining-hook.log"
+# Run mining to extract and store patterns as memories (non-critical, keep || true)
 if command -v uv &> /dev/null; then
-    (cd "$MEMORY_MCP_DIR" && uv run memory-mcp-cli run-mining --hours 1 $CLI_ARGS) >> "$LOG_FILE" 2>&1
+    (cd "$MEMORY_MCP_DIR" && uv run memory-mcp-cli run-mining --hours 1 $CLI_ARGS) >> "$HOOK_LOG" 2>&1 || true
 elif command -v memory-mcp-cli &> /dev/null; then
-    memory-mcp-cli run-mining --hours 1 $CLI_ARGS >> "$LOG_FILE" 2>&1
+    memory-mcp-cli run-mining --hours 1 $CLI_ARGS >> "$HOOK_LOG" 2>&1 || true
 elif [ -x "$HOME/.local/bin/memory-mcp-cli" ]; then
-    "$HOME/.local/bin/memory-mcp-cli" run-mining --hours 1 $CLI_ARGS >> "$LOG_FILE" 2>&1
+    "$HOME/.local/bin/memory-mcp-cli" run-mining --hours 1 $CLI_ARGS >> "$HOOK_LOG" 2>&1 || true
 fi
+
+log_msg "Hook completed successfully"
