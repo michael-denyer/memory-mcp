@@ -56,3 +56,5 @@ Thumbs.db
 
 # Large files (PDFs, etc.)
 *.pdf
+.mining-hook.log
+.mining-hook.log
