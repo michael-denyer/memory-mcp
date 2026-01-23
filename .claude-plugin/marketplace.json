@@ -1,0 +1,50 @@
+{
+  "name": "memory-mcp-marketplace",
+  "owner": {
+    "name": "Michael Denyer",
+    "url": "https://github.com/michael-denyer"
+  },
+  "plugins": [
+    {
+      "name": "memory-mcp",
+      "source": ".",
+      "description": "Persistent memory for Claude Code with hot cache instant recall and semantic search. Give your AI assistant a second brain.",
+      "version": "0.6.0",
+      "author": {
+        "name": "Michael Denyer"
+      },
+      "homepage": "https://github.com/michael-denyer/memory-mcp",
+      "repository": "https://github.com/michael-denyer/memory-mcp",
+      "license": "MIT",
+      "keywords": [
+        "memory",
+        "mcp",
+        "hot-cache",
+        "semantic-search",
+        "knowledge-graph",
+        "pattern-mining"
+      ]
+    },
+    {
+      "name": "beads",
+      "source": {
+        "source": "github",
+        "repo": "michael-denyer/beads"
+      },
+      "description": "Git-backed issue tracker for multi-session work with dependencies and persistent memory across conversation compaction.",
+      "author": {
+        "name": "Michael Denyer"
+      },
+      "homepage": "https://github.com/michael-denyer/beads",
+      "repository": "https://github.com/michael-denyer/beads",
+      "license": "MIT",
+      "keywords": [
+        "issue-tracker",
+        "git",
+        "dependencies",
+        "task-management",
+        "multi-session"
+      ]
+    }
+  ]
+}
