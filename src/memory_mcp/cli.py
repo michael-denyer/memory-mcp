@@ -956,6 +956,189 @@ def hook_check(ctx: click.Context) -> None:
             raise SystemExit(1)
 
 
+@cli.command("import-beads")
+@click.option(
+    "-f",
+    "--file",
+    "filepath",
+    type=click.Path(exists=True),
+    help="Read from JSONL file (default: pipe from bd export)",
+)
+@click.option(
+    "--include-closed",
+    is_flag=True,
+    help="Include closed issues (default: open only)",
+)
+@click.option(
+    "--promote",
+    is_flag=True,
+    help="Promote imported memories to hot cache",
+)
+@click.option(
+    "-p",
+    "--project-id",
+    help="Project ID override (default: derived from cwd)",
+)
+@click.pass_context
+def import_beads(
+    ctx: click.Context,
+    filepath: str | None,
+    include_closed: bool,
+    promote: bool,
+    project_id: str | None,
+) -> None:
+    """Import beads issues as memories.
+
+    Reads JSONL from stdin (pipe from bd export) or a file.
+
+    Examples:
+
+        # Import open issues from current project
+        bd export --status open | memory-mcp-cli import-beads
+
+        # Import all issues including closed
+        bd export | memory-mcp-cli import-beads --include-closed
+
+        # Import from file and promote to hot cache
+        memory-mcp-cli import-beads -f issues.jsonl --promote
+
+        # JSON output for scripting
+        bd export | memory-mcp-cli --json import-beads
+    """
+    import subprocess
+
+    use_json = ctx.obj["json"]
+    settings = get_settings()
+
+    # Read content from file or stdin
+    if filepath:
+        content = Path(filepath).read_text(encoding="utf-8")
+    else:
+        # Try to run bd export if stdin is empty/tty
+        if sys.stdin.isatty():
+            # No piped input, run bd export directly
+            status_filter = [] if include_closed else ["--status", "open"]
+            try:
+                proc = subprocess.run(
+                    ["bd", "export", *status_filter],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                content = proc.stdout
+            except FileNotFoundError:
+                click.echo(
+                    "Error: bd command not found. Install beads or pipe JSONL to stdin.", err=True
+                )
+                raise SystemExit(1)
+            except subprocess.TimeoutExpired:
+                click.echo("Error: bd export timed out", err=True)
+                raise SystemExit(1)
+        else:
+            content = sys.stdin.read()
+
+    if not content.strip():
+        click.echo("No issues to import", err=True)
+        raise SystemExit(1)
+
+    # Parse JSONL
+    issues = []
+    for line in content.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            issue = json.loads(line)
+            # Filter closed if not included
+            if not include_closed and issue.get("status") == "closed":
+                continue
+            issues.append(issue)
+        except json.JSONDecodeError:
+            continue
+
+    if not issues:
+        if use_json:
+            click.echo(json.dumps({"success": True, "imported": 0, "skipped": 0}))
+        else:
+            click.echo("No issues to import")
+        return
+
+    # Get project_id if not provided
+    if project_id is None and settings.project_awareness_enabled:
+        project_id = get_current_project_id()
+
+    storage = Storage(settings)
+    # Create session for this import
+    session_id = str(uuid.uuid4())
+    storage.create_or_get_session(session_id, topic="beads import")
+
+    created, skipped, errors = 0, 0, []
+
+    try:
+        for issue in issues:
+            # Build memory content from issue
+            issue_id = issue.get("id", "")
+            title = issue.get("title", "")
+            description = issue.get("description", "")
+            status = issue.get("status", "open")
+            priority = issue.get("priority", 2)
+            issue_type = issue.get("issue_type", "task")
+            notes = issue.get("notes", "")
+            design = issue.get("design", "")
+
+            # Format as structured content
+            parts = [f"# {title}", f"**Issue**: {issue_id} ({issue_type}, P{priority}, {status})"]
+            if description:
+                parts.append(description)
+            if notes:
+                parts.append(f"**Notes**: {notes}")
+            if design:
+                parts.append(f"**Design**: {design}")
+
+            content = "\n\n".join(parts)
+
+            if len(content) > settings.max_content_length:
+                content = content[: settings.max_content_length]
+                errors.append(f"Truncated {issue_id}")
+
+            # Store as project memory with beads tag
+            memory_id, is_new = storage.store_memory(
+                content=content,
+                memory_type=MemoryType.PROJECT,
+                source=MemorySource.MANUAL,
+                project_id=project_id,
+                session_id=session_id,
+                tags=["beads", issue_type, f"p{priority}"],
+            )
+
+            if is_new:
+                created += 1
+                if promote:
+                    storage.promote_to_hot(memory_id)
+            else:
+                skipped += 1
+
+    finally:
+        storage.close()
+
+    result = {
+        "imported": created,
+        "skipped": skipped,
+        "errors": errors,
+        "promoted": created if promote else 0,
+    }
+
+    if use_json:
+        click.echo(json.dumps({"success": True, **result}))
+    else:
+        console.print("[bold]Beads Import Results[/bold]")
+        console.print(f"  Imported: [green]{created}[/green] memories")
+        console.print(f"  Skipped: [yellow]{skipped}[/yellow] duplicates")
+        if promote:
+            console.print(f"  Promoted: [magenta]{created}[/magenta] to hot cache")
+        if errors:
+            console.print(f"  [dim]Warnings: {len(errors)}[/dim]")
+
+
 @cli.command("recategorize")
 @click.option(
     "--dry-run",

@@ -97,31 +97,14 @@ The CLI (`memory-mcp-cli`) and MCP tools power the plugin internally.
 
 ## Key Features by Version
 
-### v0.5.x (Current Architecture)
-- **Internal refactoring**: Split large modules into focused packages
-  - `storage/` with 16 mixin modules (CRUD, search, hot cache, trust, etc.)
-  - `server/` with 12 tool modules organized by domain
-  - No API changes - all imports remain backwards compatible
-
-### v0.7.0 (Current)
+### v0.7.x (Current)
 - **Renamed resources for clarity**: `working-set` → `hot-cache`, `hot-cache` → `promoted-memories`
 - **Hot cache is primary injection**: Session-aware context (~10 items) auto-injected
 - **Promoted memories backing store**: ~20 items, disabled by default
+- **Beads integration**: `import-beads` CLI command to seed memories from beads issues
+- **Dynamic versioning**: Version pulled from pyproject.toml via importlib.metadata
 
-### v0.3.0
-- **Salience Scoring**: Unified metric for promotion/eviction decisions
-- **Multi-Hop Recall**: `expand_relations` parameter for associative memory
-- **Hot Cache Resource**: `memory://hot-cache` for session-aware context
-- **Episodic Memory**: `end_session()` for session consolidation
-- **Consolidation CLI**: `consolidate` command for memory deduplication
-- **Fine-Grained Trust**: Contextual reasons and audit trail
-
-### v0.2.x
-- **Bootstrap**: `bootstrap_project` tool and `bootstrap` CLI command
-- **Knowledge Graph**: `link_memories`, `unlink_memories`, `get_related_memories`
-- **Trust Management**: `strengthen_trust`, `weaken_trust`
-- **Session Tracking**: `get_or_create_session`, `get_session_memories`
-- **Pin/Unpin**: `pin_memory`, `unpin_memory`
+See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 ## CLI Entrypoints
 
@@ -135,6 +118,7 @@ memory-mcp
 memory-mcp-cli dashboard --port 8050
 memory-mcp-cli bootstrap
 memory-mcp-cli consolidate
+memory-mcp-cli import-beads      # Import beads issues as memories
 ```
 
 ## Testing
@@ -172,3 +156,18 @@ uv run ruff format .          # Format
 
 - **vec0 doesn't support INSERT OR REPLACE**: Always DELETE before INSERT for vector operations
 - **Two CLI entrypoints**: `memory-mcp` (server) vs `memory-mcp-cli` (tools) - don't confuse them
+- **Package name vs import name**: PyPI package is `hot-memory-mcp`, import as `memory_mcp`
+- **Version in __init__.py**: Uses `importlib.metadata` to read from pyproject.toml - don't hardcode
+
+## Release Process
+
+Use `/release <version>` which runs the standard pre-release checklist.
+
+**Project-specific step**: Run `./scripts/bump-version.sh <version>` first to update:
+- `pyproject.toml` (source of truth)
+- `server.json` (MCP registry manifest)
+
+The publish workflow (triggered by pushing a tag) automatically:
+- Publishes to PyPI
+- Updates MCP Registry
+- Updates Homebrew tap

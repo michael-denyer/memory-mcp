@@ -4,6 +4,25 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.2] - 2026-01-23
+
+### Added
+
+- **Beads integration** - New `memory-mcp-cli import-beads` command imports beads issues as memories.
+  Auto-runs `bd export` if available, or accepts piped JSONL input.
+
+- **Version bump script** - `scripts/bump-version.sh` updates version in both `pyproject.toml` and
+  `server.json` to keep them in sync.
+
+### Changed
+
+- **Dynamic versioning** - `__version__` now reads from package metadata via `importlib.metadata`
+  instead of hardcoded string. Single source of truth in `pyproject.toml`.
+
+### Fixed
+
+- **Version sync** - `server.json` now matches `pyproject.toml` version (was stuck at 0.7.0).
+
 ## [0.7.1] - 2026-01-23
 
 ### Fixed
