@@ -207,6 +207,28 @@ When installed as a Claude Code plugin, these slash commands are available:
 | `/memory-mcp:maintenance` | Run database maintenance |
 | `/memory-mcp:test-all` | Comprehensive interactive testing suite |
 
+## Memory Analyst Agent
+
+The plugin includes a specialized agent for analyzing memory system health. Invoke it by asking Claude:
+
+```
+"Analyze my memory system health"
+"Run the memory analyst"
+"Check memory health"
+```
+
+The agent runs a 5-phase workflow:
+
+| Phase | What it does |
+|-------|--------------|
+| **1. System Overview** | Gathers stats, db info, hot cache status |
+| **2. Quality Assessment** | Checks metrics, retrieval quality, knowledge graph health |
+| **3. Issue Detection** | Finds contradictions, consolidation opportunities, audit issues |
+| **4. Session Analysis** | Reviews recent sessions and their memories |
+| **5. Recommendations** | Provides prioritized actions (critical/recommended/optional) |
+
+Output is a structured health report with a health score (Good/Fair/Needs Attention) and specific, actionable recommendations.
+
 ---
 
 # Reference
