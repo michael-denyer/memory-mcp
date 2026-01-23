@@ -48,8 +48,7 @@ Thumbs.db
 # Project-specific
 .beads/
 
-# Claude local settings
-.claude/settings.json
+# Claude local settings (personal, not committed)
 .claude/settings.local.json
 .claude/skills/release/
 .claude/skills/publish/
