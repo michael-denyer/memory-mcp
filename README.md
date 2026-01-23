@@ -151,6 +151,16 @@ See [Reference](docs/REFERENCE.md#slash-commands) for all 14 commands.
 
 See [Reference](docs/REFERENCE.md#tools) for full API.
 
+### Dashboard
+
+```bash
+memory-mcp-cli dashboard    # Opens at http://localhost:8765
+```
+
+![Dashboard](docs/images/dashboard.png)
+
+Browse memories, hot cache, mining candidates, sessions, and knowledge graph.
+
 ## Documentation
 
 | Document | Description |
