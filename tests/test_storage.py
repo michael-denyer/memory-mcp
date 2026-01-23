@@ -2108,10 +2108,9 @@ class TestAutoLinkOnStore:
             related_ids = [m.id for m, r in related]
 
             # With real embeddings, these should be similar enough to link
-            assert mid1 in related_ids, (
-                f"Expected memory {mid1} to be auto-linked to {mid2}. "
-                f"Found related: {related_ids}"
-            )
+            assert (
+                mid1 in related_ids
+            ), f"Expected memory {mid1} to be auto-linked to {mid2}. Found related: {related_ids}"
 
             # Verify the relationship type
             for m, r in related:
