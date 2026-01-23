@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from memory_mcp.logging import get_logger
+from memory_mcp.redaction import redact_secrets
 
 if TYPE_CHECKING:
     pass
@@ -28,14 +29,22 @@ class OutputLoggingMixin:
 
         Raises:
             ValidationError: If content is empty or exceeds max length.
+
+        Note:
+            Secrets are redacted BEFORE storage to prevent persistence.
+            This ensures secrets never appear in dashboard, recall, or exports.
         """
         # Defense-in-depth validation
         self._validate_content(content, "output content")
 
+        # Redact secrets BEFORE storage to prevent persistence
+        # This is critical - secrets should never be stored in output_log
+        redacted_content = redact_secrets(content)
+
         with self.transaction() as conn:
             cursor = conn.execute(
                 "INSERT INTO output_log (content, session_id, project_id) VALUES (?, ?, ?)",
-                (content, session_id, project_id),
+                (redacted_content, session_id, project_id),
             )
 
             # Update session log count if session_id provided (upsert creates if needed)
@@ -59,19 +68,24 @@ class OutputLoggingMixin:
 
     def get_recent_outputs(
         self, hours: int = 24, project_id: str | None = None
-    ) -> list[tuple[int, str, datetime]]:
+    ) -> list[tuple[int, str, datetime, str | None]]:
         """Get recent output logs, optionally filtered by project.
 
         Args:
             hours: How many hours back to look.
             project_id: If provided, only return logs from this project.
                         If None, returns all logs (backwards compatible).
+
+        Returns:
+            List of tuples: (log_id, content, timestamp, project_id).
+            The project_id is preserved for each log so mining can use the
+            source project rather than the current session's project.
         """
         with self._connection() as conn:
             if project_id:
                 rows = conn.execute(
                     """
-                    SELECT id, content, timestamp FROM output_log
+                    SELECT id, content, timestamp, project_id FROM output_log
                     WHERE timestamp > datetime('now', ?)
                       AND project_id = ?
                     ORDER BY timestamp DESC
@@ -81,7 +95,7 @@ class OutputLoggingMixin:
             else:
                 rows = conn.execute(
                     """
-                    SELECT id, content, timestamp FROM output_log
+                    SELECT id, content, timestamp, project_id FROM output_log
                     WHERE timestamp > datetime('now', ?)
                     ORDER BY timestamp DESC
                     """,
@@ -89,6 +103,11 @@ class OutputLoggingMixin:
                 ).fetchall()
 
             return [
-                (row["id"], row["content"], datetime.fromisoformat(row["timestamp"]))
+                (
+                    row["id"],
+                    row["content"],
+                    datetime.fromisoformat(row["timestamp"]),
+                    row["project_id"],
+                )
                 for row in rows
             ]

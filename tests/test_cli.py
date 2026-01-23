@@ -92,7 +92,7 @@ class TestLogOutputCommand:
             outputs = storage.get_recent_outputs(hours=1, project_id=test_project_id)
             assert len(outputs) >= 1
             # The output should be found when filtering by project_id
-            contents = [content for _, content, _ in outputs]
+            contents = [content for _, content, _, _ in outputs]
             assert any("Test with project_id" in c for c in contents)
         finally:
             storage.close()
