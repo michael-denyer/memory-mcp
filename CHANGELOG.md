@@ -4,6 +4,25 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.2] - 2026-01-23
+
+### Added
+
+- **PreCompact hook** - Automatically save session memories before conversation compaction
+  - New `memory-mcp-cli pre-compact` CLI command
+  - Promotes episodic memories to long-term storage before context is lost
+  - Silent operation - never blocks compaction
+
+- **Memory Analyst agent** - Specialized agent for memory health analysis
+  - 5-phase analysis workflow (overview, quality, issues, sessions, recommendations)
+  - Detects contradictions, consolidation opportunities, stale memories
+  - Provides prioritized recommendations (critical/recommended/optional)
+  - Use via Task tool with `subagent_type: "memory-analyst"`
+
+### Fixed
+
+- **CI linting** - Formatted 3 files that were failing ruff format check
+
 ## [0.6.1] - 2026-01-23
 
 ### Added

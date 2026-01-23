@@ -362,9 +362,9 @@ async def api_run_mining(request: Request) -> HTMLResponse:
         <div class="bg-green-500/10 border border-green-500/30 rounded-lg p-4 text-green-400">
             <p class="font-medium">Mining completed</p>
             <p class="text-sm mt-1">
-                Processed {result['outputs_processed']} outputs,
-                found {result['patterns_found']} patterns,
-                created {result['new_memories']} new memories
+                Processed {result["outputs_processed"]} outputs,
+                found {result["patterns_found"]} patterns,
+                created {result["new_memories"]} new memories
             </p>
         </div>
         """

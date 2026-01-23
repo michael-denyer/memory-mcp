@@ -194,6 +194,80 @@ def log_response(ctx: click.Context) -> None:
         storage.close()
 
 
+@cli.command("pre-compact")
+@click.pass_context
+def pre_compact(ctx: click.Context) -> None:
+    """Consolidate session memories before conversation compaction.
+
+    Called by Claude Code's PreCompact hook. Reads hook input from stdin,
+    extracts session info, and runs end_session() to promote top episodic
+    memories to long-term storage.
+
+    Designed to be quiet - exits 0 even on errors to not block compaction.
+    """
+    settings = get_settings()
+    use_json = ctx.obj["json"]
+
+    # Read hook input from stdin
+    hook_input = sys.stdin.read().strip()
+    if not hook_input:
+        if use_json:
+            click.echo(json.dumps({"success": True, "action": "skipped", "reason": "no_input"}))
+        return
+
+    try:
+        data = json.loads(hook_input)
+    except json.JSONDecodeError:
+        if use_json:
+            click.echo(json.dumps({"success": True, "action": "skipped", "reason": "invalid_json"}))
+        return
+
+    # Extract session_id from various possible field names
+    session_id = (
+        data.get("session_id") or data.get("sessionId") or data.get("session", {}).get("id")
+    )
+
+    if not session_id:
+        if use_json:
+            click.echo(
+                json.dumps({"success": True, "action": "skipped", "reason": "no_session_id"})
+            )
+        return
+
+    storage = Storage(settings)
+    try:
+        # Run end_session to promote episodic memories to long-term storage
+        result = storage.end_session(
+            session_id=session_id,
+            promote_top=True,
+            promote_type=MemoryType.PROJECT,
+        )
+
+        if use_json:
+            click.echo(
+                json.dumps(
+                    {
+                        "success": True,
+                        "action": "consolidated",
+                        "session_id": session_id,
+                        "promoted_count": result.get("promoted_count", 0),
+                        "top_memories": result.get("top_memories", []),
+                    }
+                )
+            )
+        else:
+            promoted = result.get("promoted_count", 0)
+            if promoted > 0:
+                click.echo(f"Pre-compact: promoted {promoted} memories from session")
+    except Exception as e:
+        # Silent failure for hooks - don't block compaction
+        if use_json:
+            click.echo(json.dumps({"success": False, "error": str(e)}))
+        # Always exit 0 to not block compaction
+    finally:
+        storage.close()
+
+
 @cli.command("run-mining")
 @click.option("--hours", default=24, help="Hours of logs to process")
 @click.pass_context
@@ -910,8 +984,7 @@ def recategorize(
 
             if dry_run:
                 console.print(
-                    "\n[yellow]Dry run - no changes made. "
-                    "Run without --dry-run to apply.[/yellow]"
+                    "\n[yellow]Dry run - no changes made. Run without --dry-run to apply.[/yellow]"
                 )
 
     except Exception as e:

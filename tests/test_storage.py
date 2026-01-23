@@ -3847,7 +3847,7 @@ class TestMiningIntegration:
         from memory_mcp.mining import run_mining
 
         mining_storage.log_output(
-            "Build command: make build && make test\n" "Deploy with: kubectl apply -f deploy.yaml"
+            "Build command: make build && make test\nDeploy with: kubectl apply -f deploy.yaml"
         )
 
         run_mining(mining_storage, hours=1)

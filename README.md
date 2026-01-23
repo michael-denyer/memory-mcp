@@ -81,6 +81,8 @@ The plugin gives you:
 - Auto-configured MCP server (no manual `~/.claude.json` editing)
 - SessionStart hook for auto-bootstrap
 - Stop hook for pattern mining
+- PreCompact hook to save memories before conversation compaction
+- Memory Analyst agent for health analysis
 - 14 slash commands (`/memory-mcp:remember`, `/memory-mcp:recall`, etc.)
 
 ### Option 2: Manual Install (No Plugin)
