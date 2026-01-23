@@ -16,6 +16,7 @@ from memory_mcp.models import (
     MemorySource,
     MemoryType,
     PromotionSource,
+    RelationType,
 )
 
 log = get_logger("storage.memory_crud")
@@ -111,6 +112,173 @@ class MemoryCrudMixin:
         if similarity >= threshold:
             return row["id"], similarity
         return None
+
+    def _find_related_memories(
+        self,
+        conn: sqlite3.Connection,
+        embedding: np.ndarray,
+        memory_id: int,
+        threshold: float,
+        max_results: int,
+        project_id: str | None = None,
+    ) -> list[tuple[int, float]]:
+        """Find semantically related memories for auto-linking.
+
+        Args:
+            conn: Database connection
+            embedding: Embedding of the new memory
+            memory_id: ID of the new memory (to exclude from results)
+            threshold: Minimum similarity to consider related
+            max_results: Maximum number of related memories to return
+            project_id: Project ID for project-scoped search
+
+        Returns:
+            List of (memory_id, similarity) tuples, sorted by similarity desc.
+        """
+        # Project-scoped search when enabled
+        if self.settings.project_awareness_enabled and project_id:
+            rows = conn.execute(
+                """
+                SELECT m.id, vec_distance_cosine(v.embedding, ?) as distance
+                FROM memory_vectors v
+                JOIN memories m ON m.id = v.rowid
+                WHERE m.id != ? AND m.project_id = ?
+                ORDER BY distance ASC
+                LIMIT ?
+                """,
+                (embedding.tobytes(), memory_id, project_id, max_results * 2),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT m.id, vec_distance_cosine(v.embedding, ?) as distance
+                FROM memory_vectors v
+                JOIN memories m ON m.id = v.rowid
+                WHERE m.id != ?
+                ORDER BY distance ASC
+                LIMIT ?
+                """,
+                (embedding.tobytes(), memory_id, max_results * 2),
+            ).fetchall()
+
+        # Filter by threshold and limit
+        results = []
+        for row in rows:
+            similarity = 1 - row["distance"]
+            if similarity >= threshold:
+                results.append((row["id"], similarity))
+                if len(results) >= max_results:
+                    break
+
+        return results
+
+    def _auto_link_related(
+        self,
+        conn: sqlite3.Connection,
+        memory_id: int,
+        embedding: np.ndarray,
+        project_id: str | None = None,
+    ) -> int:
+        """Auto-link a new memory to semantically related existing memories.
+
+        Creates 'relates_to' relationships to similar memories. This builds
+        the knowledge graph automatically without user intervention.
+
+        Returns:
+            Number of links created.
+        """
+        if not self.settings.auto_link_enabled:
+            return 0
+
+        related = self._find_related_memories(
+            conn,
+            embedding,
+            memory_id,
+            self.settings.auto_link_threshold,
+            self.settings.auto_link_max,
+            project_id,
+        )
+
+        links_created = 0
+        for related_id, similarity in related:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO memory_relationships
+                        (from_memory_id, to_memory_id, relation_type)
+                    VALUES (?, ?, ?)
+                    """,
+                    (memory_id, related_id, RelationType.RELATES_TO.value),
+                )
+                links_created += 1
+                log.debug(
+                    "Auto-linked {} -> {} (similarity={:.2f})",
+                    memory_id,
+                    related_id,
+                    similarity,
+                )
+            except sqlite3.IntegrityError:
+                # Already linked
+                pass
+
+        if links_created > 0:
+            log.info("Auto-linked memory {} to {} related memories", memory_id, links_created)
+
+        return links_created
+
+    def _detect_contradictions(
+        self,
+        conn: sqlite3.Connection,
+        memory_id: int,
+        embedding: np.ndarray,
+        project_id: str | None = None,
+    ) -> list[tuple[int, float]]:
+        """Detect potential contradictions with existing memories.
+
+        Finds memories that are very similar (same topic) which may contain
+        conflicting information. These are flagged for user review.
+
+        Returns:
+            List of (memory_id, similarity) tuples for potential contradictions.
+        """
+        if not self.settings.auto_detect_contradictions:
+            return []
+
+        # Use higher threshold than auto_link - same topic = potential conflict
+        threshold = self.settings.contradiction_threshold
+
+        # Find very similar memories (same topic area)
+        candidates = self._find_related_memories(
+            conn, embedding, memory_id, threshold, max_results=5, project_id=project_id
+        )
+
+        if candidates:
+            log.info(
+                "Detected {} potential contradiction(s) for memory {}",
+                len(candidates),
+                memory_id,
+            )
+            # Mark as contradictions in the relationship table
+            for candidate_id, similarity in candidates:
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO memory_relationships
+                            (from_memory_id, to_memory_id, relation_type)
+                        VALUES (?, ?, ?)
+                        """,
+                        (memory_id, candidate_id, RelationType.CONTRADICTS.value),
+                    )
+                    log.debug(
+                        "Marked potential contradiction: {} <-> {} (similarity={:.2f})",
+                        memory_id,
+                        candidate_id,
+                        similarity,
+                    )
+                except sqlite3.IntegrityError:
+                    pass
+
+        return candidates
 
     def _get_memory_by_id(
         self,
@@ -395,12 +563,20 @@ class MemoryCrudMixin:
                     [(memory_id, tag) for tag in tags],
                 )
 
+            # Auto-link to related memories (builds knowledge graph automatically)
+            links_created = self._auto_link_related(conn, memory_id, embedding, project_id)
+
+            # Detect potential contradictions
+            contradictions = self._detect_contradictions(conn, memory_id, embedding, project_id)
+
             log.info(
-                "Stored new memory id={} type={} trust={} project={}",
+                "Stored new memory id={} type={} trust={} project={} links={} contradictions={}",
                 memory_id,
                 memory_type.value,
                 trust_score,
                 project_id,
+                links_created,
+                len(contradictions),
             )
 
             return memory_id, True

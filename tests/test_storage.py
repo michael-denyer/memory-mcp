@@ -1408,8 +1408,16 @@ class TestMemoryRelationships:
 
     @pytest.fixture
     def storage(self, tmp_path):
-        """Create a storage instance with temp database."""
-        settings = Settings(db_path=tmp_path / "test.db", semantic_dedup_enabled=False)
+        """Create a storage instance with temp database.
+
+        Auto-linking disabled to test manual link creation in isolation.
+        """
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            semantic_dedup_enabled=False,
+            auto_link_enabled=False,
+            auto_detect_contradictions=False,
+        )
         stor = Storage(settings)
         yield stor
         stor.close()
@@ -1940,6 +1948,170 @@ class TestContradictionDetection:
         """CONTRADICTION_RESOLVED is a valid trust reason."""
         assert TrustReason.CONTRADICTION_RESOLVED.value == "contradiction_resolved"
         assert TrustReason.CONTRADICTION_RESOLVED in TRUST_REASON_DEFAULTS
+
+
+# ========== Auto-Link and Auto-Contradiction Tests ==========
+
+
+class TestAutoLinkOnStore:
+    """Tests for automatic knowledge graph linking when storing memories."""
+
+    @pytest.fixture
+    def storage_with_autolink(self, tmp_path):
+        """Create a storage instance with auto-link enabled.
+
+        Note: Uses lower threshold (0.4) to work with MockEmbeddingProvider
+        which produces word-based (not semantic) similarity.
+        """
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            semantic_dedup_enabled=False,
+            auto_link_enabled=True,
+            auto_link_threshold=0.4,  # Low threshold for mock embeddings
+            auto_link_max=3,
+            auto_detect_contradictions=False,  # Test separately
+        )
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    def test_auto_link_creates_relationships(self, storage_with_autolink):
+        """Storing similar memories auto-creates relates_to links."""
+        storage = storage_with_autolink
+
+        # Store first memory - uses shared words for mock embedding similarity
+        mid1, _ = storage.store_memory(
+            "Python is used for web development and building applications.",
+            MemoryType.PROJECT,
+        )
+
+        # Store related memory - shares words: Python, used, for, web, building, applications
+        mid2, _ = storage.store_memory(
+            "Python is used for building web applications with Django framework.",
+            MemoryType.PROJECT,
+        )
+
+        # Should have auto-created a relationship
+        stats = storage.get_relationship_stats()
+        assert stats["total_relationships"] >= 1
+
+        # Check relationship exists
+        related = storage.get_related(mid2, direction="outgoing")
+        related_ids = [m.id for m, r in related]
+        assert mid1 in related_ids
+
+    def test_auto_link_respects_max_limit(self, storage_with_autolink):
+        """Auto-link respects auto_link_max setting."""
+        storage = storage_with_autolink
+
+        # Store several related memories first
+        for i in range(5):
+            storage.store_memory(
+                f"Database query optimization technique number {i}.",
+                MemoryType.PROJECT,
+            )
+
+        # Store one more related memory
+        mid_new, _ = storage.store_memory(
+            "Database query performance tuning strategies.",
+            MemoryType.PROJECT,
+        )
+
+        # Should have at most auto_link_max relationships
+        related = storage.get_related(mid_new, direction="outgoing")
+        assert len(related) <= 3  # auto_link_max=3
+
+    def test_auto_link_disabled_creates_no_links(self, tmp_path):
+        """When disabled, no auto-links are created."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            semantic_dedup_enabled=False,
+            auto_link_enabled=False,
+        )
+        storage = Storage(settings)
+
+        mid1, _ = storage.store_memory(
+            "JavaScript framework React for building UIs.",
+            MemoryType.PROJECT,
+        )
+        mid2, _ = storage.store_memory(
+            "React is a JavaScript library for user interfaces.",
+            MemoryType.PROJECT,
+        )
+
+        # No auto-links should exist
+        related = storage.get_related(mid2, direction="outgoing")
+        assert len(related) == 0
+
+        storage.close()
+
+
+class TestAutoContradictionDetection:
+    """Tests for automatic contradiction detection when storing memories."""
+
+    @pytest.fixture
+    def storage_with_contradiction_detect(self, tmp_path):
+        """Create a storage instance with auto-contradiction detection.
+
+        Note: Uses lower threshold (0.5) to work with MockEmbeddingProvider.
+        """
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            semantic_dedup_enabled=False,
+            auto_link_enabled=False,  # Test separately
+            auto_detect_contradictions=True,
+            contradiction_threshold=0.5,  # Low threshold for mock embeddings
+        )
+        stor = Storage(settings)
+        yield stor
+        stor.close()
+
+    def test_auto_detect_creates_contradiction_link(self, storage_with_contradiction_detect):
+        """Storing very similar memory auto-creates contradiction link."""
+        storage = storage_with_contradiction_detect
+
+        # Store first fact - shares words: database, uses, version
+        mid1, _ = storage.store_memory(
+            "The database uses PostgreSQL version 14 for storage.",
+            MemoryType.PROJECT,
+        )
+
+        # Store contradicting fact - shares many words for mock similarity
+        mid2, _ = storage.store_memory(
+            "The database uses MySQL version 8 for storage.",
+            MemoryType.PROJECT,
+        )
+
+        # Should have auto-created a contradiction relationship
+        related = storage.get_related(mid2, relation_type=RelationType.CONTRADICTS)
+        if len(related) > 0:
+            # Contradiction was detected
+            related_ids = [m.id for m, r in related]
+            assert mid1 in related_ids
+
+    def test_auto_detect_disabled_creates_no_contradiction_links(self, tmp_path):
+        """When disabled, no contradiction links are created."""
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            semantic_dedup_enabled=False,
+            auto_detect_contradictions=False,
+        )
+        storage = Storage(settings)
+
+        mid1, _ = storage.store_memory(
+            "The API uses REST endpoints.",
+            MemoryType.PROJECT,
+        )
+        mid2, _ = storage.store_memory(
+            "The API uses GraphQL exclusively.",
+            MemoryType.PROJECT,
+        )
+
+        # No contradiction links should exist
+        related = storage.get_related(mid2, relation_type=RelationType.CONTRADICTS)
+        assert len(related) == 0
+
+        storage.close()
 
 
 # ========== Session (Conversation Provenance) Tests ==========

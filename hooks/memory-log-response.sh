@@ -44,13 +44,14 @@ if [ -z "$HOOK_INPUT" ]; then
     exit 0
 fi
 
+# Extract session and project info (always, for passing to CLI)
+SESSION_ID=$(printf '%s' "$HOOK_INPUT" | jq -r '(.session_id // .sessionId // .session.id // empty)' 2>/dev/null || true)
+PROJECT_PATH=$(printf '%s' "$HOOK_INPUT" | jq -r '(.project_path // .projectPath // .project.path // .cwd // .workspace_path // .rootPath // empty)' 2>/dev/null || true)
+
 TRANSCRIPT_PATH=$(printf '%s' "$HOOK_INPUT" | jq -r '(.transcript_path // .transcriptPath // .transcript.path // empty)' 2>/dev/null || true)
 
-# Fallback: derive transcript path from session + project info if provided
+# Fallback: derive transcript path from session + project info if not provided directly
 if [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; then
-    SESSION_ID=$(printf '%s' "$HOOK_INPUT" | jq -r '(.session_id // .sessionId // .session.id // empty)' 2>/dev/null || true)
-    PROJECT_PATH=$(printf '%s' "$HOOK_INPUT" | jq -r '(.project_path // .projectPath // .project.path // .cwd // .workspace_path // .rootPath // empty)' 2>/dev/null || true)
-
     if [ -n "$SESSION_ID" ]; then
         if [ -n "$PROJECT_PATH" ]; then
             PROJECT_SLUG="$(printf '%s' "$PROJECT_PATH" | sed 's#/#-#g')"
@@ -124,37 +125,33 @@ if [ -n "$LAST_USER_MSG" ] && [ "$LAST_USER_MSG" != "null" ]; then
 ASSISTANT: $LAST_RESPONSE"
 fi
 
-# Log the response using memory-mcp-cli
-# Prefer uv if available, otherwise fall back to direct CLI
-cd "$MEMORY_MCP_DIR"
-LOG_CMD=()
-if command -v uv &> /dev/null; then
-    LOG_CMD=(uv run memory-mcp-cli log-output)
-elif command -v memory-mcp-cli &> /dev/null; then
-    LOG_CMD=(memory-mcp-cli log-output)
-elif [ -x "$HOME/.local/bin/memory-mcp-cli" ]; then
-    LOG_CMD=("$HOME/.local/bin/memory-mcp-cli" log-output)
+# Build CLI arguments from hook input
+CLI_ARGS=""
+if [ -n "$PROJECT_PATH" ]; then
+    CLI_ARGS="$CLI_ARGS --project-id=$PROJECT_PATH"
+fi
+if [ -n "$SESSION_ID" ]; then
+    CLI_ARGS="$CLI_ARGS --session-id=$SESSION_ID"
 fi
 
-if [ ${#LOG_CMD[@]} -eq 0 ]; then
+# Log the response using memory-mcp-cli
+# Use subshell for uv to avoid changing cwd, pass project-id explicitly
+if command -v uv &> /dev/null; then
+    echo "$LAST_RESPONSE" | (cd "$MEMORY_MCP_DIR" && uv run memory-mcp-cli log-output $CLI_ARGS) 2>/dev/null || true
+elif command -v memory-mcp-cli &> /dev/null; then
+    echo "$LAST_RESPONSE" | memory-mcp-cli log-output $CLI_ARGS 2>/dev/null || true
+elif [ -x "$HOME/.local/bin/memory-mcp-cli" ]; then
+    echo "$LAST_RESPONSE" | "$HOME/.local/bin/memory-mcp-cli" log-output $CLI_ARGS 2>/dev/null || true
+else
     exit 0
 fi
 
-echo "$LAST_RESPONSE" | "${LOG_CMD[@]}" 2>/dev/null || true
-
 # Run mining to extract and store patterns as memories
-# This runs in the background to avoid blocking Claude Code
-MINE_CMD=()
+LOG_FILE="${MEMORY_MCP_DIR}/.mining-hook.log"
 if command -v uv &> /dev/null; then
-    MINE_CMD=(uv run memory-mcp-cli run-mining --hours 1)
+    (cd "$MEMORY_MCP_DIR" && uv run memory-mcp-cli run-mining --hours 1 $CLI_ARGS) >> "$LOG_FILE" 2>&1
 elif command -v memory-mcp-cli &> /dev/null; then
-    MINE_CMD=(memory-mcp-cli run-mining --hours 1)
+    memory-mcp-cli run-mining --hours 1 $CLI_ARGS >> "$LOG_FILE" 2>&1
 elif [ -x "$HOME/.local/bin/memory-mcp-cli" ]; then
-    MINE_CMD=("$HOME/.local/bin/memory-mcp-cli" run-mining --hours 1)
-fi
-
-if [ ${#MINE_CMD[@]} -gt 0 ]; then
-    # Run mining in foreground so output is visible
-    LOG_FILE="${MEMORY_MCP_DIR}/.mining-hook.log"
-    "${MINE_CMD[@]}" >> "$LOG_FILE" 2>&1
+    "$HOME/.local/bin/memory-mcp-cli" run-mining --hours 1 $CLI_ARGS >> "$LOG_FILE" 2>&1
 fi

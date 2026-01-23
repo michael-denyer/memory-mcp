@@ -3,10 +3,12 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import fastmcp
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from memory_mcp import __version__
 from memory_mcp.config import get_settings
 from memory_mcp.storage import MemorySource, MemoryType, PatternStatus, Storage
 
@@ -79,6 +81,8 @@ def get_type_badge_class(memory_type: MemoryType | str) -> str:
 # Add template globals and filters
 templates.env.globals["get_type_badge_class"] = get_type_badge_class
 templates.env.globals["format_bytes"] = format_bytes
+templates.env.globals["version"] = __version__
+templates.env.globals["mcp_version"] = fastmcp.__version__
 templates.env.filters["type_value"] = get_type_value
 
 

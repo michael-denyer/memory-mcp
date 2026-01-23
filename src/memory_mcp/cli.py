@@ -34,8 +34,16 @@ def cli(ctx: click.Context, use_json: bool) -> None:
 @click.option(
     "-f", "--file", "filepath", type=click.Path(exists=True), help="Read content from file"
 )
+@click.option("-p", "--project-id", help="Project ID override (default: derived from cwd)")
+@click.option("-s", "--session-id", help="Session ID for provenance tracking")
 @click.pass_context
-def log_output(ctx: click.Context, content: str | None, filepath: str | None) -> None:
+def log_output(
+    ctx: click.Context,
+    content: str | None,
+    filepath: str | None,
+    project_id: str | None,
+    session_id: str | None,
+) -> None:
     """Log output content for pattern mining."""
     settings = get_settings()
     use_json = ctx.obj["json"]
@@ -61,12 +69,13 @@ def log_output(ctx: click.Context, content: str | None, filepath: str | None) ->
         )
         raise SystemExit(1)
 
-    # Get project_id if project awareness is enabled
-    project_id = get_current_project_id() if settings.project_awareness_enabled else None
+    # Use explicit project_id or derive from cwd
+    if project_id is None and settings.project_awareness_enabled:
+        project_id = get_current_project_id()
 
     storage = Storage(settings)
     try:
-        log_id = storage.log_output(content, project_id=project_id)
+        log_id = storage.log_output(content, project_id=project_id, session_id=session_id)
         if use_json:
             click.echo(json.dumps({"success": True, "log_id": log_id}))
         else:
@@ -104,8 +113,12 @@ def log_response(ctx: click.Context) -> None:
     except json.JSONDecodeError:
         return
 
-    # Find transcript path
-    transcript_path = data.get("transcript_path") or data.get("transcriptPath")
+    # Find transcript path (multiple formats supported)
+    transcript_path = (
+        data.get("transcript_path")
+        or data.get("transcriptPath")
+        or data.get("transcript", {}).get("path")  # Nested format
+    )
 
     if not transcript_path or not Path(transcript_path).exists():
         # Try to derive from session_id
@@ -270,8 +283,9 @@ def pre_compact(ctx: click.Context) -> None:
 
 @cli.command("run-mining")
 @click.option("--hours", default=24, help="Hours of logs to process")
+@click.option("-p", "--project-id", help="Project ID override (default: derived from cwd)")
 @click.pass_context
-def run_mining(ctx: click.Context, hours: int) -> None:
+def run_mining(ctx: click.Context, hours: int, project_id: str | None) -> None:
     """Run pattern mining on logged outputs."""
     settings = get_settings()
     use_json = ctx.obj["json"]
@@ -284,8 +298,9 @@ def run_mining(ctx: click.Context, hours: int) -> None:
 
     storage = Storage(settings)
     try:
-        # Get project_id for project-scoped mining
-        project_id = get_current_project_id() if settings.project_awareness_enabled else None
+        # Use explicit project_id or derive from cwd
+        if project_id is None and settings.project_awareness_enabled:
+            project_id = get_current_project_id()
 
         result = do_mining(storage, hours=hours, project_id=project_id)
         if use_json:

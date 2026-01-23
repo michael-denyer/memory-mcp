@@ -354,6 +354,25 @@ class Settings(BaseSettings):
         description="Semantic threshold below which keyword boost applies",
     )
 
+    # Auto-link related memories on store (knowledge graph automation)
+    auto_link_enabled: bool = Field(
+        default=True, description="Auto-link semantically related memories on store"
+    )
+    auto_link_threshold: float = Field(
+        default=0.75,
+        description="Similarity threshold for auto-linking (lower than dedup, higher than recall)",
+    )
+    auto_link_max: int = Field(default=3, description="Maximum auto-links to create per new memory")
+
+    # Auto-detect contradictions on store
+    auto_detect_contradictions: bool = Field(
+        default=True, description="Auto-detect potential contradictions when storing"
+    )
+    contradiction_threshold: float = Field(
+        default=0.80,
+        description="Similarity threshold for contradiction detection (same topic = conflict)",
+    )
+
     # Recall mode presets
     # Precision mode: high threshold, few results, prioritize similarity
     precision_threshold: float = Field(

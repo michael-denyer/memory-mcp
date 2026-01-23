@@ -4,6 +4,39 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.3] - 2026-01-23
+
+### Added
+
+- **Auto-link related memories** - Automatically creates knowledge graph links when storing
+  - New memories are linked to semantically similar existing memories
+  - Configurable: `MEMORY_MCP_AUTO_LINK_ENABLED` (default: true)
+  - Threshold: `MEMORY_MCP_AUTO_LINK_THRESHOLD` (default: 0.75)
+  - Max links: `MEMORY_MCP_AUTO_LINK_MAX` (default: 3)
+
+- **Auto-detect contradictions** - Flags potential conflicts automatically
+  - Very similar memories (same topic) are marked as `CONTRADICTS`
+  - Helps identify outdated or conflicting information
+  - Configurable: `MEMORY_MCP_AUTO_DETECT_CONTRADICTIONS` (default: true)
+  - Threshold: `MEMORY_MCP_CONTRADICTION_THRESHOLD` (default: 0.80)
+
+- **Dashboard version display** - Shows Memory MCP and MCP versions in footer
+
+### Fixed
+
+- **Hook script project_id bug** - Hook now passes project_id explicitly to CLI
+  - Previously, `cd` to MEMORY_MCP_DIR broke project_id derivation
+  - Now extracts project_path from hook input and passes via `--project-id`
+
+- **CLI session_id support** - Hook now passes session_id for provenance tracking
+  - `log-output` and `run-mining` accept `--session-id` option
+  - Hook extracts session_id from input and passes to CLI
+
+- **Nested transcript.path parsing** - CLI now handles `{transcript: {path: ...}}` format
+  - Previously only checked `transcript_path` and `transcriptPath`
+
+- **server.json version sync** - Version now matches pyproject.toml
+
 ## [0.6.2] - 2026-01-23
 
 ### Added

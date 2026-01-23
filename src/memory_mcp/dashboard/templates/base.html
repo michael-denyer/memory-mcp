@@ -142,10 +142,13 @@
     <!-- Footer -->
     <footer class="border-t border-gray-800 mt-12">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-            <p class="text-center text-gray-500 text-sm">
-                Memory MCP Dashboard &middot;
+            <div class="flex items-center justify-center space-x-4 text-sm text-gray-500">
+                <span>Memory MCP v{{ version }}</span>
+                <span>&middot;</span>
+                <span>MCP v{{ mcp_version }}</span>
+                <span>&middot;</span>
                 <a href="https://github.com/michael-denyer/memory-mcp" class="text-blue-400 hover:text-blue-300">GitHub</a>
-            </p>
+            </div>
         </div>
     </footer>
 
