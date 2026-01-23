@@ -128,28 +128,19 @@ Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's *
 
 ## Quick Reference
 
-### Slash Commands (with plugin)
+| Type | Name | Description |
+|------|------|-------------|
+| Slash | `/memory-mcp:remember` | Store a memory |
+| Slash | `/memory-mcp:recall` | Search memories |
+| Slash | `/memory-mcp:hot-cache` | Manage hot cache |
+| Slash | `/memory-mcp:stats` | Show statistics |
+| Slash | `/memory-mcp:bootstrap` | Seed from project docs |
+| Tool | `remember` | Store with semantic embedding |
+| Tool | `recall` | Search by meaning |
+| Tool | `promote` / `demote` | Hot cache management |
+| Tool | `link_memories` | Knowledge graph connections |
 
-| Command | Description |
-|---------|-------------|
-| `/memory-mcp:remember` | Store a memory |
-| `/memory-mcp:recall` | Search memories |
-| `/memory-mcp:hot-cache` | Manage hot cache |
-| `/memory-mcp:stats` | Show statistics |
-| `/memory-mcp:bootstrap` | Seed from project docs |
-
-See [Reference](docs/REFERENCE.md#slash-commands) for all 14 commands.
-
-### Core Tools
-
-| Tool | Description |
-|------|-------------|
-| `remember` | Store with semantic embedding |
-| `recall` | Search by meaning |
-| `promote` / `demote` | Hot cache management |
-| `link_memories` | Knowledge graph connections |
-
-See [Reference](docs/REFERENCE.md#tools) for full API.
+See [Reference](docs/REFERENCE.md) for all 14 slash commands and full tool API.
 
 ### Dashboard
 
@@ -167,14 +158,6 @@ Browse memories, hot cache, mining candidates, sessions, and knowledge graph.
 |----------|-------------|
 | [Reference](docs/REFERENCE.md) | Full API, CLI, configuration, MCP resources |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
-
-## Development
-
-```bash
-git clone https://github.com/michael-denyer/memory-mcp.git
-cd memory-mcp && uv sync
-uv run pytest -v
-```
 
 ## License
 
