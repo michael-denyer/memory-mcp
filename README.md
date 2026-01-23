@@ -152,6 +152,18 @@ memory-mcp-cli dashboard    # Opens at http://localhost:8765
 
 Browse memories, hot cache, mining candidates, sessions, and knowledge graph.
 
+## How to Use
+
+Memory MCP is designed to run as three complementary components:
+
+| Component | Purpose |
+|-----------|---------|
+| **Claude Code Plugin** | Hooks, slash commands, and Memory Analyst agent for seamless integration |
+| **MCP Server** | Core memory tools available to Claude via Model Context Protocol |
+| **Dashboard** | Web UI to browse, manage, and debug your memory database |
+
+The plugin is recommended for most users — it auto-configures the MCP server and adds productivity features. Run the dashboard alongside when you want visibility into what's being stored.
+
 ## Documentation
 
 | Document | Description |
