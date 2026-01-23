@@ -4,7 +4,7 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.6.3] - 2026-01-23
+## [0.6.4] - 2026-01-23
 
 ### Added
 
@@ -22,7 +22,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Dashboard version display** - Shows Memory MCP and MCP versions in footer
 
+- **hook-check CLI command** - New command to validate hook dependencies
+  - Checks: uv, jq, database connectivity, hook script, log directory
+  - Supports JSON output for scripting: `memory-mcp-cli --json hook-check`
+
 ### Fixed
+
+- **Hook script silent failures** - Errors now logged to `~/.memory-mcp/hook.log`
+  - Previously all errors were silently swallowed with `2>/dev/null || true`
+  - Now captures stderr to log file with timestamps for debugging
+  - Refactored CLI invocation into reusable `run_cli()` helper
+
+- **Helpfulness/utility tracking** - Fixed broken utility score calculation
+  - Changed `retrieval_auto_mark_used` default to `False` (was `True`)
+  - Previously auto-marked all recalled memories as "used", making utility meaningless
+  - Fixed `retrieved_count` increment in `record_retrieval_event()`
+  - Utility formula `(used_count + 1) / (retrieved_count + 4)` now works correctly
 
 - **Hook script project_id bug** - Hook now passes project_id explicitly to CLI
   - Previously, `cd` to MEMORY_MCP_DIR broke project_id derivation

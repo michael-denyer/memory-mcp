@@ -40,6 +40,26 @@ log_msg() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$HOOK_LOG"
 }
 
+# Run memory-mcp-cli command, trying multiple methods
+# Usage: run_cli "command" "args..."
+# Returns the exit code of the command
+run_cli() {
+    local cmd="$1"
+    shift
+    local args="$*"
+
+    if command -v uv &> /dev/null; then
+        (cd "$MEMORY_MCP_DIR" && uv run memory-mcp-cli "$cmd" $args) 2>>"$HOOK_LOG"
+    elif command -v memory-mcp-cli &> /dev/null; then
+        memory-mcp-cli "$cmd" $args 2>>"$HOOK_LOG"
+    elif [ -x "$HOME/.local/bin/memory-mcp-cli" ]; then
+        "$HOME/.local/bin/memory-mcp-cli" "$cmd" $args 2>>"$HOOK_LOG"
+    else
+        log_msg "ERROR: No memory-mcp-cli found (uv, memory-mcp-cli, ~/.local/bin)"
+        return 1
+    fi
+}
+
 # Check for required dependencies
 if ! command -v jq &> /dev/null; then
     echo "Error: jq is required but not installed." >&2
@@ -145,37 +165,13 @@ if [ -n "$SESSION_ID" ]; then
 fi
 
 # Log the response using memory-mcp-cli
-# Use subshell for uv to avoid changing cwd, pass project-id explicitly
 log_msg "Processing response (${#LAST_RESPONSE} chars) project=${PROJECT_PATH:-none} session=${SESSION_ID:-none}"
 
-LOG_OUTPUT_RESULT=0
-if command -v uv &> /dev/null; then
-    if ! echo "$LAST_RESPONSE" | (cd "$MEMORY_MCP_DIR" && uv run memory-mcp-cli log-output $CLI_ARGS) 2>>"$HOOK_LOG"; then
-        LOG_OUTPUT_RESULT=$?
-        log_msg "ERROR: log-output failed with exit code $LOG_OUTPUT_RESULT"
-    fi
-elif command -v memory-mcp-cli &> /dev/null; then
-    if ! echo "$LAST_RESPONSE" | memory-mcp-cli log-output $CLI_ARGS 2>>"$HOOK_LOG"; then
-        LOG_OUTPUT_RESULT=$?
-        log_msg "ERROR: log-output failed with exit code $LOG_OUTPUT_RESULT"
-    fi
-elif [ -x "$HOME/.local/bin/memory-mcp-cli" ]; then
-    if ! echo "$LAST_RESPONSE" | "$HOME/.local/bin/memory-mcp-cli" log-output $CLI_ARGS 2>>"$HOOK_LOG"; then
-        LOG_OUTPUT_RESULT=$?
-        log_msg "ERROR: log-output failed with exit code $LOG_OUTPUT_RESULT"
-    fi
-else
-    log_msg "ERROR: No memory-mcp-cli found (uv, memory-mcp-cli, ~/.local/bin)"
-    exit 0
+if ! echo "$LAST_RESPONSE" | run_cli log-output $CLI_ARGS; then
+    log_msg "ERROR: log-output failed with exit code $?"
 fi
 
-# Run mining to extract and store patterns as memories (non-critical, keep || true)
-if command -v uv &> /dev/null; then
-    (cd "$MEMORY_MCP_DIR" && uv run memory-mcp-cli run-mining --hours 1 $CLI_ARGS) >> "$HOOK_LOG" 2>&1 || true
-elif command -v memory-mcp-cli &> /dev/null; then
-    memory-mcp-cli run-mining --hours 1 $CLI_ARGS >> "$HOOK_LOG" 2>&1 || true
-elif [ -x "$HOME/.local/bin/memory-mcp-cli" ]; then
-    "$HOME/.local/bin/memory-mcp-cli" run-mining --hours 1 $CLI_ARGS >> "$HOOK_LOG" 2>&1 || true
-fi
+# Run mining to extract and store patterns as memories (non-critical)
+run_cli run-mining --hours 1 $CLI_ARGS >> "$HOOK_LOG" 2>&1 || true
 
 log_msg "Hook completed successfully"
