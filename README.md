@@ -103,11 +103,6 @@ flowchart LR
     VS <-->|"related"| KG
 ```
 
-| Tier | Latency | Behavior |
-|------|---------|----------|
-| **Hot Cache** | 0ms | Auto-injected every request. No tool call needed. |
-| **Cold Storage** | ~50ms | Semantic search when you need deeper recall. |
-
 Memories used 3+ times auto-promote to hot cache. Unused memories demote after 14 days. Pin important ones to keep them hot forever.
 
 ## What Makes It Different
@@ -128,17 +123,14 @@ Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's *
 
 ## Quick Reference
 
-| Type | Name | Description |
-|------|------|-------------|
-| Slash | `/memory-mcp:remember` | Store a memory |
-| Slash | `/memory-mcp:recall` | Search memories |
-| Slash | `/memory-mcp:hot-cache` | Manage hot cache |
-| Slash | `/memory-mcp:stats` | Show statistics |
-| Slash | `/memory-mcp:bootstrap` | Seed from project docs |
-| Tool | `remember` | Store with semantic embedding |
-| Tool | `recall` | Search by meaning |
-| Tool | `promote` / `demote` | Hot cache management |
-| Tool | `link_memories` | Knowledge graph connections |
+| Slash Command | Tool | Description |
+|---------------|------|-------------|
+| `/memory-mcp:remember` | `remember` | Store a memory with semantic embedding |
+| `/memory-mcp:recall` | `recall` | Search memories by meaning |
+| `/memory-mcp:hot-cache` | `promote` / `demote` | Manage hot cache |
+| `/memory-mcp:stats` | `memory_stats` | Show statistics |
+| `/memory-mcp:bootstrap` | `bootstrap_project` | Seed from project docs |
+| — | `link_memories` | Knowledge graph connections |
 
 See [Reference](docs/REFERENCE.md) for all 14 slash commands and full tool API.
 
