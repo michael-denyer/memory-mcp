@@ -132,7 +132,15 @@ remember("Test: Found token bug", memory_type="episodic")
 **6.3 Session Topic**:
 - `set_session_topic(session_id, "Testing session")`
 
-**6.4 End Session** (optional - ends current session):
+**6.4 Summarize Session**:
+- `summarize_session(session_id)` → structured summary with:
+  - Decisions (choices made and rationale)
+  - Insights (lessons, antipatterns, landmines, constraints)
+  - Action Items (todos, bugs, tasks)
+  - Context (background, conventions, preferences, architecture)
+- Use before `end_session()` to review what will be promoted
+
+**6.5 End Session** (optional - ends current session):
 - `end_session(session_id, promote_top=true)`
 
 ---
@@ -356,6 +364,7 @@ Track results as you go:
 | 6.1 | Sessions | ⬜ | |
 | 6.2 | Episodic | ⬜ | |
 | 6.3 | Session Topic | ⬜ | |
+| 6.4 | Summarize Session | ⬜ | |
 | 7.1 | Log Output | ⬜ | |
 | 7.2 | Run Mining | ⬜ | |
 | 7.3 | Review | ⬜ | |
