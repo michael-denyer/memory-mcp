@@ -133,6 +133,55 @@ def test_output_logging_project_scoped(storage):
     assert b_outputs[0][1] == "Project B content"
 
 
+def test_list_memories_project_filter(storage):
+    """Test list_memories with project_id filter.
+
+    This enables the dashboard to show memories filtered by project while
+    still including global memories (those with NULL project_id).
+    """
+    # Create memories for different projects and global
+    storage.store_memory("Project A memory", MemoryType.PROJECT, project_id="project-a")
+    storage.store_memory("Project B memory", MemoryType.PROJECT, project_id="project-b")
+    storage.store_memory("Global memory", MemoryType.PROJECT)  # No project_id
+
+    # List all memories (no filter)
+    all_memories = storage.list_memories()
+    assert len(all_memories) == 3
+
+    # List project A memories (should include global)
+    a_memories = storage.list_memories(project_id="project-a")
+    assert len(a_memories) == 2
+    contents = {m.content for m in a_memories}
+    assert "Project A memory" in contents
+    assert "Global memory" in contents
+    assert "Project B memory" not in contents
+
+    # List project B memories (should include global)
+    b_memories = storage.list_memories(project_id="project-b")
+    assert len(b_memories) == 2
+    contents = {m.content for m in b_memories}
+    assert "Project B memory" in contents
+    assert "Global memory" in contents
+    assert "Project A memory" not in contents
+
+
+def test_list_memories_project_and_type_filter(storage):
+    """Test list_memories with both project_id and memory_type filters."""
+    # Create memories with different types and projects
+    storage.store_memory("Project A fact", MemoryType.PROJECT, project_id="project-a")
+    storage.store_memory("Project A pattern", MemoryType.PATTERN, project_id="project-a")
+    storage.store_memory("Global fact", MemoryType.PROJECT)
+    storage.store_memory("Project B fact", MemoryType.PROJECT, project_id="project-b")
+
+    # Filter by project and type
+    a_facts = storage.list_memories(memory_type=MemoryType.PROJECT, project_id="project-a")
+    assert len(a_facts) == 2  # Project A fact + Global fact
+    contents = {m.content for m in a_facts}
+    assert "Project A fact" in contents
+    assert "Global fact" in contents
+    assert "Project A pattern" not in contents
+
+
 def test_output_logging_redacts_secrets(storage):
     """Test that secrets are redacted before storage in output logs.
 

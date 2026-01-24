@@ -794,28 +794,40 @@ class MemoryCrudMixin:
         memory_type: MemoryType | None = None,
         limit: int = 20,
         offset: int = 0,
+        project_id: str | None = None,
     ) -> list[Memory]:
-        """List memories with optional type filter and pagination."""
+        """List memories with optional type and project filter and pagination.
+
+        Args:
+            memory_type: Filter by memory type
+            limit: Max memories to return
+            offset: Skip first N memories
+            project_id: Filter by project (includes global memories with NULL project_id)
+        """
         with self._connection() as conn:
+            conditions = []
+            params: list = []
+
             if memory_type:
-                rows = conn.execute(
-                    """
-                    SELECT * FROM memories
-                    WHERE memory_type = ?
-                    ORDER BY created_at DESC
-                    LIMIT ? OFFSET ?
-                    """,
-                    (memory_type.value, limit, offset),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT * FROM memories
-                    ORDER BY created_at DESC
-                    LIMIT ? OFFSET ?
-                    """,
-                    (limit, offset),
-                ).fetchall()
+                conditions.append("memory_type = ?")
+                params.append(memory_type.value)
+
+            if project_id:
+                conditions.append("(project_id = ? OR project_id IS NULL)")
+                params.append(project_id)
+
+            where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+            params.extend([limit, offset])
+
+            rows = conn.execute(
+                f"""
+                SELECT * FROM memories
+                {where_clause}
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                params,
+            ).fetchall()
 
             return [self._row_to_memory(row, conn) for row in rows]
 

@@ -13,7 +13,6 @@ from rich.console import Console
 from rich.table import Table
 
 from memory_mcp.config import find_bootstrap_files, get_settings
-from memory_mcp.mining import run_mining as run_mining_impl
 from memory_mcp.project import get_current_project_id
 from memory_mcp.storage import MemorySource, MemoryType, Storage
 from memory_mcp.text_parsing import parse_content_into_chunks
@@ -202,23 +201,41 @@ def log_response(ctx: click.Context) -> None:
     storage = Storage(settings)
     try:
         storage.log_output(content, project_id=project_id)
-        # Run mining
-        run_mining_impl(storage, hours=1, project_id=project_id)
     finally:
         storage.close()
 
+    # Spawn async mining (doesn't block the hook)
+    try:
+        mining_args = ["memory-mcp-cli", "run-mining", "--hours", "1"]
+        if project_id:
+            mining_args.extend(["--project-id", project_id])
+        subprocess.Popen(
+            mining_args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,  # Detach from parent process
+        )
+    except Exception:
+        pass  # Mining is optional
+
 
 @cli.command("pre-compact")
+@click.option("--skip-mining", is_flag=True, help="Skip background mining")
 @click.pass_context
-def pre_compact(ctx: click.Context) -> None:
+def pre_compact(ctx: click.Context, skip_mining: bool) -> None:
     """Consolidate session memories before conversation compaction.
 
     Called by Claude Code's PreCompact hook. Reads hook input from stdin,
     extracts session info, and runs end_session() to promote top episodic
     memories to long-term storage.
 
+    Also spawns background mining to extract patterns from output logs.
+    Mining runs async and doesn't block compaction.
+
     Designed to be quiet - exits 0 even on errors to not block compaction.
     """
+    import subprocess
+
     settings = get_settings()
     use_json = ctx.obj["json"]
 
@@ -249,6 +266,7 @@ def pre_compact(ctx: click.Context) -> None:
         return
 
     storage = Storage(settings)
+    mining_started = False
     try:
         # Run end_session to promote episodic memories to long-term storage
         result = storage.end_session(
@@ -256,6 +274,19 @@ def pre_compact(ctx: click.Context) -> None:
             promote_top=True,
             promote_type=MemoryType.PROJECT,
         )
+
+        # Spawn background mining (async, doesn't block)
+        if not skip_mining:
+            try:
+                subprocess.Popen(
+                    ["memory-mcp-cli", "run-mining", "--hours", "24"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,  # Detach from parent process
+                )
+                mining_started = True
+            except Exception:
+                pass  # Mining is optional, don't fail if it can't start
 
         if use_json:
             click.echo(
@@ -266,6 +297,7 @@ def pre_compact(ctx: click.Context) -> None:
                         "session_id": session_id,
                         "promoted_count": result.get("promoted_count", 0),
                         "top_memories": result.get("top_memories", []),
+                        "mining_started": mining_started,
                     }
                 )
             )
@@ -273,6 +305,8 @@ def pre_compact(ctx: click.Context) -> None:
             promoted = result.get("promoted_count", 0)
             if promoted > 0:
                 click.echo(f"Pre-compact: promoted {promoted} memories from session")
+            if mining_started:
+                click.echo("Pre-compact: mining started in background")
     except Exception as e:
         # Silent failure for hooks - don't block compaction
         if use_json:

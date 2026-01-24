@@ -4,6 +4,20 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.4] - 2026-01-24
+
+### Added
+
+- **Dashboard project filtering** - Memory browser page now includes a project filter dropdown.
+  Select a specific project to view only that project's memories (plus global memories with no
+  project assignment). Useful when working across multiple codebases.
+
+### Changed
+
+- **Async mining in hooks** - Both `log-response` (Stop hook) and `pre-compact` (PreCompact hook)
+  now spawn mining as a background process. This eliminates blocking during Claude's operations,
+  making hooks return instantly while mining runs in the background.
+
 ## [0.7.3] - 2026-01-24
 
 ### Fixed

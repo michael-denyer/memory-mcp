@@ -46,6 +46,61 @@ def get_storage() -> Storage:
     return storage
 
 
+def get_projects() -> list[dict]:
+    """Get distinct projects from memories and sessions for filtering.
+
+    Returns list of dicts with 'id' (project_id) and 'label' (display name).
+    Combines project_id from memories and project_path from sessions.
+    """
+    s = get_storage()
+    with s._connection() as conn:
+        # Get distinct project_ids from memories
+        memory_projects = conn.execute(
+            """
+            SELECT DISTINCT project_id
+            FROM memories
+            WHERE project_id IS NOT NULL AND project_id != ''
+            """
+        ).fetchall()
+
+        # Get distinct project_paths from sessions
+        session_projects = conn.execute(
+            """
+            SELECT DISTINCT project_path
+            FROM sessions
+            WHERE project_path IS NOT NULL AND project_path != ''
+            """
+        ).fetchall()
+
+    # Combine and dedupe
+    projects = set()
+    for row in memory_projects:
+        projects.add(row["project_id"])
+    for row in session_projects:
+        projects.add(row["project_path"])
+
+    # Convert to list of dicts with id and display label
+    result = []
+    for project in sorted(projects):
+        # Create a short label from the project path/id
+        label = project
+        if "/" in project:
+            parts = project.split("/")
+            # For paths like /Users/foo/bar, show just "bar"
+            # For github/owner/repo, show "owner/repo"
+            if parts[0] == "" and len(parts) > 1:
+                # Absolute path - show last component
+                label = parts[-1]
+            elif parts[0] == "github" and len(parts) >= 3:
+                # GitHub format - show owner/repo
+                label = "/".join(parts[1:])
+            else:
+                label = parts[-1]
+        result.append({"id": project, "label": label})
+
+    return result
+
+
 def format_bytes(size: int | float) -> str:
     """Format bytes to human readable string."""
     size_f = float(size)
@@ -152,6 +207,7 @@ def _parse_memory_type(type_str: str | None) -> MemoryType | None:
 async def memories_page(
     request: Request,
     type_filter: str | None = None,
+    project_filter: str | None = None,
     page: int = 1,
     limit: int = 20,
 ) -> HTMLResponse:
@@ -159,10 +215,12 @@ async def memories_page(
     s = get_storage()
     offset = (page - 1) * limit
     mem_type = _parse_memory_type(type_filter)
-    memories = s.list_memories(limit=limit, offset=offset, memory_type=mem_type)
-    stats = s.get_stats()
-    total = stats.get("total_memories", 0)
-    total_pages = (total + limit - 1) // limit
+    memories = s.list_memories(
+        limit=limit, offset=offset, memory_type=mem_type, project_id=project_filter
+    )
+    total = _count_memories(s, mem_type, project_filter)
+    total_pages = max(1, (total + limit - 1) // limit)
+    projects = get_projects()
 
     return templates.TemplateResponse(
         "memories.html",
@@ -170,6 +228,8 @@ async def memories_page(
             "request": request,
             "memories": memories,
             "type_filter": type_filter,
+            "project_filter": project_filter,
+            "projects": projects,
             "page": page,
             "limit": limit,
             "total": total,
@@ -177,6 +237,27 @@ async def memories_page(
             "active_page": "memories",
         },
     )
+
+
+def _count_memories(
+    s: Storage, memory_type: MemoryType | None = None, project_id: str | None = None
+) -> int:
+    """Count memories with optional type and project filters."""
+    with s._connection() as conn:
+        conditions = []
+        params: list = []
+
+        if memory_type:
+            conditions.append("memory_type = ?")
+            params.append(memory_type.value)
+
+        if project_id:
+            conditions.append("(project_id = ? OR project_id IS NULL)")
+            params.append(project_id)
+
+        where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+        query = f"SELECT COUNT(*) FROM memories {where_clause}"
+        return conn.execute(query, params).fetchone()[0]
 
 
 # ============================================================================
@@ -242,6 +323,7 @@ async def api_search(
     request: Request,
     query: str = "",
     type_filter: str | None = None,
+    project_filter: str | None = None,
     page: int = 1,
     limit: int = 20,
 ) -> HTMLResponse:
@@ -253,14 +335,15 @@ async def api_search(
     if query.strip():
         # Semantic search
         mem_types = [mem_type] if mem_type else None
-        results = s.recall(query, limit=limit, memory_types=mem_types)
+        results = s.recall(query, limit=limit, memory_types=mem_types, project_id=project_filter)
         memories = results.memories
         total = len(memories)
     else:
         # List with filter
-        memories = s.list_memories(limit=limit, offset=offset, memory_type=mem_type)
-        stats = s.get_stats()
-        total = stats.get("total_memories", 0)
+        memories = s.list_memories(
+            limit=limit, offset=offset, memory_type=mem_type, project_id=project_filter
+        )
+        total = _count_memories(s, mem_type, project_filter)
 
     total_pages = max(1, (total + limit - 1) // limit)
 
@@ -271,6 +354,7 @@ async def api_search(
             "memories": memories,
             "query": query,
             "type_filter": type_filter,
+            "project_filter": project_filter,
             "page": page,
             "limit": limit,
             "total": total,
