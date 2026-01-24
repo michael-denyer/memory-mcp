@@ -2321,6 +2321,62 @@ class TestSessionProvenance:
         result = storage.update_session_topic("nonexistent", "Topic")
         assert result is False
 
+    def test_store_memory_creates_session_with_project_path(self, storage):
+        """store_memory with unknown session_id creates session with project_path.
+
+        Regression test: _update_session_activity was creating sessions with
+        NULL project_path when store_memory was called before create_or_get_session.
+        """
+        # Store memory with a session that doesn't exist yet
+        storage.store_memory(
+            "Test memory for new session",
+            MemoryType.PROJECT,
+            session_id="auto-created-session",
+        )
+
+        # Verify session was created with project_path set (from cwd)
+        session = storage.get_session("auto-created-session")
+        assert session is not None
+        assert session.project_path is not None
+        assert len(session.project_path) > 0
+
+    def test_log_output_creates_session_with_project_path(self, storage):
+        """log_output with unknown session_id creates session with project_path.
+
+        Regression test: _update_session_activity was creating sessions with
+        NULL project_path when log_output was called before create_or_get_session.
+        """
+        # Log output with a session that doesn't exist yet
+        storage.log_output("Test output for new session", session_id="auto-log-session")
+
+        # Verify session was created with project_path set (from cwd)
+        session = storage.get_session("auto-log-session")
+        assert session is not None
+        assert session.project_path is not None
+        assert len(session.project_path) > 0
+
+    def test_update_session_activity_preserves_existing_project_path(self, storage):
+        """_update_session_activity preserves existing project_path on update.
+
+        When a session is created via create_or_get_session with a specific
+        project_path, subsequent calls to _update_session_activity should
+        not overwrite it (uses COALESCE to preserve existing values).
+        """
+        # Create session with explicit project_path
+        storage.create_or_get_session("explicit-path-session", project_path="/custom/project")
+
+        # Store memory which triggers _update_session_activity
+        storage.store_memory(
+            "Memory to trigger update",
+            MemoryType.PROJECT,
+            session_id="explicit-path-session",
+        )
+
+        # Verify original project_path is preserved
+        session = storage.get_session("explicit-path-session")
+        assert session is not None
+        assert session.project_path == "/custom/project"
+
     def test_sessions_table_created(self, storage):
         """sessions table should exist in schema."""
         with storage._connection() as conn:

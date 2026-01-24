@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -48,8 +49,11 @@ class OutputLoggingMixin:
             )
 
             # Update session log count if session_id provided (upsert creates if needed)
+            # Pass project_path so session gets proper context if created via upsert
             if session_id:
-                self._update_session_activity(conn, session_id, log_delta=1)
+                self._update_session_activity(
+                    conn, session_id, log_delta=1, project_path=os.getcwd()
+                )
 
             # Cleanup old logs
             conn.execute(

@@ -4,6 +4,21 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.3] - 2026-01-24
+
+### Fixed
+
+- **Session project_path bug** - Sessions auto-created via `store_memory()` or `log_output()` now
+  correctly set `project_path` from the current working directory. Previously, sessions created
+  via the internal `_update_session_activity()` upsert had NULL `project_path`, breaking
+  project-filtered session queries.
+
+### Changed
+
+- **Removed CI jobs pending secrets** - MCP Registry and Homebrew tap publish jobs removed from
+  `.github/workflows/publish.yml` until repository secrets are configured. PyPI trusted publishing
+  remains active.
+
 ## [0.7.2] - 2026-01-23
 
 ### Added

@@ -24,19 +24,31 @@ class SessionsMixin:
         session_id: str,
         memory_delta: int = 0,
         log_delta: int = 0,
+        project_path: str | None = None,
     ) -> None:
-        """Update session activity counters. Creates session if needed."""
+        """Update session activity counters. Creates session if needed.
+
+        Args:
+            conn: Database connection
+            session_id: Session identifier
+            memory_delta: Change in memory count (positive or negative)
+            log_delta: Change in log count (positive or negative)
+            project_path: Working directory for the session (used on insert,
+                preserves existing value on update via COALESCE)
+        """
         # Upsert: insert or update session
+        # COALESCE preserves existing project_path if already set
         conn.execute(
             """
-            INSERT INTO sessions (id, memory_count, log_count)
-            VALUES (?, ?, ?)
+            INSERT INTO sessions (id, memory_count, log_count, project_path)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 last_activity_at = CURRENT_TIMESTAMP,
                 memory_count = memory_count + excluded.memory_count,
-                log_count = log_count + excluded.log_count
+                log_count = log_count + excluded.log_count,
+                project_path = COALESCE(sessions.project_path, excluded.project_path)
             """,
-            (session_id, memory_delta, log_delta),
+            (session_id, memory_delta, log_delta, project_path),
         )
 
     def _track_project(

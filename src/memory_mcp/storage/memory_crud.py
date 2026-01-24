@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import datetime
 
@@ -541,8 +542,11 @@ class MemoryCrudMixin:
             memory_id = cursor.fetchone()[0]
 
             # Update session memory count if session provided
+            # Pass project_path so session gets proper context if created via upsert
             if session_id:
-                self._update_session_activity(conn, session_id, memory_delta=1)
+                self._update_session_activity(
+                    conn, session_id, memory_delta=1, project_path=os.getcwd()
+                )
 
             # Track project for project-aware features
             if project_id:
