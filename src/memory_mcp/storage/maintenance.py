@@ -393,7 +393,7 @@ class MaintenanceMixin:
         return penalized_ids
 
     def run_full_cleanup(self) -> dict:
-        """Run comprehensive cleanup: stale memories, old logs, patterns, injections.
+        """Run comprehensive cleanup: stale memories, hot cache, injections.
 
         Orchestrates all maintenance tasks in one call.
 
@@ -402,32 +402,24 @@ class MaintenanceMixin:
         # 1. Demote stale hot memories
         demoted_ids = self.demote_stale_hot_memories()
 
-        # 2. Expire stale mining patterns
-        expired_patterns = self.expire_stale_patterns(days=30)
-
-        # 3. Clean up old output logs
-        deleted_logs = self.cleanup_old_logs()
-
-        # 4. Clean up stale memories by retention policy
+        # 2. Clean up stale memories by retention policy
         memory_cleanup = self.cleanup_stale_memories()
 
-        # 5. Decay access sequences (for predictive cache)
+        # 3. Decay access sequences (for predictive cache)
         if self.settings.predictive_cache_enabled:
             self.decay_old_sequences()
 
-        # 6. Clean up old injection records (7-day retention)
+        # 4. Clean up old injection records (7-day retention)
         deleted_injections = self.cleanup_old_injections(retention_days=7)
 
-        # 7. Penalize low-utility memories (retrieved but never used)
+        # 5. Penalize low-utility memories (retrieved but never used)
         penalized_ids = self.penalize_low_utility_memories()
 
-        # 8. Improve hot cache based on injection feedback (non-dry-run)
+        # 6. Improve hot cache based on injection feedback (non-dry-run)
         injection_feedback = self.improve_hot_cache_from_injections(days=7, dry_run=False)
 
         return {
             "hot_cache_demoted": len(demoted_ids),
-            "patterns_expired": expired_patterns,
-            "logs_deleted": deleted_logs,
             "memories_deleted": memory_cleanup["total_deleted"],
             "memories_deleted_by_type": memory_cleanup["deleted_by_type"],
             "injections_deleted": deleted_injections,

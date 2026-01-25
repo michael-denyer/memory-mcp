@@ -8,15 +8,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Session handoffs** - New `/handoff` command for Claude to write structured session summaries
+  before compaction. Replaces regex-based mining with intentional, structured knowledge capture.
+  - Store decisions: `DECISION: [what] | REASON: [why] | ALTERNATIVE: [rejected]`
+  - Store gotchas: `GOTCHA: [problem] | FIX: [solution] | FILE: [path]`
+  - Store tasks: `TASK: [name] | STATUS: [in_progress|blocked] | NEXT: [action]`
+  - Store constraints: `CONSTRAINT: [limitation] | SCOPE: [where] | WORKAROUND: [if any]`
+  - Store patterns: `PATTERN: [name] | USE: [when] | EXAMPLE: [reference]`
+
+- **`recall-handoffs` CLI command** - Recalls recent handoffs for the current project at session
+  start. Called by SessionStart hook to restore context from previous sessions.
+
 - **Dashboard project filtering** - Memory browser page now includes a project filter dropdown.
   Select a specific project to view only that project's memories (plus global memories with no
   project assignment). Useful when working across multiple codebases.
 
 ### Changed
 
-- **Async mining in hooks** - Both `log-response` (Stop hook) and `pre-compact` (PreCompact hook)
-  now spawn mining as a background process. This eliminates blocking during Claude's operations,
-  making hooks return instantly while mining runs in the background.
+- **Mining disabled by default** - Regex-based pattern mining now disabled by default. The mining
+  approach extracted too much noise (code blocks, entity mentions) and not enough signal. Use
+  `/handoff` for structured session summaries instead. Mining can still be enabled via
+  `MEMORY_MCP_MINING_ENABLED=true` for users who want it.
+
+- **PreCompact hook now prompts for handoff** - Instead of running mining, the PreCompact hook
+  now prompts Claude to run `/handoff` and write structured session summaries.
+
+- **SessionStart hook recalls handoffs** - Instead of bootstrapping from CLAUDE.md (which Claude
+  reads anyway), the SessionStart hook now recalls recent handoffs from previous sessions.
+
+- **Removed Stop hook** - The `log-response` hook that logged Claude's output for mining is
+  removed since mining is disabled by default.
 
 ## [0.7.3] - 2026-01-24
 

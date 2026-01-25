@@ -97,42 +97,6 @@ def test_recall_confidence_gating(storage):
     assert len(result.memories) == 0
 
 
-def test_output_logging(storage):
-    """Test output logging for mining."""
-    log_id = storage.log_output("Some output content")
-    assert log_id > 0
-
-    outputs = storage.get_recent_outputs(hours=1)
-    assert len(outputs) == 1
-    assert outputs[0][1] == "Some output content"
-
-
-def test_output_logging_project_scoped(storage):
-    """Test that output logs can be filtered by project_id.
-
-    This prevents cross-project pattern leakage where logs from one
-    project could be mined and auto-approved into a different project.
-    """
-    # Log outputs from two different projects
-    storage.log_output("Project A content", project_id="project-a")
-    storage.log_output("Project B content", project_id="project-b")
-    storage.log_output("No project content")  # No project
-
-    # Get all outputs (backwards compatible)
-    all_outputs = storage.get_recent_outputs(hours=1)
-    assert len(all_outputs) == 3
-
-    # Get only project A outputs
-    a_outputs = storage.get_recent_outputs(hours=1, project_id="project-a")
-    assert len(a_outputs) == 1
-    assert a_outputs[0][1] == "Project A content"
-
-    # Get only project B outputs
-    b_outputs = storage.get_recent_outputs(hours=1, project_id="project-b")
-    assert len(b_outputs) == 1
-    assert b_outputs[0][1] == "Project B content"
-
-
 def test_list_memories_project_filter(storage):
     """Test list_memories with project_id filter.
 
@@ -182,53 +146,6 @@ def test_list_memories_project_and_type_filter(storage):
     assert "Project A pattern" not in contents
 
 
-def test_output_logging_redacts_secrets(storage):
-    """Test that secrets are redacted before storage in output logs.
-
-    This is defense-in-depth: secrets should never be stored in output_log
-    to prevent them from appearing in dashboard, recall, or exports.
-    """
-    # Content with various secret patterns
-    content_with_secrets = """
-    Here's how to configure the API:
-    api_key = "sk-1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdef"
-    password: mysecretpassword123
-    token = ghp_abcdefghijklmnopqrstuvwxyz0123456789
-    connection: postgres://user:secretpass@localhost/db
-    """
-
-    log_id = storage.log_output(content_with_secrets)
-    assert log_id > 0
-
-    outputs = storage.get_recent_outputs(hours=1)
-    assert len(outputs) == 1
-    stored_content = outputs[0][1]
-
-    # Verify secrets are redacted
-    assert "sk-1234567890" not in stored_content
-    assert "mysecretpassword123" not in stored_content
-    assert "ghp_abcdefghijklmnopqrstuvwxyz" not in stored_content
-    assert "secretpass" not in stored_content
-
-    # Verify redaction markers are present
-    assert "[OPENAI_KEY_REDACTED]" in stored_content
-    assert "[REDACTED]" in stored_content
-    assert "[GITHUB_PAT_REDACTED]" in stored_content
-
-
-def test_mined_patterns(storage):
-    """Test mined pattern storage."""
-    pattern_id = storage.upsert_mined_pattern("import numpy as np", "import")
-    assert pattern_id > 0
-
-    # Upsert same pattern should increment count
-    storage.upsert_mined_pattern("import numpy as np", "import")
-
-    candidates = storage.get_promotion_candidates(threshold=2)
-    assert len(candidates) == 1
-    assert candidates[0].occurrence_count == 2
-
-
 # ========== Validation Tests (Defense-in-Depth) ==========
 
 
@@ -266,32 +183,6 @@ class TestStorageValidation:
         )
         memory = storage.get_memory(memory_id)
         assert set(memory.tags) == {"valid", "good"}
-
-    def test_log_output_empty_content_raises(self, storage):
-        """Empty output content should raise ValidationError."""
-        with pytest.raises(ValidationError, match="cannot be empty"):
-            storage.log_output("")
-
-    def test_log_output_content_too_long_raises(self, tmp_path):
-        """Output content exceeding max length should raise ValidationError."""
-        settings = Settings(db_path=tmp_path / "test.db", max_content_length=50)
-        stor = Storage(settings)
-        with pytest.raises(ValidationError, match="too long"):
-            stor.log_output("x" * 51)
-        stor.close()
-
-    def test_upsert_mined_pattern_empty_raises(self, storage):
-        """Empty pattern should raise ValidationError."""
-        with pytest.raises(ValidationError, match="cannot be empty"):
-            storage.upsert_mined_pattern("", "import")
-
-    def test_upsert_mined_pattern_too_long_raises(self, tmp_path):
-        """Pattern exceeding max length should raise ValidationError."""
-        settings = Settings(db_path=tmp_path / "test.db", max_content_length=50)
-        stor = Storage(settings)
-        with pytest.raises(ValidationError, match="too long"):
-            stor.upsert_mined_pattern("x" * 51, "import")
-        stor.close()
 
     def test_validation_error_is_value_error(self, storage):
         """ValidationError is a ValueError subclass for compatibility."""
@@ -996,28 +887,9 @@ class TestFullCleanup:
         result = storage.run_full_cleanup()
 
         assert "hot_cache_demoted" in result
-        assert "patterns_expired" in result
-        assert "logs_deleted" in result
         assert "memories_deleted" in result
         assert "memories_deleted_by_type" in result
         assert "injections_deleted" in result
-
-    def test_cleanup_old_logs(self, tmp_path):
-        """cleanup_old_logs deletes based on log_retention_days."""
-        settings = Settings(
-            db_path=tmp_path / "test.db",
-            log_retention_days=0,  # Immediate cleanup
-        )
-        stor = Storage(settings)
-
-        # Create a log
-        stor.log_output("Test output content")
-
-        # Cleanup should delete it (retention = 0)
-        deleted = stor.cleanup_old_logs()
-        # Note: log_output already deletes old logs, so this may be 0
-        assert isinstance(deleted, int)
-        stor.close()
 
 
 # ========== Injection Tracking Tests ==========
@@ -1534,34 +1406,6 @@ class TestMemoryRelationships:
 
         relation = storage.link_memories(mid1, mid1, RelationType.RELATES_TO)
         assert relation is None
-
-    def test_get_memories_by_source_log(self, storage):
-        """Can retrieve memories by their source_log_id."""
-        # First create an output log to get a valid log_id
-        log_id = storage.log_output("Test output content")
-
-        # Store memories with this source_log_id
-        mid1, _ = storage.store_memory(
-            "Memory from log 1", MemoryType.PROJECT, source_log_id=log_id
-        )
-        mid2, _ = storage.store_memory(
-            "Memory from log 2", MemoryType.PATTERN, source_log_id=log_id
-        )
-        # Store a memory without source_log_id (should not be returned)
-        mid3, _ = storage.store_memory("Memory without log", MemoryType.PROJECT)
-
-        memories = storage.get_memories_by_source_log(log_id)
-
-        assert len(memories) == 2
-        memory_ids = {m.id for m in memories}
-        assert mid1 in memory_ids
-        assert mid2 in memory_ids
-        assert mid3 not in memory_ids
-
-    def test_get_memories_by_source_log_empty(self, storage):
-        """Returns empty list for non-existent source_log_id."""
-        memories = storage.get_memories_by_source_log(99999)
-        assert memories == []
 
     def test_unlink_memories_specific_type(self, storage):
         """unlink_memories removes specific relationship type."""
@@ -2389,21 +2233,6 @@ class TestSessionProvenance:
         assert session.project_path is not None
         assert len(session.project_path) > 0
 
-    def test_log_output_creates_session_with_project_path(self, storage):
-        """log_output with unknown session_id creates session with project_path.
-
-        Regression test: _update_session_activity was creating sessions with
-        NULL project_path when log_output was called before create_or_get_session.
-        """
-        # Log output with a session that doesn't exist yet
-        storage.log_output("Test output for new session", session_id="auto-log-session")
-
-        # Verify session was created with project_path set (from cwd)
-        session = storage.get_session("auto-log-session")
-        assert session is not None
-        assert session.project_path is not None
-        assert len(session.project_path) > 0
-
     def test_update_session_activity_preserves_existing_project_path(self, storage):
         """_update_session_activity preserves existing project_path on update.
 
@@ -2439,51 +2268,6 @@ class TestSessionProvenance:
         with storage._connection() as conn:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
             assert "session_id" in columns
-
-    def test_log_output_with_session(self, storage):
-        """log_output with session_id increments session log count."""
-        storage.create_or_get_session("log-session")
-
-        storage.log_output("Test output 1", session_id="log-session")
-        storage.log_output("Test output 2", session_id="log-session")
-
-        session = storage.get_session("log-session")
-        assert session.log_count == 2
-
-    def test_log_output_without_session(self, storage):
-        """log_output without session_id works fine."""
-        log_id = storage.log_output("Test output no session")
-        assert log_id > 0
-
-    def test_log_output_stores_session_id_in_log(self, storage):
-        """log_output persists session_id in output_log table."""
-        storage.create_or_get_session("persist-session")
-
-        storage.log_output("Output with session", session_id="persist-session")
-
-        with storage._connection() as conn:
-            row = conn.execute(
-                "SELECT session_id FROM output_log WHERE content = ?",
-                ("Output with session",),
-            ).fetchone()
-            assert row is not None
-            assert row["session_id"] == "persist-session"
-
-    def test_get_recent_outputs_includes_session_id(self, storage):
-        """get_recent_outputs returns session_id in tuple."""
-        storage.create_or_get_session("output-session")
-        storage.log_output("Output for mining", session_id="output-session", project_id="test-proj")
-
-        outputs = storage.get_recent_outputs(hours=1)
-
-        assert len(outputs) >= 1
-        # Tuple format: (log_id, content, timestamp, project_id, session_id)
-        last_output = outputs[0]
-        assert len(last_output) == 5
-        log_id, content, timestamp, project_id, session_id = last_output
-        assert content == "Output for mining"
-        assert project_id == "test-proj"
-        assert session_id == "output-session"
 
 
 class TestBootstrap:
@@ -4105,221 +3889,5 @@ class TestIntentBasedRanking:
             assert mem_bug.intent_boost is not None and mem_bug.intent_boost > 0
             # Convention category should have no intent boost for this query
             assert mem_conv.intent_boost is None or mem_conv.intent_boost == 0
-        finally:
-            stor.close()
-
-
-class TestMiningIntegration:
-    """Integration tests for pattern mining → memory creation → knowledge graph linking."""
-
-    @pytest.fixture
-    def mining_storage(self, tmp_path):
-        """Storage configured for mining tests."""
-        settings = Settings(
-            db_path=tmp_path / "mining.db",
-            semantic_dedup_enabled=False,
-            mining_auto_approve_enabled=True,
-            mining_auto_approve_confidence=0.3,  # Low threshold for testing
-            mining_auto_approve_occurrences=2,  # Quick promotion for testing
-            ner_enabled=False,  # Disable NER to keep tests focused
-        )
-        stor = Storage(settings)
-        yield stor
-        stor.close()
-
-    def test_run_mining_creates_memories_from_patterns(self, mining_storage):
-        """Mining should create memories from extracted patterns."""
-        from memory_mcp.mining import run_mining
-
-        # Log output containing recognizable patterns
-        mining_storage.log_output(
-            "To install the package, run: pip install memory-mcp\n"
-            "Then configure with: export MEMORY_MCP_DIR=/path/to/dir\n"
-            "The project uses Python 3.11 and requires pgvector."
-        )
-
-        # Run mining
-        result = run_mining(mining_storage, hours=1)
-
-        assert result["outputs_processed"] == 1
-        assert result["patterns_found"] >= 1
-
-    def test_run_mining_inherits_project_id_from_log(self, mining_storage):
-        """Mined memories should inherit project_id from source log."""
-        from memory_mcp.mining import run_mining
-
-        # Log output with specific project_id
-        log_id = mining_storage.log_output(
-            "Configuration: Set DATABASE_URL=postgres://localhost:5432/mydb\n"
-            "Use pip install -r requirements.txt to install dependencies.",
-            project_id="test-project-123",
-        )
-
-        # Run mining
-        run_mining(mining_storage, hours=1, project_id="test-project-123")
-
-        # Check memories have correct project_id
-        memories = mining_storage.get_memories_by_source_log(log_id)
-        for memory in memories:
-            assert memory.source == MemorySource.MINED
-
-    def test_run_mining_auto_promotes_after_occurrences(self, mining_storage):
-        """Patterns should be promoted to hot cache after reaching occurrence threshold."""
-        from memory_mcp.mining import run_mining
-
-        # Log the same pattern multiple times to reach threshold (2)
-        mining_storage.log_output("pip install numpy\n" * 3)
-        mining_storage.log_output("pip install numpy again for another occurrence")
-
-        # Run mining
-        result = run_mining(mining_storage, hours=1)
-
-        # With 2+ occurrences, should see some promotions
-        # Note: may be 0 if patterns don't meet other criteria
-        assert result["promoted_to_hot"] >= 0
-
-    def test_run_mining_creates_knowledge_graph_links(self, tmp_path):
-        """Mining should create knowledge graph links for entity patterns."""
-        from memory_mcp.mining import run_mining
-
-        settings = Settings(
-            db_path=tmp_path / "kg.db",
-            semantic_dedup_enabled=False,
-            mining_auto_approve_enabled=True,
-            mining_auto_approve_confidence=0.3,
-            ner_enabled=True,  # Enable NER for entity extraction
-            ner_confidence_threshold=0.5,
-        )
-        stor = Storage(settings)
-
-        try:
-            # Log content with entities that should be extracted
-            stor.log_output(
-                "We decided to use PostgreSQL for the database layer. "
-                "The FastAPI framework handles our REST endpoints. "
-                "Authentication is managed by Auth0."
-            )
-
-            # Run mining
-            result = run_mining(stor, hours=1)
-
-            # Should have created some entity links
-            assert result["entity_links_created"] >= 0
-
-        finally:
-            stor.close()
-
-    def test_pattern_to_memory_linking(self, mining_storage):
-        """Mined patterns should be linked to their memory via pattern_id."""
-        from memory_mcp.mining import run_mining
-
-        mining_storage.log_output(
-            "Build command: make build && make test\nDeploy with: kubectl apply -f deploy.yaml"
-        )
-
-        run_mining(mining_storage, hours=1)
-
-        # Get patterns that should have been created
-        candidates = mining_storage.get_promotion_candidates(threshold=1)
-
-        # Patterns should exist in mined_patterns table
-        assert len(candidates) >= 0  # May be empty if no patterns meet criteria
-
-    def test_run_mining_skips_sensitive_patterns(self, mining_storage):
-        """Mining should skip patterns containing potential secrets."""
-        from memory_mcp.mining import run_mining
-
-        # Log content with secret-like patterns
-        mining_storage.log_output(
-            "Set your API key: api_key=sk-1234567890abcdef\n"
-            "Connection: postgres://user:secretpassword@localhost/db"
-        )
-
-        result = run_mining(mining_storage, hours=1)
-
-        # Should process but skip sensitive patterns
-        assert result["outputs_processed"] == 1
-
-        # Verify no secrets were stored
-        memories = mining_storage.recall("api_key", limit=10).memories
-        for mem in memories:
-            assert "sk-1234567890" not in mem.content
-
-    def test_run_mining_updates_existing_pattern_count(self, mining_storage):
-        """Mining the same pattern twice should increment occurrence count."""
-        from memory_mcp.mining import run_mining
-
-        # First occurrence
-        mining_storage.log_output("Run tests with: pytest -v")
-        run_mining(mining_storage, hours=1)
-
-        # Second occurrence
-        mining_storage.log_output("Execute pytest -v for test results")
-        result = run_mining(mining_storage, hours=1)
-
-        # Should have updated existing pattern
-        assert result["updated_patterns"] >= 0
-
-    def test_run_mining_skips_short_patterns(self, tmp_path):
-        """Mining should skip patterns shorter than min_pattern_length."""
-        from memory_mcp.mining import run_mining
-
-        settings = Settings(
-            db_path=tmp_path / "short.db",
-            semantic_dedup_enabled=False,
-            mining_auto_approve_enabled=True,
-            mining_auto_approve_confidence=0.1,
-            mining_min_pattern_length=50,  # High threshold to test
-            ner_enabled=False,
-        )
-        stor = Storage(settings)
-
-        try:
-            # Log content with a short pattern
-            stor.log_output("pip install x")  # Very short
-
-            run_mining(stor, hours=1)
-
-            # Should skip short patterns
-            memories = stor.recall("pip install", limit=10, threshold=0.1).memories
-            assert len(memories) == 0  # Nothing stored due to min length
-        finally:
-            stor.close()
-
-    def test_run_mining_skips_command_snippet_from_memories(self, tmp_path):
-        """Mining should not store command/snippet patterns as memories."""
-        from memory_mcp.mining import PatternType, extract_patterns, run_mining
-
-        settings = Settings(
-            db_path=tmp_path / "cmd_skip.db",
-            semantic_dedup_enabled=False,
-            mining_auto_approve_enabled=True,
-            mining_auto_approve_confidence=0.1,
-            mining_min_pattern_length=10,  # Low to allow commands
-            ner_enabled=False,
-        )
-        stor = Storage(settings)
-
-        try:
-            # First verify that extract_patterns does find commands
-            # Note: Command patterns require backticks: "run: `command`"
-            test_content = "Run: `pip install memory-mcp`"
-            patterns = extract_patterns(test_content, ner_enabled=False)
-            command_patterns = [p for p in patterns if p.pattern_type == PatternType.COMMAND]
-            assert len(command_patterns) > 0, "extract_patterns should find command"
-
-            # Now log and mine - command should not become a memory
-            stor.log_output(test_content)
-            result = run_mining(stor, hours=1)
-
-            # Command pattern should be found but not stored as memory
-            # Check mined_patterns table has it
-            with stor._connection() as conn:
-                rows = conn.execute("SELECT * FROM mined_patterns").fetchall()
-                assert len(rows) >= 1 or result["patterns_found"] >= 1
-
-            # But no memories should be created (commands are skipped)
-            memories = stor.recall("pip install", limit=10, threshold=0.1).memories
-            assert len(memories) == 0
         finally:
             stor.close()

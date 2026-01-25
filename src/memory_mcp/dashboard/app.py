@@ -1,6 +1,5 @@
 """FastAPI application for the Memory MCP dashboard."""
 
-import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 
 from memory_mcp import __version__
 from memory_mcp.config import get_settings
-from memory_mcp.storage import MemorySource, MemoryType, PatternStatus, Storage
+from memory_mcp.storage import MemoryType, Storage
 
 # Template directory
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -396,116 +395,6 @@ async def api_hot_cache_list(request: Request) -> HTMLResponse:
             "memories": hot_memories,
         },
     )
-
-
-# ============================================================================
-# Mining Page and API
-# ============================================================================
-
-
-def _get_mining_stats(s: Storage) -> dict:
-    """Get mining statistics."""
-    # Count output logs
-    output_count = s._conn.execute("SELECT COUNT(*) FROM output_log").fetchone()[0]
-    # Count mined patterns by status
-    pattern_stats = s._conn.execute(
-        """
-        SELECT status, COUNT(*) as count
-        FROM mined_patterns
-        GROUP BY status
-        """
-    ).fetchall()
-    stats = {row["status"]: row["count"] for row in pattern_stats}
-    return {
-        "output_count": output_count,
-        "total_patterns": sum(stats.values()),
-        "pending_count": stats.get("pending", 0),
-        "promoted_count": stats.get("promoted", 0),
-        "rejected_count": stats.get("rejected", 0),
-    }
-
-
-@app.get("/mining", response_class=HTMLResponse)
-async def mining_page(request: Request) -> HTMLResponse:
-    """Pattern mining review page."""
-    s = get_storage()
-    mining_stats = _get_mining_stats(s)
-    patterns = s.get_promotion_candidates(threshold=1, status=PatternStatus.PENDING)
-
-    return templates.TemplateResponse(
-        "mining.html",
-        {
-            "request": request,
-            "mining_stats": mining_stats,
-            "patterns": patterns[:50],  # Limit display
-            "active_page": "mining",
-        },
-    )
-
-
-@app.post("/api/mining/run", response_class=HTMLResponse)
-async def api_run_mining(request: Request) -> HTMLResponse:
-    """Run pattern mining and return results."""
-    from memory_mcp.mining import run_mining
-
-    s = get_storage()
-    result = run_mining(s, hours=24)
-
-    return HTMLResponse(
-        content=f"""
-        <div class="bg-green-500/10 border border-green-500/30 rounded-lg p-4 text-green-400">
-            <p class="font-medium">Mining completed</p>
-            <p class="text-sm mt-1">
-                Processed {result["outputs_processed"]} outputs,
-                found {result["patterns_found"]} patterns,
-                created {result["new_memories"]} new memories
-            </p>
-        </div>
-        """
-    )
-
-
-def _pattern_type_to_memory_type(pattern_type: str) -> MemoryType:
-    """Map pattern type to memory type."""
-    if pattern_type == "fact":
-        return MemoryType.PROJECT
-    if pattern_type == "command":
-        return MemoryType.REFERENCE
-    return MemoryType.PATTERN
-
-
-@app.post("/api/mining/{pattern_id}/approve", response_class=HTMLResponse)
-async def api_approve_pattern(pattern_id: int, request: Request) -> HTMLResponse:
-    """Approve a mined pattern and promote to memory."""
-    s = get_storage()
-    pattern = s.get_mined_pattern(pattern_id)
-    if not pattern:
-        return HTMLResponse(content="")
-
-    # Create a session for dashboard approvals
-    session_id = str(uuid.uuid4())
-    s.create_or_get_session(session_id, topic="Dashboard approval")
-
-    mem_type = _pattern_type_to_memory_type(pattern.pattern_type)
-    memory_id, _ = s.store_memory(
-        content=pattern.pattern,
-        memory_type=mem_type,
-        source=MemorySource.MINED,
-        tags=["approved"],
-        session_id=session_id,
-    )
-    s.promote_to_hot(memory_id)
-    s.delete_mined_pattern(pattern_id)
-
-    return HTMLResponse(content="")
-
-
-@app.post("/api/mining/{pattern_id}/reject", response_class=HTMLResponse)
-async def api_reject_pattern(pattern_id: int, request: Request) -> HTMLResponse:
-    """Reject a mined pattern."""
-    s = get_storage()
-    s.update_pattern_status(pattern_id, PatternStatus.REJECTED)
-    return HTMLResponse(content="")
 
 
 # ============================================================================

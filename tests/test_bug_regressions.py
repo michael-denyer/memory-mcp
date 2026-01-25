@@ -704,23 +704,6 @@ class TestTrustScoring:
         assert mem.trust_score == storage.settings.trust_score_mined
         assert mem.trust_score == 0.7
 
-    def test_provenance_tracked_for_mined(self, storage):
-        """Mined memories should track provenance (source_log_id, extracted_at)."""
-        # First log some output
-        log_id = storage.log_output("Some output to mine from")
-
-        # Store mined memory with source_log_id
-        mid, _ = storage.store_memory(
-            "Pattern from output",
-            MemoryType.PATTERN,
-            source=MemorySource.MINED,
-            source_log_id=log_id,
-        )
-
-        mem = storage.get_memory(mid)
-        assert mem.source_log_id == log_id
-        assert mem.extracted_at is not None
-
     def test_manual_memory_no_extraction_timestamp(self, storage):
         """Manual memories should not have extracted_at set."""
         mid, _ = storage.store_memory(

@@ -29,213 +29,17 @@ def cli(ctx: click.Context, use_json: bool) -> None:
     ctx.obj["json"] = use_json
 
 
-@cli.command("log-output")
-@click.option("-c", "--content", help="Content to log (or use stdin)")
-@click.option(
-    "-f", "--file", "filepath", type=click.Path(exists=True), help="Read content from file"
-)
-@click.option("-p", "--project-id", help="Project ID override (default: derived from cwd)")
-@click.option("-s", "--session-id", help="Session ID for provenance tracking")
-@click.pass_context
-def log_output(
-    ctx: click.Context,
-    content: str | None,
-    filepath: str | None,
-    project_id: str | None,
-    session_id: str | None,
-) -> None:
-    """Log output content for pattern mining."""
-    settings = get_settings()
-    use_json = ctx.obj["json"]
-
-    if not settings.mining_enabled:
-        click.echo("Mining is disabled", err=True)
-        raise SystemExit(1)
-
-    # Read content from file or stdin
-    if filepath:
-        content = Path(filepath).read_text(encoding="utf-8")
-    elif content is None:
-        content = sys.stdin.read()
-
-    if not content.strip():
-        click.echo("No content to log", err=True)
-        raise SystemExit(1)
-
-    if len(content) > settings.max_content_length:
-        click.echo(
-            f"Content too long ({len(content)} chars). Max: {settings.max_content_length}",
-            err=True,
-        )
-        raise SystemExit(1)
-
-    # Use explicit project_id or derive from cwd
-    if project_id is None and settings.project_awareness_enabled:
-        project_id = get_current_project_id()
-
-    storage = Storage(settings)
-    try:
-        log_id = storage.log_output(content, project_id=project_id, session_id=session_id)
-        if use_json:
-            click.echo(json.dumps({"success": True, "log_id": log_id}))
-        else:
-            click.echo(f"Logged output (id={log_id})")
-    finally:
-        storage.close()
-
-
-@cli.command("log-response")
-@click.pass_context
-def log_response(ctx: click.Context) -> None:
-    """Log Claude's response from hook input for pattern mining.
-
-    This is called by Claude Code's Stop hook. It reads the hook input from stdin,
-    extracts the transcript path, and logs the assistant's last response.
-
-    The hook input JSON should contain either:
-    - transcript_path: Direct path to the transcript file
-    - session_id + project_path: To derive the transcript location
-    """
-    import subprocess
-
-    settings = get_settings()
-
-    if not settings.mining_enabled:
-        return  # Silent exit if mining disabled
-
-    # Read hook input from stdin
-    hook_input = sys.stdin.read().strip()
-    if not hook_input:
-        return
-
-    try:
-        data = json.loads(hook_input)
-    except json.JSONDecodeError:
-        return
-
-    # Find transcript path (multiple formats supported)
-    transcript_path = (
-        data.get("transcript_path")
-        or data.get("transcriptPath")
-        or data.get("transcript", {}).get("path")  # Nested format
-    )
-
-    if not transcript_path or not Path(transcript_path).exists():
-        # Try to derive from session_id
-        session_id = data.get("session_id") or data.get("sessionId")
-        project_path = (
-            data.get("project_path")
-            or data.get("projectPath")
-            or data.get("cwd")
-            or data.get("workspace_path")
-        )
-
-        if session_id and project_path:
-            project_slug = project_path.replace("/", "-")
-            candidate = Path.home() / ".claude" / "projects" / project_slug / f"{session_id}.jsonl"
-            if candidate.exists():
-                transcript_path = str(candidate)
-
-    if not transcript_path or not Path(transcript_path).exists():
-        return
-
-    # Read last 200 lines of transcript (JSONL format)
-    try:
-        result = subprocess.run(
-            ["tail", "-200", transcript_path],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        transcript_tail = result.stdout
-    except Exception:
-        return
-
-    if not transcript_tail:
-        return
-
-    # Extract last assistant message
-    last_response = None
-    last_user_msg = None
-
-    for line in reversed(transcript_tail.strip().split("\n")):
-        try:
-            entry = json.loads(line)
-            msg = entry.get("message", {})
-            role = msg.get("role")
-            content = msg.get("content", [])
-
-            text_parts = [c.get("text", "") for c in content if c.get("type") == "text"]
-            text = "\n".join(text_parts)
-
-            if role == "assistant" and text and last_response is None:
-                last_response = text
-            elif role == "user" and text and last_user_msg is None:
-                last_user_msg = text[:500]  # Truncate user message
-
-            if last_response and last_user_msg:
-                break
-        except json.JSONDecodeError:
-            continue
-
-    if not last_response:
-        return
-
-    # Combine user message with response for richer context
-    if last_user_msg:
-        content = f"USER: {last_user_msg}\n\nASSISTANT: {last_response}"
-    else:
-        content = last_response
-
-    # Skip if too short
-    if len(content) < 20:
-        return
-
-    # Truncate if too long
-    if len(content) > settings.max_content_length:
-        content = content[: settings.max_content_length]
-
-    # Log the content
-    project_id = get_current_project_id() if settings.project_awareness_enabled else None
-
-    storage = Storage(settings)
-    try:
-        storage.log_output(content, project_id=project_id)
-    finally:
-        storage.close()
-
-    # Spawn async mining (doesn't block the hook)
-    try:
-        mining_args = ["memory-mcp-cli", "run-mining", "--hours", "1"]
-        if project_id:
-            mining_args.extend(["--project-id", project_id])
-        subprocess.Popen(
-            mining_args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,  # Detach from parent process
-        )
-    except Exception:
-        pass  # Mining is optional
-
-
 @cli.command("pre-compact")
-@click.option("--skip-mining", is_flag=True, help="Skip background mining")
 @click.pass_context
-def pre_compact(ctx: click.Context, skip_mining: bool) -> None:
+def pre_compact(ctx: click.Context) -> None:
     """Consolidate session memories before conversation compaction.
 
     Called by Claude Code's PreCompact hook. Reads hook input from stdin,
     extracts session info, and runs end_session() to promote top episodic
     memories to long-term storage.
 
-    Also spawns background mining to extract patterns from output logs.
-    Mining runs async and doesn't block compaction.
-
     Designed to be quiet - exits 0 even on errors to not block compaction.
     """
-    import subprocess
-
     settings = get_settings()
     use_json = ctx.obj["json"]
 
@@ -266,7 +70,6 @@ def pre_compact(ctx: click.Context, skip_mining: bool) -> None:
         return
 
     storage = Storage(settings)
-    mining_started = False
     try:
         # Run end_session to promote episodic memories to long-term storage
         result = storage.end_session(
@@ -274,19 +77,6 @@ def pre_compact(ctx: click.Context, skip_mining: bool) -> None:
             promote_top=True,
             promote_type=MemoryType.PROJECT,
         )
-
-        # Spawn background mining (async, doesn't block)
-        if not skip_mining:
-            try:
-                subprocess.Popen(
-                    ["memory-mcp-cli", "run-mining", "--hours", "24"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,  # Detach from parent process
-                )
-                mining_started = True
-            except Exception:
-                pass  # Mining is optional, don't fail if it can't start
 
         if use_json:
             click.echo(
@@ -297,7 +87,6 @@ def pre_compact(ctx: click.Context, skip_mining: bool) -> None:
                         "session_id": session_id,
                         "promoted_count": result.get("promoted_count", 0),
                         "top_memories": result.get("top_memories", []),
-                        "mining_started": mining_started,
                     }
                 )
             )
@@ -305,50 +94,11 @@ def pre_compact(ctx: click.Context, skip_mining: bool) -> None:
             promoted = result.get("promoted_count", 0)
             if promoted > 0:
                 click.echo(f"Pre-compact: promoted {promoted} memories from session")
-            if mining_started:
-                click.echo("Pre-compact: mining started in background")
     except Exception as e:
         # Silent failure for hooks - don't block compaction
         if use_json:
             click.echo(json.dumps({"success": False, "error": str(e)}))
         # Always exit 0 to not block compaction
-    finally:
-        storage.close()
-
-
-@cli.command("run-mining")
-@click.option("--hours", default=24, help="Hours of logs to process")
-@click.option("-p", "--project-id", help="Project ID override (default: derived from cwd)")
-@click.pass_context
-def run_mining(ctx: click.Context, hours: int, project_id: str | None) -> None:
-    """Run pattern mining on logged outputs."""
-    settings = get_settings()
-    use_json = ctx.obj["json"]
-
-    if not settings.mining_enabled:
-        click.echo("Mining is disabled", err=True)
-        raise SystemExit(1)
-
-    from memory_mcp.mining import run_mining as do_mining
-
-    storage = Storage(settings)
-    try:
-        # Use explicit project_id or derive from cwd
-        if project_id is None and settings.project_awareness_enabled:
-            project_id = get_current_project_id()
-
-        result = do_mining(storage, hours=hours, project_id=project_id)
-        if use_json:
-            click.echo(json.dumps(result))
-        else:
-            console.print("[bold]Mining Results[/bold]")
-            console.print(f"  Outputs processed: [cyan]{result['outputs_processed']}[/cyan]")
-            console.print(f"  Patterns found: [cyan]{result['patterns_found']}[/cyan]")
-            console.print(f"  New memories: [green]{result['new_memories']}[/green]")
-            console.print(f"  Updated patterns: [yellow]{result['updated_patterns']}[/yellow]")
-            promoted = result.get("promoted_to_hot", 0)
-            if promoted > 0:
-                console.print(f"  Promoted to hot: [magenta]{promoted}[/magenta]")
     finally:
         storage.close()
 
@@ -570,6 +320,112 @@ def bootstrap(
             console.print(f"  [red]Warnings: {len(errors)}[/red]")
             for err in errors:
                 console.print(f"    [dim]{err}[/dim]")
+
+
+@cli.command("recall-handoffs")
+@click.option(
+    "-d",
+    "--days",
+    default=7,
+    type=int,
+    help="Days to look back for handoffs (default: 7)",
+)
+@click.option(
+    "-n",
+    "--limit",
+    default=5,
+    type=int,
+    help="Max handoffs to return (default: 5)",
+)
+@click.option(
+    "-q",
+    "--quiet",
+    is_flag=True,
+    help="Suppress output if no handoffs found",
+)
+@click.pass_context
+def recall_handoffs(ctx: click.Context, days: int, limit: int, quiet: bool) -> None:
+    """Recall recent session handoffs for the current project.
+
+    Called by SessionStart hook to restore context from previous sessions.
+    Outputs handoff memories to stdout for Claude to read.
+
+    Examples:
+
+        # Recall handoffs from last 7 days
+        memory-mcp-cli recall-handoffs
+
+        # Recall handoffs from last 30 days
+        memory-mcp-cli recall-handoffs --days 30
+
+        # Quiet mode for hooks (no output if empty)
+        memory-mcp-cli recall-handoffs --quiet
+    """
+    from datetime import datetime, timedelta, timezone
+
+    use_json = ctx.obj["json"]
+    settings = get_settings()
+
+    # Get current project
+    project_id = None
+    if settings.project_awareness_enabled:
+        project_id = get_current_project_id()
+
+    storage = Storage(settings)
+    try:
+        # Query memories with handoff tag from last N days
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        with storage._connection() as conn:
+            # Find handoff memories for this project
+            query = """
+                SELECT m.id, m.content, m.category, m.created_at
+                FROM memories m
+                JOIN memory_tags mt ON m.id = mt.memory_id
+                WHERE mt.tag = 'handoff'
+                AND m.created_at > ?
+                AND (m.project_id = ? OR m.project_id IS NULL OR ? IS NULL)
+                ORDER BY m.created_at DESC
+                LIMIT ?
+            """
+            rows = conn.execute(
+                query, (cutoff.isoformat(), project_id, project_id, limit)
+            ).fetchall()
+
+        if not rows:
+            if quiet:
+                return
+            if use_json:
+                click.echo(json.dumps({"success": True, "handoffs": [], "count": 0}))
+            else:
+                click.echo("No recent handoffs found.")
+            return
+
+        handoffs = []
+        for row in rows:
+            handoffs.append(
+                {
+                    "id": row["id"],
+                    "content": row["content"],
+                    "category": row["category"],
+                    "created_at": row["created_at"],
+                }
+            )
+
+        if use_json:
+            click.echo(json.dumps({"success": True, "handoffs": handoffs, "count": len(handoffs)}))
+        else:
+            # Output in a format Claude can easily read
+            click.echo("=" * 60)
+            click.echo("SESSION HANDOFFS (from previous sessions)")
+            click.echo("=" * 60)
+            for h in handoffs:
+                click.echo(f"\n[{h['category']}] {h['created_at'][:10]}")
+                click.echo(h["content"])
+            click.echo("\n" + "=" * 60)
+
+    finally:
+        storage.close()
 
 
 @cli.command("db-rebuild-vectors")

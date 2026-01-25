@@ -30,18 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "memory-mcp-cli bootstrap --quiet"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "memory-mcp-cli log-response"
+            "command": "memory-mcp-cli recall-handoffs --quiet"
           }
         ]
       }
@@ -51,8 +40,8 @@
         "matcher": "",
         "hooks": [
           {
-            "type": "command",
-            "command": "memory-mcp-cli pre-compact"
+            "type": "prompt",
+            "prompt": "Before compaction, write a session handoff summary using /handoff so the next Claude instance can continue where you left off. Include: what we were working on, key decisions made, gotchas discovered, and next steps. Skip if this was a trivial session."
           }
         ]
       }

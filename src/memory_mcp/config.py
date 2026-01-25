@@ -63,32 +63,6 @@ class Settings(BaseSettings):
         default=7.0, description="Half-life in days for recency decay"
     )
 
-    # Mining
-    mining_enabled: bool = Field(default=True, description="Enable pattern mining")
-    mining_min_pattern_length: int = Field(
-        default=30, description="Minimum character length for mined patterns (skip short fragments)"
-    )
-    log_retention_days: int = Field(default=7, description="Days to retain output logs")
-
-    # Auto-approve high-confidence patterns (reduces manual intervention)
-    mining_auto_approve_enabled: bool = Field(
-        default=True, description="Auto-approve patterns meeting confidence/occurrence thresholds"
-    )
-    mining_auto_approve_confidence: float = Field(
-        default=0.5, description="Minimum confidence for auto-approval"
-    )
-    mining_auto_approve_occurrences: int = Field(
-        default=3, description="Minimum occurrences for auto-approval"
-    )
-
-    # NER-based entity extraction (requires optional transformers dependency)
-    ner_enabled: bool = Field(
-        default=True, description="Enable NER entity extraction during pattern mining"
-    )
-    ner_confidence_threshold: float = Field(
-        default=0.7, description="Minimum confidence for NER entity extraction (0-1)"
-    )
-
     # Logging
     log_level: str = Field(default="INFO", description="Log level: DEBUG, INFO, WARNING, ERROR")
     log_format: str = Field(
@@ -440,62 +414,3 @@ def get_settings() -> Settings:
 def ensure_data_dir(settings: Settings) -> None:
     """Ensure data directory exists."""
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
-
-
-def check_stop_hook_configured() -> bool:
-    """Check if Claude Code Stop hook is configured for memory output logging.
-
-    Returns:
-        True if hook is configured, False otherwise.
-    """
-    import json
-
-    settings_path = Path.home() / ".claude" / "settings.json"
-    if not settings_path.exists():
-        return False
-
-    try:
-        with open(settings_path) as f:
-            settings = json.load(f)
-
-        hooks = settings.get("hooks", {})
-        stop_hooks = hooks.get("Stop", [])
-
-        # Check if any Stop hook references memory-mcp
-        for hook_group in stop_hooks:
-            for hook in hook_group.get("hooks", []):
-                command = hook.get("command", "")
-                if "memory" in command.lower() and "log" in command.lower():
-                    return True
-
-        return False
-    except (json.JSONDecodeError, OSError):
-        return False
-
-
-def get_hook_install_instructions() -> str:
-    """Get instructions for installing the Stop hook."""
-
-    # Try to detect the memory-mcp install path
-    script_path = Path(__file__).parent.parent.parent / "hooks" / "memory-log-response.sh"
-    if not script_path.exists():
-        script_path = Path("<path-to-memory-mcp>") / "hooks" / "memory-log-response.sh"
-
-    return f"""Pattern mining requires a Claude Code hook to log outputs.
-
-To install, ask Claude: "Add the memory-mcp Stop hook to my settings"
-
-Or manually add to ~/.claude/settings.json:
-{{
-  "hooks": {{
-    "Stop": [{{
-      "matcher": "",
-      "hooks": [{{
-        "type": "command",
-        "command": "{script_path}"
-      }}]
-    }}]
-  }}
-}}
-
-To disable this warning, set MEMORY_MCP_WARN_MISSING_HOOK=false"""

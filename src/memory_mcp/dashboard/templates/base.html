@@ -54,10 +54,6 @@
             display: none;
             transition: opacity 200ms ease-in;
         }
-        .htmx-request .mining-idle {
-            display: none;
-        }
-
         /* Fade out animation for deleted items */
         .htmx-swapping {
             opacity: 0;
@@ -92,11 +88,6 @@
                        class="px-3 py-2 rounded-md text-sm font-medium transition-colors
                               {% if active_page == 'memories' %}bg-gray-800 text-white{% else %}text-gray-400 hover:text-white hover:bg-gray-800{% endif %}">
                         Memories
-                    </a>
-                    <a href="/mining"
-                       class="px-3 py-2 rounded-md text-sm font-medium transition-colors
-                              {% if active_page == 'mining' %}bg-gray-800 text-white{% else %}text-gray-400 hover:text-white hover:bg-gray-800{% endif %}">
-                        Mining
                     </a>
                     <a href="/injections"
                        class="px-3 py-2 rounded-md text-sm font-medium transition-colors
