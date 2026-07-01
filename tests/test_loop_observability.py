@@ -7,8 +7,10 @@ import pytest
 
 from memory_mcp.migrations import SCHEMA_VERSION
 from memory_mcp.mining import run_mining
+from memory_mcp.models import MemorySource, MemoryType
 from memory_mcp.probe import run_probe
 from memory_mcp.storage import Storage
+from memory_mcp.storage.injection_tracking import distinctive_tokens
 from memory_mcp.storage.mining_runs import PROBE_SESSION_ID
 
 
@@ -259,5 +261,60 @@ class TestProbe:
             result = run_probe(storage)  # pre-sweep + fresh round trip
             assert result.ok
             assert _residue(storage) == (0, 0, 0)
+        finally:
+            storage.close()
+
+
+class TestDistinctiveTokens:
+    def test_identifier_shapes_are_distinctive(self):
+        tokens = distinctive_tokens("run deploy-staging via make_target or FooBarBaz v1.2.3")
+        assert "deploy-staging" in tokens
+        assert "make_target" in tokens
+        assert "FooBarBaz" in tokens
+
+    def test_common_words_are_not(self):
+        assert distinctive_tokens("the quick brown foxes jumped over everything") == []
+
+
+class TestMarkUsedMemories:
+    def _inject(self, storage, content):
+        memory_id, _ = storage.store_memory(
+            content=content, memory_type=MemoryType.PATTERN, source=MemorySource.MINED
+        )
+        storage.log_injection(memory_id, resource="hot-cache", session_id="s1")
+        return memory_id
+
+    def _used(self, storage, memory_id):
+        with storage._connection() as conn:
+            return conn.execute(
+                "SELECT used_count, last_used_at FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+
+    def test_true_positive_bumps_used_count(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            mid = self._inject(storage, "use `make deploy-staging` for releases")
+            n = storage.mark_used_memories("I ran make deploy-staging and it worked")
+            assert n == 1
+            used_count, last_used_at = self._used(storage, mid)
+            assert used_count == 1 and last_used_at is not None
+        finally:
+            storage.close()
+
+    def test_near_miss_common_words_do_not_match(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            mid = self._inject(storage, "always check the command output first")
+            assert storage.mark_used_memories("the command failed with an error") == 0
+            assert self._used(storage, mid)[0] == 0
+        finally:
+            storage.close()
+
+    def test_injected_but_unused_untouched(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            mid = self._inject(storage, "use `make deploy-staging` for releases")
+            assert storage.mark_used_memories("unrelated response text entirely") == 0
+            assert self._used(storage, mid)[0] == 0
         finally:
             storage.close()
