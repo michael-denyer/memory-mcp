@@ -7,6 +7,7 @@ import pytest
 
 from memory_mcp.migrations import SCHEMA_VERSION
 from memory_mcp.mining import run_mining
+from memory_mcp.probe import run_probe
 from memory_mcp.storage import Storage
 from memory_mcp.storage.mining_runs import PROBE_SESSION_ID
 
@@ -202,5 +203,61 @@ class TestRunMiningPersistence:
             storage.log_output("import beta_only_lib", session_id="s-beta")
             result = run_mining(storage, hours=1, session_id="s-alpha", record_run=False)
             assert result["outputs_processed"] == 1
+        finally:
+            storage.close()
+
+
+def _residue(storage) -> tuple[int, int, int]:
+    with storage._connection() as conn:
+        outputs = conn.execute(
+            "SELECT COUNT(*) FROM output_log WHERE session_id = ?", (PROBE_SESSION_ID,)
+        ).fetchone()[0]
+        patterns = conn.execute(
+            "SELECT COUNT(*) FROM mined_patterns WHERE pattern LIKE '%memory_probe_%'"
+        ).fetchone()[0]
+        memories = conn.execute(
+            "SELECT COUNT(*) FROM memories WHERE content LIKE '%memory_probe_%'"
+        ).fetchone()[0]
+    return outputs, patterns, memories
+
+
+class TestProbe:
+    def test_round_trip_succeeds_on_clean_db(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            result = run_probe(storage)
+            assert result.ok, f"failed at {result.stage}: {result.error}"
+        finally:
+            storage.close()
+
+    def test_no_residue_after_success(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            run_probe(storage)
+            assert _residue(storage) == (0, 0, 0)
+            assert _count_runs(storage) == 0  # deviation 1: never records a run
+        finally:
+            storage.close()
+
+    def test_failure_reports_stage(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            with patch("memory_mcp.probe.run_mining", side_effect=RuntimeError("wiring")):
+                result = run_probe(storage)
+            assert not result.ok
+            assert result.stage == "mine"
+            assert "wiring" in result.error
+        finally:
+            storage.close()
+
+    def test_leftovers_excluded_from_health_and_swept_by_next_probe(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            with patch("memory_mcp.probe.run_mining", side_effect=RuntimeError("wiring")):
+                run_probe(storage)  # leaves the sentinel output behind
+            assert storage.get_loop_health()["outputs_24h"] == 0  # marker excluded
+            result = run_probe(storage)  # pre-sweep + fresh round trip
+            assert result.ok
+            assert _residue(storage) == (0, 0, 0)
         finally:
             storage.close()
