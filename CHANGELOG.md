@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Loop round-trip probe** - `hook-check` now performs a live log→mine→assert→cleanup probe
+  (`--no-probe` to skip), catching wiring bugs the day they land
+- **Mining run history** - Every `run_mining` records outcomes to the new `mining_runs` table
+  (schema v18) — the DB, not logs, is the source of truth for loop health
+- **Learning-loop health** - `status` gains a Learning Loop section; the dashboard mining page
+  shows a green/amber/red health banner
+- **Session-start staleness warning** - Bootstrap warns (once per day) when the loop hasn't
+  produced in 7 days or is erroring; disable with `MEMORY_MCP_LOOP_WARNINGS_ENABLED=0`
+- **Injected-memory usage tracking** - `log-response` marks injected memories used when their
+  distinctive tokens appear in responses
+- **Utility decay** - Mined memories never retrieved or used within 30 days are demoted from
+  the hot cache and utility-floored (nothing is deleted; pinned and non-mined memories exempt)
+- **recall-nudge skill** - Plugin skill nudging a `recall` call on retrospective questions
+
 ### Fixed
 
 - **Stop hook mining call** - `hooks/memory-log-response.sh` passed `--session-id` to
