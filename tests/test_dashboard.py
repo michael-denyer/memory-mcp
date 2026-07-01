@@ -130,3 +130,20 @@ class TestMiningLoopBanner:
             '<p class="text-xs text-gray-400">Output Logs</p>\n'
             '            <p class="text-2xl font-bold text-white">0</p>'
         ) in html
+
+
+class TestInjectionsPage:
+    # Storage opens its SQLite connection lazily, so on a fresh instance
+    # s._conn is None until the first query runs. These requests must be the
+    # first thing to touch the database.
+
+    def test_page_loads_on_cold_storage(self, client):
+        response = client.get("/injections")
+        assert response.status_code == 200
+        assert "Injection History" in response.text
+
+    def test_api_partial_loads_on_cold_storage(self, client):
+        # Hits _get_injections without _get_injection_stats running first,
+        # so it can't rely on an earlier call having opened the connection.
+        response = client.get("/api/injections")
+        assert response.status_code == 200

@@ -528,19 +528,19 @@ async def api_reject_pattern(pattern_id: int, request: Request) -> HTMLResponse:
 
 def _get_injection_stats(s: Storage) -> dict:
     """Get injection statistics."""
-    conn = s._conn
-    today = conn.execute(
-        "SELECT COUNT(*) FROM injection_log WHERE injected_at >= date('now')"
-    ).fetchone()[0]
-    week = conn.execute(
-        "SELECT COUNT(*) FROM injection_log WHERE injected_at >= date('now', '-7 days')"
-    ).fetchone()[0]
-    hot_cache = conn.execute(
-        "SELECT COUNT(*) FROM injection_log WHERE resource = 'hot-cache'"
-    ).fetchone()[0]
-    working_set = conn.execute(
-        "SELECT COUNT(*) FROM injection_log WHERE resource = 'working-set'"
-    ).fetchone()[0]
+    with s._connection() as conn:
+        today = conn.execute(
+            "SELECT COUNT(*) FROM injection_log WHERE injected_at >= date('now')"
+        ).fetchone()[0]
+        week = conn.execute(
+            "SELECT COUNT(*) FROM injection_log WHERE injected_at >= date('now', '-7 days')"
+        ).fetchone()[0]
+        hot_cache = conn.execute(
+            "SELECT COUNT(*) FROM injection_log WHERE resource = 'hot-cache'"
+        ).fetchone()[0]
+        working_set = conn.execute(
+            "SELECT COUNT(*) FROM injection_log WHERE resource = 'working-set'"
+        ).fetchone()[0]
     return {
         "today": today,
         "week": week,
@@ -557,7 +557,6 @@ def _get_injections(
     offset: int = 0,
 ) -> list[dict]:
     """Get recent injections with memory content."""
-    conn = s._conn
     params: list = [f"-{days} days"]
     resource_filter = ""
     if resource:
@@ -565,19 +564,20 @@ def _get_injections(
         params.append(resource)
     params.extend([limit, offset])
 
-    rows = conn.execute(
-        f"""
-        SELECT il.id, il.memory_id, il.resource, il.injected_at, il.session_id,
-               m.content
-        FROM injection_log il
-        LEFT JOIN memories m ON m.id = il.memory_id
-        WHERE il.injected_at >= datetime('now', ?)
-        {resource_filter}
-        ORDER BY il.injected_at DESC
-        LIMIT ? OFFSET ?
-        """,
-        params,
-    ).fetchall()
+    with s._connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT il.id, il.memory_id, il.resource, il.injected_at, il.session_id,
+                   m.content
+            FROM injection_log il
+            LEFT JOIN memories m ON m.id = il.memory_id
+            WHERE il.injected_at >= datetime('now', ?)
+            {resource_filter}
+            ORDER BY il.injected_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            params,
+        ).fetchall()
     return [dict(row) for row in rows]
 
 
