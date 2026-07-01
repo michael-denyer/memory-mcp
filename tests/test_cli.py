@@ -319,6 +319,37 @@ This is the third paragraph about dependencies.
         assert result == 1
 
 
+class TestHookCheckProbe:
+    """Tests for the loop_probe entry in hook-check."""
+
+    def test_probe_runs_by_default_and_passes(self, temp_db, capsys):
+        with patch("sys.argv", ["memory-mcp-cli", "--json", "hook-check"]):
+            result = main()
+        checks = {c["name"]: c for c in json.loads(capsys.readouterr().out)["checks"]}
+        assert "loop_probe" in checks
+        assert checks["loop_probe"]["ok"]
+        assert result == 0
+
+    def test_no_probe_skips(self, temp_db, capsys):
+        with patch("sys.argv", ["memory-mcp-cli", "--json", "hook-check", "--no-probe"]):
+            main()
+        names = [c["name"] for c in json.loads(capsys.readouterr().out)["checks"]]
+        assert "loop_probe" not in names
+
+    def test_probe_failure_fails_hook_check(self, temp_db, capsys):
+        with patch("memory_mcp.cli.run_probe") as mock_probe:
+            from memory_mcp.probe import ProbeResult
+
+            mock_probe.return_value = ProbeResult(ok=False, stage="mine", error="boom")
+            with patch("sys.argv", ["memory-mcp-cli", "--json", "hook-check"]):
+                result = main()
+        assert result != 0
+        out = json.loads(capsys.readouterr().out)
+        assert not out["success"]
+        probe = [c for c in out["checks"] if c["name"] == "loop_probe"][0]
+        assert "stage=mine" in probe["message"]
+
+
 class TestCliIntegration:
     """Integration tests using subprocess."""
 

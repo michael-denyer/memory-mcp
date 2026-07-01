@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.table import Table
 
 from memory_mcp.config import find_bootstrap_files, get_settings
+from memory_mcp.probe import run_probe
 from memory_mcp.project import get_current_project_id
 from memory_mcp.storage import MemorySource, MemoryType, Storage
 from memory_mcp.text_parsing import parse_content_into_chunks
@@ -902,8 +903,13 @@ def status(ctx: click.Context) -> None:
 
 
 @cli.command("hook-check")
+@click.option(
+    "--no-probe",
+    is_flag=True,
+    help="Skip the learning-loop round-trip probe",
+)
 @click.pass_context
-def hook_check(ctx: click.Context) -> None:
+def hook_check(ctx: click.Context, no_probe: bool) -> None:
     """Check hook dependencies and database connectivity.
 
     Validates that the memory-mcp hook can run successfully:
@@ -911,6 +917,10 @@ def hook_check(ctx: click.Context) -> None:
     - jq command is available
     - Database is accessible and writable
     - Hook script exists
+    - Learning-loop round trip works (log -> mine -> storage)
+
+    The round-trip probe only runs when the database check passed - a probe
+    against a broken database is noise, not signal.
 
     Examples:
 
@@ -919,6 +929,9 @@ def hook_check(ctx: click.Context) -> None:
 
         # JSON output for scripting
         memory-mcp-cli --json hook-check
+
+        # Skip the round-trip probe
+        memory-mcp-cli hook-check --no-probe
     """
     import shutil
 
@@ -941,13 +954,26 @@ def hook_check(ctx: click.Context) -> None:
 
     # Check database
     settings = get_settings()
+    database_ok = False
+    storage = None
     try:
         storage = Storage(settings)
         stats = storage.get_stats()
-        storage.close()
+        database_ok = True
         checks.append(("database", True, f"{stats['total_memories']} memories"))
     except Exception as e:
         checks.append(("database", False, str(e)))
+
+    # Round-trip probe - only meaningful once the database is known-good.
+    if database_ok and not no_probe:
+        result = run_probe(storage)
+        if result.ok:
+            checks.append(("loop_probe", True, "round trip ok"))
+        else:
+            checks.append(("loop_probe", False, f"stage={result.stage}: {result.error}"))
+
+    if storage is not None:
+        storage.close()
 
     # Check hook script
     hook_script = Path(__file__).parent.parent.parent / "hooks" / "memory-log-response.sh"
@@ -990,7 +1016,9 @@ def hook_check(ctx: click.Context) -> None:
             console.print("\n[green]All checks passed![/green]")
         else:
             console.print("\n[red]Some checks failed. Fix the issues above.[/red]")
-            raise SystemExit(1)
+
+    if not all_ok:
+        raise SystemExit(1)
 
 
 @cli.command("import-beads")
