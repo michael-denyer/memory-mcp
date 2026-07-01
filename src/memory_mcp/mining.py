@@ -3,11 +3,23 @@
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
 from memory_mcp.embeddings import content_hash
 from memory_mcp.storage import MemoryType, Storage
+
+
+def _utc_now_str() -> str:
+    """Return the current UTC time formatted for `mining_runs` timestamp columns.
+
+    Returns:
+        Current UTC time as "%Y-%m-%d %H:%M:%S", matching the format used by
+        `storage.record_mining_run` and `storage.get_loop_health`.
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
 
 # Patterns that indicate potentially sensitive content - never auto-approve
 SENSITIVE_PATTERNS = (
@@ -1241,7 +1253,13 @@ def _get_memory_type_for_pattern(pattern_type: str) -> MemoryType:
     return MemoryType.PATTERN
 
 
-def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None) -> dict:
+def run_mining(
+    storage: Storage,
+    hours: int = 24,
+    project_id: str | None = None,
+    session_id: str | None = None,
+    record_run: bool = True,
+) -> dict:
     """Run pattern mining on recent outputs.
 
     Args:
@@ -1249,6 +1267,11 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
         hours: How many hours of logs to process.
         project_id: If provided, only mine logs from this project.
                     This prevents cross-project pattern leakage.
+        session_id: If provided, only mine logs from this exact session.
+                    Used by the round-trip probe to scope to its own output.
+        record_run: If True (default), persist the outcome of this run via
+                    `storage.record_mining_run`. The probe passes False so
+                    probe runs never pollute loop-health accounting.
 
     Returns statistics about patterns found and stored.
 
@@ -1260,127 +1283,153 @@ def run_mining(storage: Storage, hours: int = 24, project_id: str | None = None)
         Each mined memory inherits the project_id from its source log, not the
         current session. This prevents cross-project pollution when mining logs
         from multiple projects.
+
+    Raises:
+        Exception: Re-raises any exception from the mining body after
+            recording it (when `record_run` is True). Recording happens
+            outside the mined-transaction path so a recording failure never
+            corrupts mining results.
     """
     from memory_mcp.storage import MemorySource
 
-    outputs = storage.get_recent_outputs(hours=hours, project_id=project_id)
-    settings = storage.settings
-
-    total_patterns = 0
-    new_memories = 0
-    updated_patterns = 0
-    promoted_to_hot = 0
-
-    # Track entity memories for cross-linking
-    entity_memories: list[
-        tuple[int, str, int | None]
-    ] = []  # (memory_id, pattern_type, source_log_id)
-
-    for log_id, content, _, log_project_id, log_session_id in outputs:
-        patterns = extract_patterns(
-            content,
-            ner_enabled=settings.ner_enabled,
-            ner_confidence=settings.ner_confidence_threshold,
+    started_at = _utc_now_str()
+    try:
+        outputs = storage.get_recent_outputs(
+            hours=hours, project_id=project_id, session_id=session_id
         )
-        total_patterns += len(patterns)
+        settings = storage.settings
 
-        for pattern in patterns:
-            hash_val = content_hash(pattern.pattern)
-            is_existing = storage.mined_pattern_exists(hash_val)
+        total_patterns = 0
+        new_memories = 0
+        updated_patterns = 0
+        promoted_to_hot = 0
 
-            # SECURITY: Skip patterns that might contain sensitive data
-            if _may_contain_secrets(pattern.pattern):
-                continue
+        # Track entity memories for cross-linking
+        entity_memories: list[
+            tuple[int, str, int | None]
+        ] = []  # (memory_id, pattern_type, source_log_id)
 
-            # Skip short fragments (too short to be useful knowledge)
-            if len(pattern.pattern) < settings.mining_min_pattern_length:
-                continue
+        for log_id, content, _, log_project_id, log_session_id in outputs:
+            patterns = extract_patterns(
+                content,
+                ner_enabled=settings.ner_enabled,
+                ner_confidence=settings.ner_confidence_threshold,
+            )
+            total_patterns += len(patterns)
 
-            if is_existing:
-                # Update occurrence count in mined_patterns table
-                updated_patterns += 1
-                storage.upsert_mined_pattern(
-                    pattern.pattern,
-                    pattern.pattern_type.value,
-                    source_log_id=log_id,
-                    confidence=pattern.confidence,
-                )
-            else:
-                # New pattern - store as memory immediately if confidence is sufficient
-                # Skip low-value categories (command, snippet) - they go to mined_patterns only
-                created_memory_id = None
-                skip_memory_storage = pattern.pattern_type.value in ("command", "snippet")
+            for pattern in patterns:
+                hash_val = content_hash(pattern.pattern)
+                is_existing = storage.mined_pattern_exists(hash_val)
 
-                if (
-                    not skip_memory_storage
-                    and pattern.confidence >= settings.mining_auto_approve_confidence
-                ):
-                    mem_type = _get_memory_type_for_pattern(pattern.pattern_type.value)
+                # SECURITY: Skip patterns that might contain sensitive data
+                if _may_contain_secrets(pattern.pattern):
+                    continue
 
-                    # Use project_id and session_id from source log, not current session
-                    # This prevents cross-project pollution
-                    memory_id, is_new = storage.store_memory(
-                        content=pattern.pattern,
-                        memory_type=mem_type,
-                        source=MemorySource.MINED,
-                        tags=["mined"],
-                        project_id=log_project_id,
-                        session_id=log_session_id,
+                # Skip short fragments (too short to be useful knowledge)
+                if len(pattern.pattern) < settings.mining_min_pattern_length:
+                    continue
+
+                if is_existing:
+                    # Update occurrence count in mined_patterns table
+                    updated_patterns += 1
+                    storage.upsert_mined_pattern(
+                        pattern.pattern,
+                        pattern.pattern_type.value,
                         source_log_id=log_id,
+                        confidence=pattern.confidence,
+                    )
+                else:
+                    # New pattern - store as memory immediately if confidence is sufficient
+                    # Skip low-value categories (command, snippet) - they go to mined_patterns only
+                    created_memory_id = None
+                    skip_memory_storage = pattern.pattern_type.value in ("command", "snippet")
+
+                    if (
+                        not skip_memory_storage
+                        and pattern.confidence >= settings.mining_auto_approve_confidence
+                    ):
+                        mem_type = _get_memory_type_for_pattern(pattern.pattern_type.value)
+
+                        # Use project_id and session_id from source log, not current session
+                        # This prevents cross-project pollution
+                        memory_id, is_new = storage.store_memory(
+                            content=pattern.pattern,
+                            memory_type=mem_type,
+                            source=MemorySource.MINED,
+                            tags=["mined"],
+                            project_id=log_project_id,
+                            session_id=log_session_id,
+                            source_log_id=log_id,
+                        )
+
+                        if is_new:
+                            new_memories += 1
+                            created_memory_id = memory_id
+
+                        # Track entity patterns for knowledge graph linking
+                        # Note: Track even when is_new=False (merged with existing) - the memory
+                        # exists and should be linked to other memories from the same output log
+                        if pattern.pattern_type.value in (
+                            "entity_technology",
+                            "entity_decision",
+                        ):
+                            entity_memories.append((memory_id, pattern.pattern_type.value, log_id))
+
+                    # Track in mined_patterns for occurrence counting
+                    pattern_id = storage.upsert_mined_pattern(
+                        pattern.pattern,
+                        pattern.pattern_type.value,
+                        source_log_id=log_id,
+                        confidence=pattern.confidence,
                     )
 
-                    if is_new:
-                        new_memories += 1
-                        created_memory_id = memory_id
+                    # Link pattern to its memory for exact-match promotion
+                    if created_memory_id is not None:
+                        storage.link_pattern_to_memory(pattern_id, created_memory_id)
 
-                    # Track entity patterns for knowledge graph linking
-                    # Note: Track even when is_new=False (merged with existing) - the memory
-                    # exists and should be linked to other memories from the same output log
-                    if pattern.pattern_type.value in (
-                        "entity_technology",
-                        "entity_decision",
-                    ):
-                        entity_memories.append((memory_id, pattern.pattern_type.value, log_id))
+        # Promote high-occurrence patterns to hot cache
+        if settings.mining_auto_approve_enabled:
+            from memory_mcp.storage import PatternStatus
 
-                # Track in mined_patterns for occurrence counting
-                pattern_id = storage.upsert_mined_pattern(
-                    pattern.pattern,
-                    pattern.pattern_type.value,
-                    source_log_id=log_id,
-                    confidence=pattern.confidence,
-                )
+            candidates = storage.get_promotion_candidates(threshold=1, status=PatternStatus.PENDING)
+            for candidate in candidates:
+                if candidate.occurrence_count < settings.mining_auto_approve_occurrences:
+                    continue
 
-                # Link pattern to its memory for exact-match promotion
-                if created_memory_id is not None:
-                    storage.link_pattern_to_memory(pattern_id, created_memory_id)
+                # Prefer exact match via linked memory_id, fallback to semantic search
+                # (semantic search needed for patterns created before v17 migration)
+                memory_id_to_promote = candidate.memory_id
+                if memory_id_to_promote is None:
+                    memories = storage.recall(candidate.pattern, limit=1, threshold=0.95).memories
+                    memory_id_to_promote = memories[0].id if memories else None
 
-    # Promote high-occurrence patterns to hot cache
-    if settings.mining_auto_approve_enabled:
-        from memory_mcp.storage import PatternStatus
+                if memory_id_to_promote is not None and storage.promote_to_hot(
+                    memory_id_to_promote
+                ):
+                    promoted_to_hot += 1
 
-        candidates = storage.get_promotion_candidates(threshold=1, status=PatternStatus.PENDING)
-        for candidate in candidates:
-            if candidate.occurrence_count < settings.mining_auto_approve_occurrences:
-                continue
+        # Create knowledge graph links for entities
+        entity_links_created = _create_entity_links(storage, entity_memories)
 
-            # Prefer exact match via linked memory_id, fallback to semantic search
-            # (semantic search needed for patterns created before v17 migration)
-            memory_id_to_promote = candidate.memory_id
-            if memory_id_to_promote is None:
-                memories = storage.recall(candidate.pattern, limit=1, threshold=0.95).memories
-                memory_id_to_promote = memories[0].id if memories else None
+        stats = {
+            "outputs_processed": len(outputs),
+            "patterns_found": total_patterns,
+            "new_memories": new_memories,
+            "updated_patterns": updated_patterns,
+            "promoted_to_hot": promoted_to_hot,
+            "entity_links_created": entity_links_created,
+        }
+    except Exception as e:
+        if record_run:
+            storage.record_mining_run(
+                started_at=started_at,
+                finished_at=_utc_now_str(),
+                stats={},
+                error=f"{type(e).__name__}: {e}",
+            )
+        raise
 
-            if memory_id_to_promote is not None and storage.promote_to_hot(memory_id_to_promote):
-                promoted_to_hot += 1
+    if record_run:
+        storage.record_mining_run(started_at=started_at, finished_at=_utc_now_str(), stats=stats)
 
-    # Create knowledge graph links for entities
-    entity_links_created = _create_entity_links(storage, entity_memories)
-
-    return {
-        "outputs_processed": len(outputs),
-        "patterns_found": total_patterns,
-        "new_memories": new_memories,
-        "updated_patterns": updated_patterns,
-        "promoted_to_hot": promoted_to_hot,
-        "entity_links_created": entity_links_created,
-    }
+    return stats

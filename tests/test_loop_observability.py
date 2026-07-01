@@ -1,8 +1,12 @@
 """Tests for v0.8 loop observability: mining_runs, probe, health, decay."""
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
+
+import pytest
 
 from memory_mcp.migrations import SCHEMA_VERSION
+from memory_mcp.mining import run_mining
 from memory_mcp.storage import Storage
 from memory_mcp.storage.mining_runs import PROBE_SESSION_ID
 
@@ -140,5 +144,63 @@ class TestLoopHealth:
             health = storage.get_loop_health()
             assert health["outputs_24h"] == 1
             assert health["outputs_7d"] == 1
+        finally:
+            storage.close()
+
+
+def _count_runs(storage) -> int:
+    with storage._connection() as conn:
+        return conn.execute("SELECT COUNT(*) FROM mining_runs").fetchone()[0]
+
+
+class TestRunMiningPersistence:
+    def test_successful_run_is_recorded(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            storage.log_output("import numpy as np", session_id="s1")
+            result = run_mining(storage, hours=1)
+            with storage._connection() as conn:
+                row = conn.execute(
+                    "SELECT outputs_processed, patterns_found, memories_created, error"
+                    " FROM mining_runs"
+                ).fetchone()
+            assert row[0] == result["outputs_processed"]
+            assert row[1] == result["patterns_found"]
+            assert row[2] == result["new_memories"]
+            assert row[3] is None
+        finally:
+            storage.close()
+
+    def test_failed_run_records_error_and_reraises(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            storage.log_output("import numpy as np", session_id="s1")
+            with patch(
+                "memory_mcp.mining.extract_patterns",
+                side_effect=RuntimeError("extractor exploded"),
+            ):
+                with pytest.raises(RuntimeError):
+                    run_mining(storage, hours=1)
+            with storage._connection() as conn:
+                row = conn.execute("SELECT error FROM mining_runs").fetchone()
+            assert "extractor exploded" in row[0]
+        finally:
+            storage.close()
+
+    def test_record_run_false_writes_nothing(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            run_mining(storage, hours=1, record_run=False)
+            assert _count_runs(storage) == 0
+        finally:
+            storage.close()
+
+    def test_session_id_scopes_outputs(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            storage.log_output("import alpha_only_lib", session_id="s-alpha")
+            storage.log_output("import beta_only_lib", session_id="s-beta")
+            result = run_mining(storage, hours=1, session_id="s-alpha", record_run=False)
+            assert result["outputs_processed"] == 1
         finally:
             storage.close()
