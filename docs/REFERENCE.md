@@ -216,22 +216,31 @@ The learning loop is the system that extracts and promotes useful patterns from 
 
 ### Mining Runs Table
 
-Every pattern extraction (`run_mining`) writes a row to the `mining_runs` table (schema v18):
+Every real (non-probe) pattern extraction (`run_mining`) writes a row to the `mining_runs` table (schema v18):
 
 | Column | Description |
 |--------|-------------|
-| `started_at` | Timestamp when mining began |
-| `ended_at` | Timestamp when mining completed (NULL if failed) |
-| `patterns_extracted` | Count of patterns found |
-| `patterns_approved` | Count of patterns approved to memories |
-| `session_id` | Which session produced the mining run (or PROBE_SESSION_ID for hook-check) |
-| `status` | Success, timeout, or error summary |
+| `id` | Primary key |
+| `started_at` | Timestamp when mining began (NOT NULL) |
+| `finished_at` | Timestamp when mining completed (NULL if it never finished) |
+| `outputs_processed` | Count of output_log rows processed (default 0) |
+| `patterns_found` | Count of patterns found (default 0) |
+| `memories_created` | Count of memories created from patterns (default 0) |
+| `error` | Error message if the run failed, else NULL |
 
-The table is the single source of truth for loop health — not logs. Query it to detect:
+The table is the single source of truth for loop health — not logs. `storage.get_loop_health()` queries it to compute the red/amber/green state and the 7-day/24-hour counters shown in `status` and the dashboard (see "Health State Rules" below).
 
-- **Recent loop staleness** (no successful run in 7 days)
-- **Error spike** (pattern approval rate dropped)
-- **Extraction efficiency** (patterns_extracted vs patterns_approved ratio)
+### Health State Rules
+
+`get_loop_health()` derives one of three states from `mining_runs`, applied in this precedence order:
+
+| State | Condition |
+|-------|-----------|
+| **red** | The 3 most recent runs (`ERROR_STREAK = 3`) all have a non-null `error` — requires at least 3 runs total |
+| **amber** | Otherwise, if there is no successful run yet, or the last successful run is older than 7 days (`STALENESS_DAYS = 7`) |
+| **green** | Otherwise |
+
+This is the single set of rules behind every health indicator in the system — the `status` CLI state row, the dashboard mining-page banner, and the SessionStart staleness warning all read the same `get_loop_health()` state.
 
 ### hook-check With Round-Trip Probe
 
@@ -242,7 +251,9 @@ memory-mcp-cli hook-check              # Check deps only
 memory-mcp-cli hook-check --no-probe   # Skip live probe (faster)
 ```
 
-The probe (enabled by default) runs: log → mine → extract → cleanup. Results written to `mining_runs` with `session_id = 'PROBE_SESSION_ID'`. Catching wiring bugs on the day they land.
+The probe (enabled by default) runs: log → mine → assert → cleanup, using a disposable sentinel that it hard-deletes afterward. It calls `run_mining(..., record_run=False)`, so **the probe never writes a `mining_runs` row** — probing intentionally does not reset the staleness clock that `get_loop_health()` uses to compute loop state. If it did, a probe run alone could mask a genuinely stale (or broken) real learning loop as healthy. The probe's own output-log row is tagged `session_id = PROBE_SESSION_ID` (a constant defined in `storage/mining_runs.py`) so it can be identified and excluded from the `outputs_24h`/`outputs_7d` counters, and cleaned up.
+
+A probe failure means a pipeline stage is actually broken — not that data is stale.
 
 ### Staleness Warnings
 
@@ -266,11 +277,17 @@ The `status` CLI command shows Learning Loop health:
 memory-mcp-cli status
 ```
 
-Output includes:
-- Last successful run timestamp
-- Patterns extracted (24-hour window)
-- Mining runs table row count
-- Error summary (if any)
+The Learning Loop table shows:
+
+| Row | Description |
+|-----|-------------|
+| State | `green`, `amber`, or `red` (see "Health State Rules" below) |
+| Outputs (24h/7d) | Count of logged outputs in the last 24 hours / 7 days (probe outputs excluded) |
+| Patterns mined (7d) | Patterns found by successful runs in the last 7 days |
+| Memories created (7d) | Memories created by successful runs in the last 7 days |
+| Last successful run | Timestamp of the most recent error-free run, or `never` |
+
+With `--json`, the `learning_loop` key returns the full health dict (`state`, `last_success_at`, `last_run_at`, `consecutive_errors`, `total_runs`, `outputs_24h`, `outputs_7d`, `patterns_7d`, `memories_7d`, `days_since_success`).
 
 ### Injected-Memory Usage Tracking
 
@@ -287,12 +304,13 @@ The heuristic is deliberately conservative — false positives hurt more than mi
 
 ### Utility Decay
 
-Mined memories (memories from pattern extraction) that are never retrieved **and** never used within 30 days enter a decay process:
+Decay targets only memories with `source = 'mined'` (auto-mined, never human-approved) that are not pinned, have never been retrieved or used, and are older than 30 days. Every other memory is untouched — approved patterns (`mined_approved`), pinned memories, retrieved/used memories, young memories, and memories from any other source are all exempt.
+
+For each qualifying memory:
 
 - **Demoted** from hot cache (if present)
 - **Utility-floored** to 0.0 (prevents re-promotion)
 - **Never deleted** — archived for reference
-- **Non-mined and pinned memories exempt**
 
 Decay runs automatically during maintenance (`run_full_cleanup`). It helps prevent clutter when patterns lose relevance.
 

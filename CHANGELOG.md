@@ -10,8 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Loop round-trip probe** - `hook-check` now performs a live log→mine→assert→cleanup probe
   (`--no-probe` to skip), catching wiring bugs the day they land
-- **Mining run history** - Every `run_mining` records outcomes to the new `mining_runs` table
-  (schema v18) — the DB, not logs, is the source of truth for loop health
+- **Mining run history** - Every real (non-probe) `run_mining` records outcomes to the new
+  `mining_runs` table (schema v18) — the DB, not logs, is the source of truth for loop health
 - **Learning-loop health** - `status` gains a Learning Loop section; the dashboard mining page
   shows a green/amber/red health banner
 - **Session-start staleness warning** - Bootstrap warns (once per day) when the loop hasn't
