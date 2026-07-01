@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 from memory_mcp import __version__
 from memory_mcp.config import get_settings
 from memory_mcp.storage import MemorySource, MemoryType, PatternStatus, Storage
+from memory_mcp.storage.mining_runs import PROBE_SESSION_ID
 
 # Template directory
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -408,16 +409,24 @@ async def api_hot_cache_list(request: Request) -> HTMLResponse:
 
 def _get_mining_stats(s: Storage) -> dict:
     """Get mining statistics."""
-    # Count output logs
-    output_count = s._conn.execute("SELECT COUNT(*) FROM output_log").fetchone()[0]
-    # Count mined patterns by status
-    pattern_stats = s._conn.execute(
-        """
-        SELECT status, COUNT(*) as count
-        FROM mined_patterns
-        GROUP BY status
-        """
-    ).fetchall()
+    with s._connection() as conn:
+        # Count output logs, excluding leftover probe rows (same filter the
+        # loop-health queries use) so a failed probe doesn't inflate this count.
+        output_count = conn.execute(
+            """
+            SELECT COUNT(*) FROM output_log
+            WHERE session_id IS NULL OR session_id != ?
+            """,
+            (PROBE_SESSION_ID,),
+        ).fetchone()[0]
+        # Count mined patterns by status
+        pattern_stats = conn.execute(
+            """
+            SELECT status, COUNT(*) as count
+            FROM mined_patterns
+            GROUP BY status
+            """
+        ).fetchall()
     stats = {row["status"]: row["count"] for row in pattern_stats}
     return {
         "output_count": output_count,
@@ -441,6 +450,7 @@ async def mining_page(request: Request) -> HTMLResponse:
         {
             "mining_stats": mining_stats,
             "patterns": patterns[:50],  # Limit display
+            "loop_health": s.get_loop_health(),
             "active_page": "mining",
         },
     )
