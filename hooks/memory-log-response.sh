@@ -155,23 +155,27 @@ if [ -n "$LAST_USER_MSG" ] && [ "$LAST_USER_MSG" != "null" ]; then
 ASSISTANT: $LAST_RESPONSE"
 fi
 
-# Build CLI arguments from hook input
-CLI_ARGS=""
+# Build CLI arguments from hook input. run-mining takes no --session-id
+# (mined memories inherit their session from the source log), so it gets
+# the project filter only.
+LOG_ARGS=""
+MINING_ARGS=""
 if [ -n "$PROJECT_PATH" ]; then
-    CLI_ARGS="$CLI_ARGS --project-id=$PROJECT_PATH"
+    LOG_ARGS="$LOG_ARGS --project-id=$PROJECT_PATH"
+    MINING_ARGS="$MINING_ARGS --project-id=$PROJECT_PATH"
 fi
 if [ -n "$SESSION_ID" ]; then
-    CLI_ARGS="$CLI_ARGS --session-id=$SESSION_ID"
+    LOG_ARGS="$LOG_ARGS --session-id=$SESSION_ID"
 fi
 
 # Log the response using memory-mcp-cli
 log_msg "Processing response (${#LAST_RESPONSE} chars) project=${PROJECT_PATH:-none} session=${SESSION_ID:-none}"
 
-if ! echo "$LAST_RESPONSE" | run_cli log-output $CLI_ARGS; then
+if ! echo "$LAST_RESPONSE" | run_cli log-output $LOG_ARGS; then
     log_msg "ERROR: log-output failed with exit code $?"
 fi
 
 # Run mining to extract and store patterns as memories (non-critical)
-run_cli run-mining --hours 1 $CLI_ARGS >> "$HOOK_LOG" 2>&1 || true
+run_cli run-mining --hours 1 $MINING_ARGS >> "$HOOK_LOG" 2>&1 || true
 
 log_msg "Hook completed successfully"

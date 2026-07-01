@@ -4,6 +4,19 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Stop hook mining call** - `hooks/memory-log-response.sh` passed `--session-id` to
+  `run-mining`, which has no such option, so the mining step aborted with a usage error on
+  every hook invocation. The hook now passes only the project filter to `run-mining`;
+  session provenance flows through the logged output instead.
+- **Session provenance in log-response** - The `log-response` Stop hook command parsed the
+  hook input's `session_id` but never stored it, so hook-logged outputs (and the memories
+  mined from them) were never linked to their session. The `session_id` is now passed
+  through to `log_output`, and mined memories inherit it from the source log.
+
 ## [0.7.4] - 2026-01-24
 
 ### Added

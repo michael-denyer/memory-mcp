@@ -773,3 +773,92 @@ class TestHookSessionFallback:
         if captured_file.exists():
             captured = captured_file.read_text()
             assert "Response for camelCase session" in captured
+
+
+class TestHookCliArgs:
+    """Test hook passes the right provenance flags to each CLI command."""
+
+    def _run_hook_with_recorder(self, tmp_path: Path) -> list[str]:
+        """Run the hook with a fake `uv` that records every CLI invocation.
+
+        The hook prepends $HOME/.local/bin to PATH and prefers `uv` over a
+        direct memory-mcp-cli, so a fake `uv` there intercepts every run_cli
+        call even on hosts where a real uv is installed (a fake
+        memory-mcp-cli in PATH loses to /opt/homebrew/bin/uv).
+        """
+        transcript = tmp_path / "transcript.jsonl"
+        lines = [
+            json.dumps(
+                {
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Which web framework do we use?"}],
+                    }
+                }
+            ),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "We use FastAPI for the API layer."}],
+                    }
+                }
+            ),
+        ]
+        transcript.write_text("\n".join(lines))
+
+        calls_file = tmp_path / "calls.txt"
+        fake_bin = tmp_path / ".local" / "bin"
+        fake_bin.mkdir(parents=True)
+        fake_uv = fake_bin / "uv"
+        fake_uv.write_text(
+            "#!/bin/bash\n"
+            "# Invoked as: uv run memory-mcp-cli <command> [options]\n"
+            "shift 2\n"
+            f'echo "$*" >> "{calls_file}"\n'
+            'if [ "$1" = "log-output" ]; then cat > /dev/null; fi\n'
+        )
+        fake_uv.chmod(0o755)
+
+        env = {
+            "HOME": str(tmp_path),
+            "PATH": "/usr/bin:/bin",
+            "MEMORY_MCP_DIR": str(tmp_path),
+        }
+        result = subprocess.run(
+            ["bash", str(HOOK_SCRIPT)],
+            input=json.dumps(
+                {
+                    "transcript_path": str(transcript),
+                    "session_id": "sess-args-test",
+                    "cwd": "/tmp/fake-project",
+                }
+            ),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert calls_file.exists(), "fake uv was never invoked"
+        return calls_file.read_text().strip().splitlines()
+
+    def test_run_mining_receives_project_but_not_session(self, tmp_path: Path) -> None:
+        """run-mining has no --session-id option; passing one aborts mining
+        with a usage error on every hook run."""
+        calls = self._run_hook_with_recorder(tmp_path)
+
+        mining_calls = [c for c in calls if c.startswith("run-mining")]
+        assert len(mining_calls) == 1
+        assert "--session-id" not in mining_calls[0]
+        assert "--project-id=/tmp/fake-project" in mining_calls[0]
+
+    def test_log_output_receives_session_and_project(self, tmp_path: Path) -> None:
+        """log-output keeps both provenance flags so mined memories can
+        inherit the session from the source log."""
+        calls = self._run_hook_with_recorder(tmp_path)
+
+        log_calls = [c for c in calls if c.startswith("log-output")]
+        assert len(log_calls) == 1
+        assert "--session-id=sess-args-test" in log_calls[0]
+        assert "--project-id=/tmp/fake-project" in log_calls[0]

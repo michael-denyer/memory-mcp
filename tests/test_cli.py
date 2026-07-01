@@ -152,6 +152,74 @@ class TestRunMiningCommand:
         assert result == 0
 
 
+class TestLogResponseCommand:
+    """Tests for the log-response CLI command (Stop hook entrypoint)."""
+
+    def test_log_response_stores_session_id(self, temp_db, tmp_path):
+        """Outputs logged via the Stop hook carry the hook input's session_id.
+
+        Mining inherits session provenance from the source log
+        (get_recent_outputs returns session_id per log), so log-response
+        must pass the session_id through to storage.log_output.
+        """
+        from memory_mcp.config import get_settings
+        from memory_mcp.storage import Storage
+
+        transcript = tmp_path / "transcript.jsonl"
+        lines = [
+            json.dumps(
+                {
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Which web framework do we use?"}],
+                    }
+                }
+            ),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "We use FastAPI for the API layer."}],
+                    }
+                }
+            ),
+        ]
+        transcript.write_text("\n".join(lines))
+
+        hook_input = json.dumps(
+            {"transcript_path": str(transcript), "session_id": "sess-hook-test"}
+        )
+
+        # Intercept only the detached mining spawn; the raised error is
+        # swallowed by log-response's try/except, and `tail` keeps working
+        # because subprocess.run delegates to the real Popen.
+        real_popen = subprocess.Popen
+
+        def popen_without_mining_spawn(args, **kwargs):
+            if args and args[0] == "memory-mcp-cli":
+                raise FileNotFoundError("mining spawn suppressed in test")
+            return real_popen(args, **kwargs)
+
+        with (
+            patch("subprocess.Popen", side_effect=popen_without_mining_spawn),
+            patch("sys.stdin.read", return_value=hook_input),
+            patch("sys.argv", ["memory-mcp-cli", "log-response"]),
+        ):
+            result = main()
+        assert result == 0
+
+        settings = get_settings()
+        storage = Storage(settings)
+        try:
+            outputs = storage.get_recent_outputs(hours=1)
+            assert len(outputs) == 1
+            _, content, _, _, session_id = outputs[0]
+            assert "We use FastAPI" in content
+            assert session_id == "sess-hook-test"
+        finally:
+            storage.close()
+
+
 class TestSeedCommand:
     """Tests for the seed CLI command."""
 
