@@ -7,9 +7,12 @@ import os
 import sqlite3
 
 from memory_mcp.logging import get_logger
-from memory_mcp.models import AuditOperation, MemoryType, TrustReason
+from memory_mcp.models import AuditOperation, MemorySource, MemoryType, TrustReason
 
 log = get_logger("storage.maintenance")
+
+DECAY_DAYS = 30  # spec accepted default
+UTILITY_FLOOR = 0.0  # deviation 6
 
 
 class MaintenanceMixin:
@@ -392,6 +395,79 @@ class MaintenanceMixin:
 
         return penalized_ids
 
+    def decay_unused_mined_memories(self) -> dict:
+        """Demote and floor the utility of stale, unused mined memories.
+
+        Targets memories that were auto-mined (never human-approved), are not
+        pinned, have never been retrieved or used, and are older than
+        DECAY_DAYS. Memories with source 'mined_approved' are exempt because
+        approval is a human signal; pinned, young, retrieved, or used
+        memories are exempt for the same reason.
+
+        For each qualifying memory: demotes it from hot cache (if hot), then
+        floors its utility_score to UTILITY_FLOOR. Nothing is deleted.
+
+        Returns:
+            Dict with "demoted" (count actually removed from hot cache) and
+            "floored" (count of memories whose utility_score was floored).
+        """
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, is_hot FROM memories
+                WHERE source = ?
+                  AND is_pinned = 0
+                  AND COALESCE(retrieved_count, 0) = 0
+                  AND COALESCE(used_count, 0) = 0
+                  AND created_at < datetime('now', ?)
+                  AND (is_hot = 1 OR utility_score > ?)
+                """,
+                (MemorySource.MINED.value, f"-{DECAY_DAYS} days", UTILITY_FLOOR),
+            ).fetchall()
+
+        candidates = [(row["id"], row["is_hot"]) for row in rows]
+
+        demoted = 0
+        for memory_id, is_hot in candidates:
+            if is_hot:
+                if self.demote_from_hot(memory_id):
+                    demoted += 1
+
+        floored = 0
+        with self.transaction() as conn:
+            for memory_id, _ in candidates:
+                cursor = conn.execute(
+                    "UPDATE memories SET utility_score = ? WHERE id = ?",
+                    (UTILITY_FLOOR, memory_id),
+                )
+                floored += cursor.rowcount
+
+            if candidates:
+                self._record_audit(
+                    conn,
+                    AuditOperation.DEMOTE_STALE,
+                    target_type="memory",
+                    details=json.dumps(
+                        {
+                            "reason": "decay_unused_mined_memories",
+                            "decay_days": DECAY_DAYS,
+                            "demoted": demoted,
+                            "floored": floored,
+                        }
+                    ),
+                )
+
+        if candidates:
+            log.info(
+                "Decayed {} unused mined memories (demoted={}, floored={}, older than {} days)",
+                len(candidates),
+                demoted,
+                floored,
+                DECAY_DAYS,
+            )
+
+        return {"demoted": demoted, "floored": floored}
+
     def run_full_cleanup(self) -> dict:
         """Run comprehensive cleanup: stale memories, old logs, patterns, injections.
 
@@ -424,6 +500,9 @@ class MaintenanceMixin:
         # 8. Improve hot cache based on injection feedback (non-dry-run)
         injection_feedback = self.improve_hot_cache_from_injections(days=7, dry_run=False)
 
+        # 9. Decay unused mined memories (stale, never-retrieved/used mined facts)
+        decay_result = self.decay_unused_mined_memories()
+
         return {
             "hot_cache_demoted": len(demoted_ids),
             "patterns_expired": expired_patterns,
@@ -434,4 +513,6 @@ class MaintenanceMixin:
             "low_utility_penalized": len(penalized_ids),
             "injection_feedback_promoted": len(injection_feedback.get("promoted", [])),
             "injection_feedback_warnings": len(injection_feedback.get("warnings", [])),
+            "mined_memories_demoted": decay_result["demoted"],
+            "mined_memories_floored": decay_result["floored"],
         }

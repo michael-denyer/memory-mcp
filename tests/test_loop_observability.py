@@ -276,6 +276,72 @@ class TestDistinctiveTokens:
         assert distinctive_tokens("the quick brown foxes jumped over everything") == []
 
 
+class TestUtilityDecay:
+    def _mined_memory(self, storage, days_old=31, **overrides):
+        memory_id, _ = storage.store_memory(
+            content=f"mined fact {days_old} {overrides}",
+            memory_type=MemoryType.PATTERN,
+            source=MemorySource.MINED,
+        )
+        sets = {"created_at": _ts(days_ago=days_old), **overrides}
+        assignments = ", ".join(f"{k} = ?" for k in sets)
+        with storage.transaction() as conn:
+            conn.execute(
+                f"UPDATE memories SET {assignments} WHERE id = ?",
+                (*sets.values(), memory_id),
+            )
+        return memory_id
+
+    def _row(self, storage, memory_id):
+        with storage._connection() as conn:
+            return conn.execute(
+                "SELECT is_hot, utility_score FROM memories WHERE id = ?", (memory_id,)
+            ).fetchone()
+
+    def test_demotes_and_floors_qualifying_memory(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            mid = self._mined_memory(storage, days_old=31, is_hot=1)
+            result = storage.decay_unused_mined_memories()
+            assert result["demoted"] == 1
+            is_hot, utility = self._row(storage, mid)
+            assert is_hot == 0 and utility == 0.0
+            assert self._row(storage, mid) is not None  # nothing deleted
+        finally:
+            storage.close()
+
+    def test_exemptions(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            pinned = self._mined_memory(storage, days_old=31, is_hot=1, is_pinned=1)
+            young = self._mined_memory(storage, days_old=29, is_hot=1)
+            retrieved = self._mined_memory(storage, days_old=31, is_hot=1, retrieved_count=2)
+            used = self._mined_memory(storage, days_old=31, is_hot=1, used_count=1)
+            storage.decay_unused_mined_memories()
+            for mid in (pinned, young, retrieved, used):
+                assert self._row(storage, mid)[0] == 1, f"memory {mid} wrongly demoted"
+        finally:
+            storage.close()
+
+    def test_non_mined_sources_exempt(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            memory_id, _ = storage.store_memory(
+                content="user seeded fact",
+                memory_type=MemoryType.PATTERN,
+                source=MemorySource.MANUAL,
+            )
+            with storage.transaction() as conn:
+                conn.execute(
+                    "UPDATE memories SET created_at = ?, is_hot = 1 WHERE id = ?",
+                    (_ts(days_ago=40), memory_id),
+                )
+            storage.decay_unused_mined_memories()
+            assert self._row(storage, memory_id)[0] == 1
+        finally:
+            storage.close()
+
+
 class TestMarkUsedMemories:
     def _inject(self, storage, content):
         memory_id, _ = storage.store_memory(
