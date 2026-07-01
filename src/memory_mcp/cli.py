@@ -113,6 +113,10 @@ def log_response(ctx: click.Context) -> None:
     except json.JSONDecodeError:
         return
 
+    # Session provenance for the logged output; mining inherits the session
+    # from the source log, so losing it here breaks session linking downstream
+    session_id = data.get("session_id") or data.get("sessionId")
+
     # Find transcript path (multiple formats supported)
     transcript_path = (
         data.get("transcript_path")
@@ -122,7 +126,6 @@ def log_response(ctx: click.Context) -> None:
 
     if not transcript_path or not Path(transcript_path).exists():
         # Try to derive from session_id
-        session_id = data.get("session_id") or data.get("sessionId")
         project_path = (
             data.get("project_path")
             or data.get("projectPath")
@@ -200,7 +203,7 @@ def log_response(ctx: click.Context) -> None:
 
     storage = Storage(settings)
     try:
-        storage.log_output(content, project_id=project_id)
+        storage.log_output(content, project_id=project_id, session_id=session_id)
     finally:
         storage.close()
 
