@@ -14,12 +14,14 @@ from rich.console import Console
 from rich.table import Table
 
 from memory_mcp.config import Settings, find_bootstrap_files, get_settings
+from memory_mcp.logging import get_logger
 from memory_mcp.probe import run_probe
 from memory_mcp.project import get_current_project_id
 from memory_mcp.storage import MemorySource, MemoryType, Storage
 from memory_mcp.text_parsing import parse_content_into_chunks
 
 console = Console()
+log = get_logger("cli")
 
 LOOP_WARNING_STAMP_TTL_SECONDS = 24 * 60 * 60
 
@@ -264,6 +266,13 @@ def log_response(ctx: click.Context) -> None:
     storage = Storage(settings)
     try:
         storage.log_output(content, project_id=project_id, session_id=session_id)
+
+        try:
+            marked = storage.mark_used_memories(last_response)
+            if marked:
+                log.info(f"auto-marked {marked} injected memories as used")
+        except Exception as e:
+            log.warning(f"auto-mark failed (non-fatal): {e}")
     finally:
         storage.close()
 

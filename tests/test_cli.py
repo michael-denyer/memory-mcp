@@ -221,6 +221,101 @@ class TestLogResponseCommand:
         finally:
             storage.close()
 
+    def _hook_stdin_and_popen_patch(self, tmp_path, assistant_text):
+        """Build hook stdin JSON + a Popen patch that suppresses the mining spawn.
+
+        Mirrors test_log_response_stores_session_id: writes a transcript with
+        a user/assistant turn, wraps hook JSON pointing at it, and intercepts
+        only the detached mining spawn (subprocess.run's `tail` call still
+        delegates to the real Popen).
+        """
+        transcript = tmp_path / "transcript.jsonl"
+        lines = [
+            json.dumps(
+                {
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "How do I deploy?"}],
+                    }
+                }
+            ),
+            json.dumps(
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": assistant_text}],
+                    }
+                }
+            ),
+        ]
+        transcript.write_text("\n".join(lines))
+
+        hook_input = json.dumps(
+            {"transcript_path": str(transcript), "session_id": "sess-auto-mark-test"}
+        )
+
+        real_popen = subprocess.Popen
+
+        def popen_without_mining_spawn(args, **kwargs):
+            if args and args[0] == "memory-mcp-cli":
+                raise FileNotFoundError("mining spawn suppressed in test")
+            return real_popen(args, **kwargs)
+
+        return hook_input, popen_without_mining_spawn
+
+    def test_log_response_auto_marks_used_memories(self, temp_db, tmp_path, capsys):
+        """A response echoing a distinctive token from an injected memory
+        auto-marks that memory as used, right after log_output."""
+        from memory_mcp.config import get_settings
+        from memory_mcp.models import MemorySource, MemoryType
+        from memory_mcp.storage import Storage
+
+        storage = Storage(get_settings())
+        memory_id, _ = storage.store_memory(
+            content="use `make deploy-staging` for releases",
+            memory_type=MemoryType.PATTERN,
+            source=MemorySource.MINED,
+        )
+        storage.log_injection(memory_id, resource="hot-cache", session_id="s1")
+        storage.close()
+
+        hook_input, popen_patch = self._hook_stdin_and_popen_patch(
+            tmp_path, assistant_text="ran make deploy-staging"
+        )
+
+        with (
+            patch("subprocess.Popen", side_effect=popen_patch),
+            patch("sys.stdin.read", return_value=hook_input),
+            patch("sys.argv", ["memory-mcp-cli", "log-response"]),
+        ):
+            result = main()
+        assert result == 0
+
+        storage = Storage(get_settings())
+        try:
+            with storage._connection() as conn:
+                used = conn.execute(
+                    "SELECT used_count FROM memories WHERE id = ?", (memory_id,)
+                ).fetchone()[0]
+        finally:
+            storage.close()
+        assert used == 1
+
+    def test_auto_mark_failure_never_blocks_log_response(self, temp_db, tmp_path):
+        """mark_used_memories raising must not fail the Stop hook."""
+        hook_input, popen_patch = self._hook_stdin_and_popen_patch(
+            tmp_path, assistant_text="some unrelated assistant reply"
+        )
+
+        with (
+            patch.object(Storage, "mark_used_memories", side_effect=RuntimeError("boom")),
+            patch("subprocess.Popen", side_effect=popen_patch),
+            patch("sys.stdin.read", return_value=hook_input),
+            patch("sys.argv", ["memory-mcp-cli", "log-response"]),
+        ):
+            result = main()
+        assert result == 0
+
 
 class TestSeedCommand:
     """Tests for the seed CLI command."""
