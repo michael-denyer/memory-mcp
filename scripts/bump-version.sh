@@ -28,11 +28,21 @@ echo "  Updated pyproject.toml"
 sed -i '' "s/\"version\": \"[0-9]*\.[0-9]*\.[0-9]*\"/\"version\": \"$NEW_VERSION\"/g" server.json
 echo "  Updated server.json"
 
+# plugin.json (Claude Code plugin manifest)
+sed -i '' "s/\"version\": \"[0-9]*\.[0-9]*\.[0-9]*\"/\"version\": \"$NEW_VERSION\"/g" .claude-plugin/plugin.json
+echo "  Updated .claude-plugin/plugin.json"
+
+# marketplace.json (plugin listing)
+sed -i '' "s/\"version\": \"[0-9]*\.[0-9]*\.[0-9]*\"/\"version\": \"$NEW_VERSION\"/g" .claude-plugin/marketplace.json
+echo "  Updated .claude-plugin/marketplace.json"
+
 # Verify
 echo ""
 echo "Verification:"
 grep -n "version" pyproject.toml | head -1
 grep -n "version" server.json | head -2
+grep -n "version" .claude-plugin/plugin.json | head -1
+grep -n "version" .claude-plugin/marketplace.json | head -1
 
 echo ""
 echo "Done! Don't forget to:"

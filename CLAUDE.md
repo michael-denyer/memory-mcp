@@ -166,6 +166,8 @@ Use `/release <version>` which runs the standard pre-release checklist.
 **Project-specific step**: Run `./scripts/bump-version.sh <version>` first to update:
 - `pyproject.toml` (source of truth)
 - `server.json` (MCP registry manifest)
+- `.claude-plugin/plugin.json` (Claude Code plugin manifest)
+- `.claude-plugin/marketplace.json` (plugin listing)
 
 The publish workflow (triggered by pushing a tag) automatically:
 - Publishes to PyPI
