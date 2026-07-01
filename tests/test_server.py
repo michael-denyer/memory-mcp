@@ -397,9 +397,7 @@ class TestAutoBootstrap:
         # Clear the bootstrap tracking set
         server.app._auto_bootstrap_attempted.clear()
 
-        # Call the underlying function (not the FastMCP FunctionResource wrapper)
-        # The actual function is stored in promoted_memories_resource.fn
-        content = server.promoted_memories_resource.fn()
+        content = server.promoted_memories_resource()
 
         # Should have bootstrapped and returned content
         assert "[MEMORY:" in content
@@ -642,7 +640,7 @@ class TestEmptyContentValidation:
         monkeypatch.setattr(server_module, "storage", storage)
 
         # Get the actual function from the tool wrapper
-        remember_fn = server_module.remember.fn
+        remember_fn = server_module.remember
         result = remember_fn(content="")
         assert result.get("success") is False
         assert "empty" in result.get("error", "").lower()
@@ -653,7 +651,7 @@ class TestEmptyContentValidation:
 
         monkeypatch.setattr(server_module, "storage", storage)
 
-        remember_fn = server_module.remember.fn
+        remember_fn = server_module.remember
         result = remember_fn(content="   \n\t  ")
         assert result.get("success") is False
         assert "empty" in result.get("error", "").lower()
@@ -665,7 +663,7 @@ class TestEmptyContentValidation:
         monkeypatch.setattr(server_module, "storage", storage)
         monkeypatch.setattr(server_module, "settings", storage.settings)
 
-        log_output_fn = server_module.log_output.fn
+        log_output_fn = server_module.log_output
         result = log_output_fn(content="")
         assert result.get("success") is False
         assert "empty" in result.get("error", "").lower()
@@ -677,7 +675,7 @@ class TestEmptyContentValidation:
         monkeypatch.setattr(server_module, "storage", storage)
         monkeypatch.setattr(server_module, "settings", storage.settings)
 
-        log_output_fn = server_module.log_output.fn
+        log_output_fn = server_module.log_output
         result = log_output_fn(content="  \t\n  ")
         assert result.get("success") is False
         assert "empty" in result.get("error", "").lower()
@@ -924,7 +922,7 @@ class TestContextShaping:
             tags=["auth", "api"],
         )
 
-        recall_fn = server_module.recall.fn
+        recall_fn = server_module.recall
         result = recall_fn(query="authentication tokens")
 
         # Response should have formatted_context
@@ -949,7 +947,7 @@ class TestInputValidation:
         monkeypatch.setattr(cold_storage, "storage", storage)
         monkeypatch.setattr(cold_storage, "settings", storage.settings)
 
-        list_fn = cold_storage.list_memories.fn
+        list_fn = cold_storage.list_memories
         result = list_fn(offset=-1)
 
         # Should return error dict, not results
@@ -964,7 +962,7 @@ class TestInputValidation:
         monkeypatch.setattr(cold_storage, "storage", storage)
         monkeypatch.setattr(cold_storage, "settings", storage.settings)
 
-        list_fn = cold_storage.list_memories.fn
+        list_fn = cold_storage.list_memories
         result = list_fn(limit=0)
 
         # Should return error dict, not results
@@ -982,7 +980,7 @@ class TestInputValidation:
         # Store a memory
         storage.store_memory("Test memory", MemoryType.PROJECT)
 
-        list_fn = cold_storage.list_memories.fn
+        list_fn = cold_storage.list_memories
         result = list_fn(limit=5, offset=0)
 
         # Should return list, not error

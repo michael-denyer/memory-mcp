@@ -18,9 +18,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "fastmcp>=2.0,<3",  # Pin to v2 for stability until v3 is released
+    "fastmcp>=3.2,<4",  # >=3.2 required by GHSA advisory; v2 line is EOL
     "sqlite-vec>=0.1,<1",  # Pre-1.0 package - pin to avoid breaking changes
-    "sentence-transformers>=3.0,<4",  # Major version bound for stability
+    "sentence-transformers>=3.0,<6",  # Allow 5.x so transformers 5.x (security fix) resolves
     "pydantic>=2.0,<3",
     "pydantic-settings>=2.0,<3",
     "loguru>=0.7,<1",
@@ -29,7 +29,7 @@ dependencies = [
     "fastapi>=0.100,<1",  # Web dashboard
     "uvicorn[standard]>=0.20,<1",  # ASGI server for dashboard
     "jinja2>=3.0,<4",  # Template engine for dashboard
-    "transformers>=4.0,<5",  # NER-based entity extraction for pattern mining
+    "transformers>=4.0,<6",  # NER-based entity extraction; >=5.0.0rc3 fixes GHSA advisory
     # Apple Silicon gets MLX by default for 10x faster embeddings
     "mlx-embeddings>=0.0.5; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]

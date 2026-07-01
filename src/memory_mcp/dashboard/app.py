@@ -159,9 +159,9 @@ async def index(request: Request) -> HTMLResponse:
     db_size = db_path.stat().st_size if db_path.exists() else 0
 
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
-            "request": request,
             "stats": stats,
             "hot_stats": hot_stats,
             "db_size": db_size,
@@ -180,9 +180,9 @@ async def hot_cache_page(request: Request) -> HTMLResponse:
     hot_cache = s.get_hot_cache()
 
     return templates.TemplateResponse(
+        request,
         "hot_cache.html",
         {
-            "request": request,
             "promoted_memories": promoted_memories,
             "promoted_stats": promoted_stats,
             "hot_cache": hot_cache,
@@ -223,9 +223,9 @@ async def memories_page(
     projects = get_projects()
 
     return templates.TemplateResponse(
+        request,
         "memories.html",
         {
-            "request": request,
             "memories": memories,
             "type_filter": type_filter,
             "project_filter": project_filter,
@@ -275,9 +275,9 @@ async def api_stats(request: Request) -> HTMLResponse:
     db_size = db_path.stat().st_size if db_path.exists() else 0
 
     return templates.TemplateResponse(
+        request,
         "partials/stats_cards.html",
         {
-            "request": request,
             "stats": stats,
             "hot_stats": hot_stats,
             "db_size": db_size,
@@ -301,8 +301,9 @@ async def api_pin(memory_id: int, request: Request) -> HTMLResponse:
     s.pin_memory(memory_id)
     memory = s.get_memory(memory_id)
     return templates.TemplateResponse(
+        request,
         "partials/hot_item.html",
-        {"request": request, "memory": memory, "is_pinned": True},
+        {"memory": memory, "is_pinned": True},
     )
 
 
@@ -313,8 +314,9 @@ async def api_unpin(memory_id: int, request: Request) -> HTMLResponse:
     s.unpin_memory(memory_id)
     memory = s.get_memory(memory_id)
     return templates.TemplateResponse(
+        request,
         "partials/hot_item.html",
-        {"request": request, "memory": memory, "is_pinned": False},
+        {"memory": memory, "is_pinned": False},
     )
 
 
@@ -348,9 +350,9 @@ async def api_search(
     total_pages = max(1, (total + limit - 1) // limit)
 
     return templates.TemplateResponse(
+        request,
         "partials/memory_table.html",
         {
-            "request": request,
             "memories": memories,
             "query": query,
             "type_filter": type_filter,
@@ -370,8 +372,9 @@ async def api_promote(memory_id: int, request: Request) -> HTMLResponse:
     s.promote_to_hot(memory_id)
     memory = s.get_memory(memory_id)
     return templates.TemplateResponse(
+        request,
         "partials/memory_row.html",
-        {"request": request, "memory": memory, "is_hot": True},
+        {"memory": memory, "is_hot": True},
     )
 
 
@@ -390,9 +393,9 @@ async def api_hot_cache_list(request: Request) -> HTMLResponse:
     hot_memories = s.get_hot_memories()
 
     return templates.TemplateResponse(
+        request,
         "partials/hot_list.html",
         {
-            "request": request,
             "memories": hot_memories,
         },
     )
@@ -433,9 +436,9 @@ async def mining_page(request: Request) -> HTMLResponse:
     patterns = s.get_promotion_candidates(threshold=1, status=PatternStatus.PENDING)
 
     return templates.TemplateResponse(
+        request,
         "mining.html",
         {
-            "request": request,
             "mining_stats": mining_stats,
             "patterns": patterns[:50],  # Limit display
             "active_page": "mining",
@@ -580,9 +583,9 @@ async def injections_page(
     injections = _get_injections(s, days=days, resource=resource_filter)
 
     return templates.TemplateResponse(
+        request,
         "injections.html",
         {
-            "request": request,
             "injection_stats": injection_stats,
             "injections": injections,
             "resource_filter": resource_filter,
@@ -612,9 +615,9 @@ async def api_injections(
     total_pages = max(1, (total + limit - 1) // limit)
 
     return templates.TemplateResponse(
+        request,
         "partials/injection_table.html",
         {
-            "request": request,
             "injections": injections,
             "page": page,
             "total_pages": total_pages,
@@ -688,9 +691,9 @@ async def sessions_page(request: Request) -> HTMLResponse:
     sessions = _get_sessions(s)
 
     return templates.TemplateResponse(
+        request,
         "sessions.html",
         {
-            "request": request,
             "sessions": sessions,
             "active_page": "sessions",
         },
@@ -708,9 +711,9 @@ async def session_detail_page(session_id: str, request: Request) -> HTMLResponse
     memories = _get_session_memories(s, session_id)
 
     return templates.TemplateResponse(
+        request,
         "session_detail.html",
         {
-            "request": request,
             "session": session,
             "memories": memories,
             "active_page": "sessions",
@@ -756,9 +759,9 @@ async def graph_page(request: Request) -> HTMLResponse:
     stats = s.get_relationship_stats()
 
     return templates.TemplateResponse(
+        request,
         "graph.html",
         {
-            "request": request,
             "stats": stats,
             "active_page": "graph",
         },
