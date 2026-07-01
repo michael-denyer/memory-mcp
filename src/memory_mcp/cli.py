@@ -811,6 +811,7 @@ def status(ctx: click.Context) -> None:
         hot_memories = storage.get_hot_memories()
         metrics = storage.get_hot_cache_metrics()
         memory_stats = storage.get_stats()
+        health = storage.get_loop_health()
 
         if use_json:
             click.echo(
@@ -823,6 +824,7 @@ def status(ctx: click.Context) -> None:
                             {"id": m.id, "content": m.content[:100], "type": m.memory_type.value}
                             for m in hot_memories
                         ],
+                        "learning_loop": health,
                     }
                 )
             )
@@ -855,6 +857,23 @@ def status(ctx: click.Context) -> None:
             overview_table.add_row("By source", source_str)
 
         console.print(overview_table)
+
+        # Learning loop health
+        console.print("\n[bold]Learning Loop:[/bold]")
+        loop_table = Table(show_header=False, box=None)
+        loop_table.add_column("Metric", style="dim")
+        loop_table.add_column("Value", style="bold")
+
+        state_color = {"green": "green", "amber": "yellow", "red": "red"}.get(
+            health["state"], "white"
+        )
+        loop_table.add_row("State", f"[{state_color}]{health['state']}[/{state_color}]")
+        loop_table.add_row("Outputs (24h/7d)", f"{health['outputs_24h']}/{health['outputs_7d']}")
+        loop_table.add_row("Patterns mined (7d)", str(health["patterns_7d"]))
+        loop_table.add_row("Memories created (7d)", str(health["memories_7d"]))
+        loop_table.add_row("Last successful run", health["last_success_at"] or "never")
+
+        console.print(loop_table)
 
         # Hot cache stats
         console.print("\n[bold]Hot Cache Metrics:[/bold]")

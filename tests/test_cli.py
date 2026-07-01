@@ -350,6 +350,41 @@ class TestHookCheckProbe:
         assert "stage=mine" in probe["message"]
 
 
+def _ts(days_ago: float = 0) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    dt = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+class TestStatusLearningLoop:
+    def test_json_includes_learning_loop(self, temp_db, capsys):
+        with patch("sys.argv", ["memory-mcp-cli", "--json", "status"]):
+            result = main()
+        assert result == 0
+        payload = json.loads(capsys.readouterr().out)
+        loop = payload["learning_loop"]
+        assert loop["state"] == "amber"  # empty DB: never produced
+        assert loop["outputs_24h"] == 0
+
+    def test_counts_reflect_activity(self, temp_db, capsys):
+        from memory_mcp.config import Settings
+        from memory_mcp.mining import run_mining
+        from memory_mcp.storage import Storage
+
+        settings = Settings(db_path=temp_db)
+        storage = Storage(settings)
+        storage.log_output("import numpy", session_id="s1")
+        run_mining(storage, hours=1)
+        storage.close()
+        with patch("sys.argv", ["memory-mcp-cli", "--json", "status"]):
+            main()
+        loop = json.loads(capsys.readouterr().out)["learning_loop"]
+        assert loop["state"] == "green"
+        assert loop["outputs_24h"] == 1
+        assert loop["last_success_at"] is not None
+
+
 class TestCliIntegration:
     """Integration tests using subprocess."""
 
