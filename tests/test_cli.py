@@ -10,6 +10,8 @@ from unittest.mock import patch
 import pytest
 
 from memory_mcp.cli import main
+from memory_mcp.config import Settings
+from memory_mcp.storage import Storage
 
 
 @pytest.fixture
@@ -383,6 +385,63 @@ class TestStatusLearningLoop:
         assert loop["state"] == "green"
         assert loop["outputs_24h"] == 1
         assert loop["last_success_at"] is not None
+
+
+class TestBootstrapLoopWarning:
+    """Tests for the SessionStart staleness warning printed by `bootstrap`."""
+
+    def _seed_stale(self, db_path):
+        storage = Storage(Settings(db_path=db_path))
+        storage.record_mining_run(
+            started_at=_ts(days_ago=10),
+            finished_at=_ts(days_ago=10),
+            stats={"outputs_processed": 1, "patterns_found": 0, "new_memories": 0},
+        )
+        storage.close()
+
+    def test_stale_loop_warns_even_when_quiet(self, temp_db, tmp_path, capsys):
+        self._seed_stale(temp_db)
+        with patch("sys.argv", ["memory-mcp-cli", "bootstrap", "-r", str(tmp_path), "-q"]):
+            result = main()
+        assert result == 0
+        assert "memory loop hasn't produced" in capsys.readouterr().out
+
+    def test_healthy_loop_stays_silent(self, temp_db, tmp_path, capsys):
+        storage = Storage(Settings(db_path=temp_db))
+        storage.record_mining_run(
+            started_at=_ts(),
+            finished_at=_ts(),
+            stats={"outputs_processed": 1, "patterns_found": 1, "new_memories": 1},
+        )
+        storage.close()
+        with patch("sys.argv", ["memory-mcp-cli", "bootstrap", "-r", str(tmp_path), "-q"]):
+            main()
+        assert "memory loop" not in capsys.readouterr().out
+
+    def test_rate_limited_to_once_per_day(self, temp_db, tmp_path, capsys):
+        self._seed_stale(temp_db)
+        argv = ["memory-mcp-cli", "bootstrap", "-r", str(tmp_path), "-q"]
+        with patch("sys.argv", argv):
+            main()
+        capsys.readouterr()
+        with patch("sys.argv", argv):
+            main()
+        assert "memory loop" not in capsys.readouterr().out
+
+    def test_disabled_by_setting(self, temp_db, tmp_path, capsys):
+        self._seed_stale(temp_db)
+        with patch.dict("os.environ", {"MEMORY_MCP_LOOP_WARNINGS_ENABLED": "0"}):
+            with patch("sys.argv", ["memory-mcp-cli", "bootstrap", "-r", str(tmp_path), "-q"]):
+                main()
+        assert "memory loop" not in capsys.readouterr().out
+
+    def test_internal_error_degrades_to_silence(self, temp_db, tmp_path, capsys):
+        self._seed_stale(temp_db)
+        with patch.object(Storage, "get_loop_health", side_effect=RuntimeError("boom")):
+            with patch("sys.argv", ["memory-mcp-cli", "bootstrap", "-r", str(tmp_path), "-q"]):
+                result = main()
+        assert result == 0
+        assert "memory loop" not in capsys.readouterr().out
 
 
 class TestCliIntegration:
