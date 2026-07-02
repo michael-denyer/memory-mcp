@@ -575,15 +575,20 @@ def bootstrap(
         # JSON output for scripting
         memory-mcp-cli --json bootstrap
     """
-    # Loop staleness warning: printed first (prepend), before the empty-repo
-    # early return and before the quiet gate, so it reaches hook stdout (the
-    # injected session context) even under `-q`.
+    # Loop staleness warning: computed first (before the empty-repo early
+    # return and before the quiet gate) so the rate-limit stamp is touched
+    # on every invocation that surfaces a warning, regardless of output
+    # mode. Plain mode echoes it immediately, ahead of the payload, so it
+    # reaches hook stdout (the injected session context) even under `-q`.
+    # JSON mode never echoes it as bare text - doing so would prepend
+    # unparseable text before the JSON payload, breaking `| jq` consumers -
+    # instead it's folded into the payload's "loop_warning" key below.
     settings = get_settings()
     warning = _loop_warning_line(settings)
-    if warning:
+    use_json = ctx.obj["json"]
+    if warning and not use_json:
         click.echo(warning)
 
-    use_json = ctx.obj["json"]
     root = Path(root_path).expanduser().resolve()
 
     # Determine files to process
@@ -609,6 +614,7 @@ def bootstrap(
                         "hot_cache_promoted": 0,
                         "errors": [],
                         "message": message,
+                        "loop_warning": warning,
                     }
                 )
             )
@@ -634,7 +640,7 @@ def bootstrap(
         return
 
     if use_json:
-        click.echo(json.dumps(result))
+        click.echo(json.dumps({**result, "loop_warning": warning}))
     else:
         console.print("[bold]Bootstrap Results[/bold]")
         console.print(f"  Files processed: [cyan]{result.get('files_processed', 0)}[/cyan]")

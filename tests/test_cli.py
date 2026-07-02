@@ -539,6 +539,43 @@ class TestBootstrapLoopWarning:
         assert "memory loop" not in capsys.readouterr().out
 
 
+class TestBootstrapJsonLoopWarning:
+    """Tests for --json bootstrap embedding the staleness warning in the
+    JSON payload instead of echoing it as bare text before the payload,
+    which corrupted `| jq` consumption of stdout."""
+
+    def _seed_stale(self, db_path):
+        storage = Storage(Settings(db_path=db_path))
+        storage.record_mining_run(
+            started_at=_ts(days_ago=10),
+            finished_at=_ts(days_ago=10),
+            stats={"outputs_processed": 1, "patterns_found": 0, "new_memories": 0},
+        )
+        storage.close()
+
+    def test_stale_loop_warning_embedded_in_json_payload(self, temp_db, tmp_path, capsys):
+        self._seed_stale(temp_db)
+        with patch("sys.argv", ["memory-mcp-cli", "--json", "bootstrap", "-r", str(tmp_path)]):
+            result = main()
+        assert result == 0
+        out = capsys.readouterr().out
+        payload = json.loads(out)  # must parse cleanly - no bare text prefix
+        assert "memory loop hasn't produced" in payload["loop_warning"]
+
+    def test_second_json_run_within_stamp_window_has_no_warning(self, temp_db, tmp_path, capsys):
+        self._seed_stale(temp_db)
+        argv = ["memory-mcp-cli", "--json", "bootstrap", "-r", str(tmp_path)]
+        with patch("sys.argv", argv):
+            main()
+        capsys.readouterr()
+        with patch("sys.argv", argv):
+            result = main()
+        assert result == 0
+        out = capsys.readouterr().out
+        payload = json.loads(out)  # still valid JSON, just no warning this time
+        assert payload.get("loop_warning") in (None, "")
+
+
 class TestCliIntegration:
     """Integration tests using subprocess."""
 
