@@ -210,6 +210,112 @@ Shows the current project (detected from git) and its associated memories:
 - Project-specific promoted memories
 - Useful for debugging project awareness
 
+## Learning Loop & Observability
+
+The learning loop is the system that extracts and promotes useful patterns from Claude's responses. Memory MCP tracks loop health continuously.
+
+### Mining Runs Table
+
+Every real (non-probe) pattern extraction (`run_mining`) writes a row to the `mining_runs` table (schema v18):
+
+| Column | Description |
+|--------|-------------|
+| `id` | Primary key |
+| `started_at` | Timestamp when mining began (NOT NULL) |
+| `finished_at` | Timestamp when mining completed (NULL if it never finished) |
+| `outputs_processed` | Count of output_log rows processed (default 0) |
+| `patterns_found` | Count of patterns found (default 0) |
+| `memories_created` | Count of memories created from patterns (default 0) |
+| `error` | Error message if the run failed, else NULL |
+
+The table is the single source of truth for loop health — not logs. `storage.get_loop_health()` queries it to compute the red/amber/green state and the 7-day patterns/memories counters shown in `status` and the dashboard; the output counters (24h/7d) come from `output_log`, not this table (see "Health State Rules" below).
+
+### Health State Rules
+
+`get_loop_health()` derives one of three states from `mining_runs`, applied in this precedence order:
+
+| State | Condition |
+|-------|-----------|
+| **red** | The 3 most recent runs (`ERROR_STREAK = 3`) all have a non-null `error` — requires at least 3 runs total |
+| **amber** | Otherwise, if there is no successful run yet, or the last successful run is older than 7 days (`STALENESS_DAYS = 7`) |
+| **green** | Otherwise |
+
+This is the single set of rules behind every health indicator in the system — the `status` CLI state row, the dashboard mining-page banner, and the SessionStart staleness warning all read the same `get_loop_health()` state.
+
+### hook-check With Round-Trip Probe
+
+The `hook-check` CLI command validates hook dependencies and can optionally perform a live probe:
+
+```bash
+memory-mcp-cli hook-check              # Check deps only
+memory-mcp-cli hook-check --no-probe   # Skip live probe (faster)
+```
+
+The probe (enabled by default) runs: log → mine → assert → cleanup, using a disposable sentinel that it hard-deletes afterward. It calls `run_mining(..., record_run=False)`, so **the probe never writes a `mining_runs` row** — probing intentionally does not reset the staleness clock that `get_loop_health()` uses to compute loop state. If it did, a probe run alone could mask a genuinely stale (or broken) real learning loop as healthy. The probe's own output-log row is tagged `session_id = PROBE_SESSION_ID` (a constant defined in `storage/mining_runs.py`) so it can be identified and excluded from the `outputs_24h`/`outputs_7d` counters, and cleaned up.
+
+A probe failure means a pipeline stage is actually broken — not that data is stale.
+
+### Staleness Warnings
+
+On session start, the bootstrap hook checks loop freshness. If the loop hasn't succeeded in 7 days or is in error state, it prints one of these warning lines verbatim (once per day):
+
+```
+memory loop hasn't produced in {days} days — run `memory-mcp-cli hook-check`
+memory loop has never produced — run `memory-mcp-cli hook-check`
+memory loop is erroring (last 3 runs failed) — run `memory-mcp-cli hook-check`
+```
+
+Disable staleness warnings with:
+
+```bash
+MEMORY_MCP_LOOP_WARNINGS_ENABLED=0
+```
+
+### Learning Loop Status Section
+
+The `status` CLI command shows Learning Loop health:
+
+```bash
+memory-mcp-cli status
+```
+
+The Learning Loop table shows:
+
+| Row | Description |
+|-----|-------------|
+| State | `green`, `amber`, or `red` (see "Health State Rules" above) |
+| Outputs (24h/7d) | Count of logged outputs in the last 24 hours / 7 days (probe outputs excluded) |
+| Patterns mined (7d) | Patterns found by successful runs in the last 7 days |
+| Memories created (7d) | Memories created by successful runs in the last 7 days |
+| Last successful run | Timestamp of the most recent error-free run, or `never` |
+
+With `--json`, the `learning_loop` key returns the full health dict (`state`, `last_success_at`, `last_run_at`, `consecutive_errors`, `total_runs`, `outputs_24h`, `outputs_7d`, `patterns_7d`, `memories_7d`, `days_since_success`).
+
+### Injected-Memory Usage Tracking
+
+When Claude's response contains distinctive tokens from injected memories, `log-response` automatically marks those memories as "used" for helpfulness tracking.
+
+Distinctive tokens are:
+
+- **Identifiers** (CamelCase, snake_case, kebab-case with 2+ segments)
+- **Paths** (`/path/to/file`, `src/module`)
+- **Versions** (`v1.2.3`, `python3.10`)
+- **URLs** and domain names
+
+The heuristic is deliberately conservative — false positives hurt more than missed matches.
+
+### Utility Decay
+
+Decay targets only memories with `source = 'mined'` that are not pinned, have never been retrieved or used, and are older than 30 days. The protections are pinning, any retrieval, any detected use, and age under 30 days; memories from any other source are untouched. Note that approving a mined pattern does not change its source — approved patterns keep `source = 'mined'` and can still decay if they are never pinned, retrieved, or used.
+
+For each qualifying memory:
+
+- **Demoted** from hot cache (if present)
+- **Utility-floored** to 0.0 (prevents re-promotion)
+- **Never deleted** — archived for reference
+
+Decay runs automatically during maintenance (`run_full_cleanup`). It helps prevent clutter when patterns lose relevance.
+
 ## CLI Commands
 
 ```bash
@@ -231,6 +337,10 @@ memory-mcp-cli seed ~/project/CLAUDE.md -t project --promote
 # Consolidate similar memories
 memory-mcp-cli consolidate --dry-run
 memory-mcp-cli consolidate
+
+# Validate loop hooks and connectivity
+memory-mcp-cli hook-check
+memory-mcp-cli hook-check --no-probe
 
 # Show memory system status
 memory-mcp-cli status

@@ -5,6 +5,7 @@ These commands can be called from shell scripts and Claude Code hooks.
 
 import json
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -12,12 +13,73 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from memory_mcp.config import find_bootstrap_files, get_settings
+from memory_mcp.config import Settings, find_bootstrap_files, get_settings
+from memory_mcp.logging import get_logger
+from memory_mcp.probe import run_probe
 from memory_mcp.project import get_current_project_id
 from memory_mcp.storage import MemorySource, MemoryType, Storage
 from memory_mcp.text_parsing import parse_content_into_chunks
 
 console = Console()
+log = get_logger("cli")
+
+LOOP_WARNING_STAMP_TTL_SECONDS = 24 * 60 * 60
+
+
+def _loop_warning_line(settings: Settings) -> str | None:
+    """Build a one-line staleness/error warning for the learning loop, if due.
+
+    Rate-limited to once per 24h via a stamp file next to the database, so
+    that repeated `bootstrap` invocations (e.g. one per Claude Code session)
+    don't spam the same warning. The stamp is only touched when a warning is
+    actually emitted, so the first stale/erroring day always fires
+    immediately once the rate limit from the prior warning has expired.
+
+    Args:
+        settings: Active configuration, used to check the feature flag and
+            locate the database (and therefore the stamp file).
+
+    Returns:
+        The warning line to print, or None if the loop is healthy, warnings
+        are disabled, the rate limit hasn't elapsed, or any internal error
+        occurred while computing loop health. A broken warning system must
+        never break session start, so all errors degrade to silence.
+    """
+    try:
+        if not settings.loop_warnings_enabled:
+            return None
+
+        stamp_path = Path(settings.db_path).parent / "loop-warning.stamp"
+        if stamp_path.exists():
+            age_seconds = time.time() - stamp_path.stat().st_mtime
+            if age_seconds < LOOP_WARNING_STAMP_TTL_SECONDS:
+                return None
+
+        storage = Storage(settings)
+        try:
+            health = storage.get_loop_health()
+        finally:
+            storage.close()
+
+        state = health.get("state")
+        if state == "red":
+            line = "memory loop is erroring (last 3 runs failed) — run `memory-mcp-cli hook-check`"
+        elif state == "amber":
+            days = health.get("days_since_success")
+            if days is None:
+                line = "memory loop has never produced — run `memory-mcp-cli hook-check`"
+            else:
+                line = (
+                    f"memory loop hasn't produced in {days} days — run `memory-mcp-cli hook-check`"
+                )
+        else:
+            return None
+
+        stamp_path.parent.mkdir(parents=True, exist_ok=True)
+        stamp_path.touch()
+        return line
+    except Exception:
+        return None
 
 
 @click.group()
@@ -204,6 +266,13 @@ def log_response(ctx: click.Context) -> None:
     storage = Storage(settings)
     try:
         storage.log_output(content, project_id=project_id, session_id=session_id)
+
+        try:
+            marked = storage.mark_used_memories(last_response)
+            if marked:
+                log.info(f"auto-marked {marked} injected memories as used")
+        except Exception as e:
+            log.warning(f"auto-mark failed (non-fatal): {e}")
     finally:
         storage.close()
 
@@ -506,7 +575,20 @@ def bootstrap(
         # JSON output for scripting
         memory-mcp-cli --json bootstrap
     """
+    # Loop staleness warning: computed first (before the empty-repo early
+    # return and before the quiet gate) so the rate-limit stamp is touched
+    # on every invocation that surfaces a warning, regardless of output
+    # mode. Plain mode echoes it immediately, ahead of the payload, so it
+    # reaches hook stdout (the injected session context) even under `-q`.
+    # JSON mode never echoes it as bare text - doing so would prepend
+    # unparseable text before the JSON payload, breaking `| jq` consumers -
+    # instead it's folded into the payload's "loop_warning" key below.
+    settings = get_settings()
+    warning = _loop_warning_line(settings)
     use_json = ctx.obj["json"]
+    if warning and not use_json:
+        click.echo(warning)
+
     root = Path(root_path).expanduser().resolve()
 
     # Determine files to process
@@ -532,6 +614,7 @@ def bootstrap(
                         "hot_cache_promoted": 0,
                         "errors": [],
                         "message": message,
+                        "loop_warning": warning,
                     }
                 )
             )
@@ -541,7 +624,6 @@ def bootstrap(
 
     mem_type = MemoryType(memory_type)
     tag_list = list(tags) if tags else None
-    settings = get_settings()
 
     storage = Storage(settings)
     try:
@@ -558,7 +640,7 @@ def bootstrap(
         return
 
     if use_json:
-        click.echo(json.dumps(result))
+        click.echo(json.dumps({**result, "loop_warning": warning}))
     else:
         console.print("[bold]Bootstrap Results[/bold]")
         console.print(f"  Files processed: [cyan]{result.get('files_processed', 0)}[/cyan]")
@@ -810,6 +892,7 @@ def status(ctx: click.Context) -> None:
         hot_memories = storage.get_hot_memories()
         metrics = storage.get_hot_cache_metrics()
         memory_stats = storage.get_stats()
+        health = storage.get_loop_health()
 
         if use_json:
             click.echo(
@@ -822,6 +905,7 @@ def status(ctx: click.Context) -> None:
                             {"id": m.id, "content": m.content[:100], "type": m.memory_type.value}
                             for m in hot_memories
                         ],
+                        "learning_loop": health,
                     }
                 )
             )
@@ -854,6 +938,23 @@ def status(ctx: click.Context) -> None:
             overview_table.add_row("By source", source_str)
 
         console.print(overview_table)
+
+        # Learning loop health
+        console.print("\n[bold]Learning Loop:[/bold]")
+        loop_table = Table(show_header=False, box=None)
+        loop_table.add_column("Metric", style="dim")
+        loop_table.add_column("Value", style="bold")
+
+        state_color = {"green": "green", "amber": "yellow", "red": "red"}.get(
+            health["state"], "white"
+        )
+        loop_table.add_row("State", f"[{state_color}]{health['state']}[/{state_color}]")
+        loop_table.add_row("Outputs (24h/7d)", f"{health['outputs_24h']}/{health['outputs_7d']}")
+        loop_table.add_row("Patterns mined (7d)", str(health["patterns_7d"]))
+        loop_table.add_row("Memories created (7d)", str(health["memories_7d"]))
+        loop_table.add_row("Last successful run", health["last_success_at"] or "never")
+
+        console.print(loop_table)
 
         # Hot cache stats
         console.print("\n[bold]Hot Cache Metrics:[/bold]")
@@ -902,8 +1003,13 @@ def status(ctx: click.Context) -> None:
 
 
 @cli.command("hook-check")
+@click.option(
+    "--no-probe",
+    is_flag=True,
+    help="Skip the learning-loop round-trip probe",
+)
 @click.pass_context
-def hook_check(ctx: click.Context) -> None:
+def hook_check(ctx: click.Context, no_probe: bool) -> None:
     """Check hook dependencies and database connectivity.
 
     Validates that the memory-mcp hook can run successfully:
@@ -911,6 +1017,10 @@ def hook_check(ctx: click.Context) -> None:
     - jq command is available
     - Database is accessible and writable
     - Hook script exists
+    - Learning-loop round trip works (log -> mine -> storage)
+
+    The round-trip probe only runs when the database check passed - a probe
+    against a broken database is noise, not signal.
 
     Examples:
 
@@ -919,6 +1029,9 @@ def hook_check(ctx: click.Context) -> None:
 
         # JSON output for scripting
         memory-mcp-cli --json hook-check
+
+        # Skip the round-trip probe
+        memory-mcp-cli hook-check --no-probe
     """
     import shutil
 
@@ -941,13 +1054,26 @@ def hook_check(ctx: click.Context) -> None:
 
     # Check database
     settings = get_settings()
+    database_ok = False
+    storage = None
     try:
         storage = Storage(settings)
         stats = storage.get_stats()
-        storage.close()
+        database_ok = True
         checks.append(("database", True, f"{stats['total_memories']} memories"))
     except Exception as e:
         checks.append(("database", False, str(e)))
+
+    # Round-trip probe - only meaningful once the database is known-good.
+    if database_ok and not no_probe:
+        result = run_probe(storage)
+        if result.ok:
+            checks.append(("loop_probe", True, "round trip ok"))
+        else:
+            checks.append(("loop_probe", False, f"stage={result.stage}: {result.error}"))
+
+    if storage is not None:
+        storage.close()
 
     # Check hook script
     hook_script = Path(__file__).parent.parent.parent / "hooks" / "memory-log-response.sh"
@@ -990,7 +1116,9 @@ def hook_check(ctx: click.Context) -> None:
             console.print("\n[green]All checks passed![/green]")
         else:
             console.print("\n[red]Some checks failed. Fix the issues above.[/red]")
-            raise SystemExit(1)
+
+    if not all_ok:
+        raise SystemExit(1)
 
 
 @cli.command("import-beads")

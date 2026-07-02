@@ -19,6 +19,61 @@ if TYPE_CHECKING:
 
 log = get_logger("injection_tracking")
 
+# How far back to look for injections when auto-marking memories as used.
+AUTO_MARK_WINDOW_HOURS = 24
+
+# Maximum number of distinctive tokens to extract per memory. Keeps the
+# match loop bounded for very long memory contents.
+TOKEN_CAP = 10
+
+# Characters that are always allowed inside a token without disqualifying
+# it from being pure-lowercase-alphabetic (identifier/path/version shapes).
+_DISTINCTIVE_MARKS = set("_./:-")
+
+# Punctuation commonly wrapped around a token (backticks, quotes, sentence
+# punctuation) that should not be considered part of the token itself.
+_STRIP_CHARS = "`'\"()[]{}<>,.;:!?"
+
+
+def distinctive_tokens(text: str, cap: int = TOKEN_CAP) -> list[str]:
+    """Extract distinctive (identifier/path/version-shaped) tokens from text.
+
+    Heuristic v1 (deliberately conservative): a distinctive token is a
+    whitespace-delimited token of length >= 6 that contains at least one of
+    ``_ . / : -``, a digit, or an internal capital (a capital letter after
+    the first character). Pure-lowercase alphabetic words are never
+    distinctive — this kills common false positives like "response",
+    "function", or "command".
+
+    Surrounding punctuation (backticks, quotes, brackets, trailing sentence
+    punctuation) is stripped before the shape check so that markdown-quoted
+    tokens like `` `deploy-staging` `` still match plain-text occurrences of
+    ``deploy-staging``.
+
+    Args:
+        text: Text to extract distinctive tokens from.
+        cap: Maximum number of tokens to return.
+
+    Returns:
+        Up to `cap` distinctive tokens, in order of first appearance,
+        duplicates removed.
+    """
+    seen: dict[str, None] = {}
+    for raw in text.split():
+        token = raw.strip(_STRIP_CHARS)
+        if len(token) < 6:
+            continue
+        if token in seen:
+            continue
+        has_mark = any(c in _DISTINCTIVE_MARKS for c in token)
+        has_digit = any(c.isdigit() for c in token)
+        has_internal_capital = any(c.isupper() for c in token[1:])
+        if has_mark or has_digit or has_internal_capital:
+            seen[token] = None
+            if len(seen) >= cap:
+                break
+    return list(seen)
+
 
 @dataclass
 class InjectionRecord:
@@ -456,3 +511,62 @@ class InjectionTrackingMixin:
             )
 
         return actions
+
+    def mark_used_memories(
+        self, response_text: str, window_hours: int = AUTO_MARK_WINDOW_HOURS
+    ) -> int:
+        """Auto-mark recently injected memories as used based on a response.
+
+        Finds memories injected within the trailing window, and for each one
+        extracts distinctive tokens (see `distinctive_tokens`) from its
+        content. A memory is considered "used" if at least one of its
+        distinctive tokens appears (case-insensitively) in `response_text`.
+        Matched memories get `used_count` incremented and `last_used_at` set
+        to now — at most once per call, regardless of how many of their
+        tokens matched.
+
+        This is heuristic v1: deliberately conservative, favoring precision
+        (few false positives) over recall.
+
+        Args:
+            response_text: The response text to search for distinctive
+                token matches.
+            window_hours: How many hours back to look for injections.
+
+        Returns:
+            Number of memories marked as used.
+        """
+        response_lower = response_text.lower()
+
+        with self.transaction() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT m.id, m.content
+                FROM injection_log i
+                JOIN memories m ON m.id = i.memory_id
+                WHERE i.injected_at >= datetime('now', ?)
+                """,
+                (f"-{window_hours} hours",),
+            ).fetchall()
+
+            matched_ids = []
+            for row in rows:
+                tokens = distinctive_tokens(row["content"])
+                if any(token.lower() in response_lower for token in tokens):
+                    matched_ids.append(row["id"])
+
+            if not matched_ids:
+                return 0
+
+            conn.executemany(
+                """
+                UPDATE memories
+                SET used_count = used_count + 1,
+                    last_used_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                [(mid,) for mid in matched_ids],
+            )
+
+        log.info("Auto-marked {} memories as used (window={}h)", len(matched_ids), window_hours)
+        return len(matched_ids)

@@ -71,40 +71,43 @@ class OutputLoggingMixin:
             return log_id
 
     def get_recent_outputs(
-        self, hours: int = 24, project_id: str | None = None
+        self,
+        hours: int = 24,
+        project_id: str | None = None,
+        session_id: str | None = None,
     ) -> list[tuple[int, str, datetime, str | None, str | None]]:
-        """Get recent output logs, optionally filtered by project.
+        """Get recent output logs, optionally filtered by project and/or session.
 
         Args:
             hours: How many hours back to look.
             project_id: If provided, only return logs from this project.
                         If None, returns all logs (backwards compatible).
+            session_id: If provided, only return logs with this exact session_id.
+                        If None, returns logs from all sessions.
 
         Returns:
             List of tuples: (log_id, content, timestamp, project_id, session_id).
             The project_id and session_id are preserved for each log so mining
             can use the source project/session rather than the current one.
         """
+        query = """
+            SELECT id, content, timestamp, project_id, session_id FROM output_log
+            WHERE timestamp > datetime('now', ?)
+            """
+        params: list[str] = [f"-{hours} hours"]
+
+        if project_id:
+            query += " AND project_id = ?"
+            params.append(project_id)
+
+        if session_id:
+            query += " AND session_id = ?"
+            params.append(session_id)
+
+        query += " ORDER BY timestamp DESC"
+
         with self._connection() as conn:
-            if project_id:
-                rows = conn.execute(
-                    """
-                    SELECT id, content, timestamp, project_id, session_id FROM output_log
-                    WHERE timestamp > datetime('now', ?)
-                      AND project_id = ?
-                    ORDER BY timestamp DESC
-                    """,
-                    (f"-{hours} hours", project_id),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT id, content, timestamp, project_id, session_id FROM output_log
-                    WHERE timestamp > datetime('now', ?)
-                    ORDER BY timestamp DESC
-                    """,
-                    (f"-{hours} hours",),
-                ).fetchall()
+            rows = conn.execute(query, params).fetchall()
 
             return [
                 (

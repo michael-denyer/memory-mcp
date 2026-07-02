@@ -143,7 +143,7 @@ memory-mcp-cli dashboard    # Opens at http://localhost:8765
 
 ![Dashboard](docs/images/dashboard.png)
 
-Browse memories, hot cache, mining candidates, sessions, and knowledge graph.
+Browse memories, hot cache, mining candidates, sessions, and knowledge graph. The mining page shows a green/amber/red health banner tracking learning loop freshness.
 
 ## How to Use
 

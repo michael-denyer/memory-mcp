@@ -327,6 +327,10 @@ class Settings(BaseSettings):
         default=True,
         description="Show warning on startup if Stop hook not configured (for pattern mining)",
     )
+    loop_warnings_enabled: bool = Field(
+        default=True,
+        description="Warn at session start when the learning loop is stale or erroring",
+    )
 
     # Semantic clustering for display (RePo-inspired cognitive load reduction)
     clustering_display_enabled: bool = Field(

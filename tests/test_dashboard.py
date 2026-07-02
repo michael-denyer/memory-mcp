@@ -1,11 +1,19 @@
 """Tests for the dashboard FastAPI application."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
 from memory_mcp.config import Settings
 from memory_mcp.dashboard.app import app, get_projects
 from memory_mcp.storage import MemoryType, Storage
+from memory_mcp.storage.mining_runs import PROBE_SESSION_ID
+
+
+def _ts(days_ago: float = 0) -> str:
+    dt = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 @pytest.fixture
@@ -87,3 +95,55 @@ def test_get_projects_returns_distinct_projects(dashboard_storage):
     labels = {p["label"]: p["id"] for p in projects}
     assert "owner/repo" in labels  # GitHub format shortened
     assert "project" in labels  # Absolute path shows last component
+
+
+class TestMiningLoopBanner:
+    def test_empty_db_shows_amber(self, client):
+        html = client.get("/mining").text
+        assert "loop-banner-amber" in html
+
+    def test_recent_success_shows_green(self, client, dashboard_storage):
+        dashboard_storage.record_mining_run(
+            started_at=_ts(),
+            finished_at=_ts(),
+            stats={"outputs_processed": 1, "patterns_found": 1, "new_memories": 1},
+        )
+        assert "loop-banner-green" in client.get("/mining").text
+
+    def test_error_streak_shows_red(self, client, dashboard_storage):
+        for _ in range(3):
+            dashboard_storage.record_mining_run(
+                started_at=_ts(), finished_at=_ts(), stats={}, error="boom"
+            )
+        assert "loop-banner-red" in client.get("/mining").text
+
+    def test_output_stat_excludes_probe_rows(self, client, dashboard_storage):
+        dashboard_storage.log_output("probe leftover", session_id=PROBE_SESSION_ID)
+        html = client.get("/mining").text
+        # The Output Logs stat card renders as:
+        #   <p class="text-xs text-gray-400">Output Logs</p>
+        #   <p class="text-2xl font-bold text-white">{{ mining_stats.output_count }}</p>
+        # Anchor on the label through to its value so this can't coincidentally
+        # match the "Mined Patterns" card, which shares the same value markup
+        # and would also render 0.
+        assert (
+            '<p class="text-xs text-gray-400">Output Logs</p>\n'
+            '            <p class="text-2xl font-bold text-white">0</p>'
+        ) in html
+
+
+class TestInjectionsPage:
+    # Storage opens its SQLite connection lazily, so on a fresh instance
+    # s._conn is None until the first query runs. These requests must be the
+    # first thing to touch the database.
+
+    def test_page_loads_on_cold_storage(self, client):
+        response = client.get("/injections")
+        assert response.status_code == 200
+        assert "Injection History" in response.text
+
+    def test_api_partial_loads_on_cold_storage(self, client):
+        # Hits _get_injections without _get_injection_stats running first,
+        # so it can't rely on an earlier call having opened the connection.
+        response = client.get("/api/injections")
+        assert response.status_code == 200
