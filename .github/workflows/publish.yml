@@ -3,13 +3,14 @@ name: Publish
 on:
   release:
     types: [published]
+  workflow_dispatch: # re-run a failed leg without re-cutting the release
 
 jobs:
   pypi:
     name: Publish to PyPI
     runs-on: ubuntu-latest
     permissions:
-      id-token: write  # Required for trusted publishing
+      id-token: write # Required for trusted publishing
     steps:
       - uses: actions/checkout@v4
 
@@ -21,3 +22,94 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  mcp-registry:
+    name: Publish to MCP Registry
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # OIDC auth to the registry — no secret needed
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # The registry validates the package exists on PyPI, and the pypi job
+      # finishing does not mean the index is serving it yet.
+      - name: Wait for PyPI to serve the release
+        run: |
+          VERSION=$(jq -r '.version' server.json)
+          echo "Waiting for hot-memory-mcp $VERSION on PyPI"
+          for i in $(seq 1 30); do
+            if curl -fsL "https://pypi.org/pypi/hot-memory-mcp/${VERSION}/json" > /dev/null; then
+              echo "PyPI is serving ${VERSION}"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "PyPI never served ${VERSION} after 5 minutes" >&2
+          exit 1
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish
+
+  homebrew:
+    name: Bump Homebrew tap
+    needs: pypi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tap token is configured
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN secret is not set — add a PAT with push access to michael-denyer/homebrew-tap" >&2
+            exit 1
+          fi
+
+      - name: Wait for PyPI sdist and capture its sha256
+        id: sdist
+        run: |
+          VERSION=$(jq -r '.version' server.json)
+          echo "Waiting for hot-memory-mcp $VERSION sdist on PyPI"
+          for i in $(seq 1 30); do
+            SHA=$(curl -fsL "https://pypi.org/pypi/hot-memory-mcp/${VERSION}/json" \
+              | jq -r '.urls[] | select(.packagetype=="sdist") | .digests.sha256' || true)
+            if [ -n "$SHA" ] && [ "$SHA" != "null" ]; then
+              echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+              echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "PyPI never served the ${VERSION} sdist after 5 minutes" >&2
+          exit 1
+
+      - name: Update formula and push
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.sdist.outputs.version }}
+          SHA256: ${{ steps.sdist.outputs.sha256 }}
+        run: |
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/michael-denyer/homebrew-tap.git" tap
+          cd tap
+          sed -i \
+            -e "s|hot_memory_mcp-[0-9][^\"]*\.tar\.gz|hot_memory_mcp-${VERSION}.tar.gz|" \
+            -e "s|^  sha256 \".*\"|  sha256 \"${SHA256}\"|" \
+            Formula/hot-memory-mcp.rb
+          if git diff --exit-code Formula/hot-memory-mcp.rb; then
+            echo "Formula already at ${VERSION} — nothing to push"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -am "chore: bump hot-memory-mcp to v${VERSION}"
+          git push
