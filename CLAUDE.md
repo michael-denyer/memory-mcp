@@ -169,7 +169,6 @@ Use `/release <version>` which runs the standard pre-release checklist.
 - `.claude-plugin/plugin.json` (Claude Code plugin manifest)
 - `.claude-plugin/marketplace.json` (plugin listing)
 
-The publish workflow (triggered by pushing a tag) automatically:
-- Publishes to PyPI
-- Updates MCP Registry
-- Updates Homebrew tap
+The publish workflow (triggered by creating the GitHub release) publishes to PyPI only.
+MCP Registry and Homebrew tap updates are manual — follow the steps in the `/release`
+skill (registry publish needs an interactive GitHub OAuth login).
