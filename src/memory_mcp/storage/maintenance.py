@@ -398,11 +398,12 @@ class MaintenanceMixin:
     def decay_unused_mined_memories(self) -> dict:
         """Demote and floor the utility of stale, unused mined memories.
 
-        Targets memories that were auto-mined (never human-approved), are not
-        pinned, have never been retrieved or used, and are older than
-        DECAY_DAYS. Memories with source 'mined_approved' are exempt because
-        approval is a human signal; pinned, young, retrieved, or used
-        memories are exempt for the same reason.
+        Targets memories with source 'mined' that are not pinned, have never
+        been retrieved or used, and are older than DECAY_DAYS. Pinned, young,
+        retrieved, or used memories are exempt. Approval does not exempt a
+        pattern: every approval path stores source='mined' ('mined_approved'
+        exists only as a PromotionSource), so approved patterns that are
+        never pinned, retrieved, or used decay too.
 
         For each qualifying memory: demotes it from hot cache (if hot), then
         floors its utility_score to UTILITY_FLOOR. Nothing is deleted.

@@ -228,7 +228,7 @@ Every real (non-probe) pattern extraction (`run_mining`) writes a row to the `mi
 | `memories_created` | Count of memories created from patterns (default 0) |
 | `error` | Error message if the run failed, else NULL |
 
-The table is the single source of truth for loop health — not logs. `storage.get_loop_health()` queries it to compute the red/amber/green state and the 7-day/24-hour counters shown in `status` and the dashboard (see "Health State Rules" below).
+The table is the single source of truth for loop health — not logs. `storage.get_loop_health()` queries it to compute the red/amber/green state and the 7-day patterns/memories counters shown in `status` and the dashboard; the output counters (24h/7d) come from `output_log`, not this table (see "Health State Rules" below).
 
 ### Health State Rules
 
@@ -257,10 +257,12 @@ A probe failure means a pipeline stage is actually broken — not that data is s
 
 ### Staleness Warnings
 
-On session start, the bootstrap hook checks loop freshness. If the loop hasn't succeeded in 7 days or is in error state, it warns (once per day):
+On session start, the bootstrap hook checks loop freshness. If the loop hasn't succeeded in 7 days or is in error state, it prints one of these warning lines verbatim (once per day):
 
 ```
-⚠️  Learning loop stale — no successful runs in 7 days. Check hooks with: memory-mcp-cli hook-check
+memory loop hasn't produced in {days} days — run `memory-mcp-cli hook-check`
+memory loop has never produced — run `memory-mcp-cli hook-check`
+memory loop is erroring (last 3 runs failed) — run `memory-mcp-cli hook-check`
 ```
 
 Disable staleness warnings with:
@@ -281,7 +283,7 @@ The Learning Loop table shows:
 
 | Row | Description |
 |-----|-------------|
-| State | `green`, `amber`, or `red` (see "Health State Rules" below) |
+| State | `green`, `amber`, or `red` (see "Health State Rules" above) |
 | Outputs (24h/7d) | Count of logged outputs in the last 24 hours / 7 days (probe outputs excluded) |
 | Patterns mined (7d) | Patterns found by successful runs in the last 7 days |
 | Memories created (7d) | Memories created by successful runs in the last 7 days |
@@ -304,7 +306,7 @@ The heuristic is deliberately conservative — false positives hurt more than mi
 
 ### Utility Decay
 
-Decay targets only memories with `source = 'mined'` (auto-mined, never human-approved) that are not pinned, have never been retrieved or used, and are older than 30 days. Every other memory is untouched — approved patterns (`mined_approved`), pinned memories, retrieved/used memories, young memories, and memories from any other source are all exempt.
+Decay targets only memories with `source = 'mined'` that are not pinned, have never been retrieved or used, and are older than 30 days. The protections are pinning, any retrieval, any detected use, and age under 30 days; memories from any other source are untouched. Note that approving a mined pattern does not change its source — approved patterns keep `source = 'mined'` and can still decay if they are never pinned, retrieved, or used.
 
 For each qualifying memory:
 
