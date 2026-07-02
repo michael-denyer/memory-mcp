@@ -20,6 +20,8 @@ from memory_mcp.mining import run_mining
 from memory_mcp.storage import Storage
 from memory_mcp.storage.mining_runs import PROBE_SESSION_ID
 
+SENTINEL_PREFIX = "memory_probe_sentinel_"
+
 
 @dataclass
 class ProbeResult:
@@ -41,8 +43,8 @@ class ProbeResult:
     details: dict = field(default_factory=dict)
 
 
-def _cleanup(storage: Storage, nonce: str) -> dict:
-    """Delete every probe artifact matching `nonce` and verify zero residue.
+def _cleanup(storage: Storage, prefix: str) -> dict:
+    """Delete every probe artifact matching `prefix` and verify zero residue.
 
     Memories are removed via `storage.delete_memory` (not raw SQL) so the
     vector and tag cascades run. `mined_patterns` and `output_log` rows have
@@ -50,30 +52,32 @@ def _cleanup(storage: Storage, nonce: str) -> dict:
 
     Args:
         storage: Storage instance to clean up.
-        nonce: The probe's content nonce, used to scope pattern/memory
-            deletes via `LIKE '%' || nonce || '%'`.
+        prefix: Scopes pattern/memory deletes via `LIKE '%' || prefix || '%'`.
+            Callers pass the constant `SENTINEL_PREFIX` (not a per-run nonce)
+            so that a pre-sweep also catches leftovers from a *prior* probe
+            run, whose nonce would otherwise never match.
 
     Returns:
         Dict with keys `memories_deleted`, `patterns_deleted`,
         `outputs_deleted` giving the counts removed.
 
     Raises:
-        AssertionError: If residue remains after cleanup.
+        RuntimeError: If residue remains after cleanup.
     """
-    like_nonce = f"%{nonce}%"
+    like_prefix = f"%{prefix}%"
 
     with storage._connection() as conn:
         memory_ids = [
             row[0]
             for row in conn.execute(
-                "SELECT id FROM memories WHERE content LIKE ?", (like_nonce,)
+                "SELECT id FROM memories WHERE content LIKE ?", (like_prefix,)
             ).fetchall()
         ]
     memories_deleted = sum(1 for mid in memory_ids if storage.delete_memory(mid))
 
     with storage.transaction() as conn:
         patterns_deleted = conn.execute(
-            "DELETE FROM mined_patterns WHERE pattern LIKE ?", (like_nonce,)
+            "DELETE FROM mined_patterns WHERE pattern LIKE ?", (like_prefix,)
         ).rowcount
         outputs_deleted = conn.execute(
             "DELETE FROM output_log WHERE session_id = ?", (PROBE_SESSION_ID,)
@@ -85,13 +89,14 @@ def _cleanup(storage: Storage, nonce: str) -> dict:
                 "SELECT COUNT(*) FROM output_log WHERE session_id = ?", (PROBE_SESSION_ID,)
             ).fetchone()[0],
             conn.execute(
-                "SELECT COUNT(*) FROM mined_patterns WHERE pattern LIKE ?", (like_nonce,)
+                "SELECT COUNT(*) FROM mined_patterns WHERE pattern LIKE ?", (like_prefix,)
             ).fetchone()[0],
             conn.execute(
-                "SELECT COUNT(*) FROM memories WHERE content LIKE ?", (like_nonce,)
+                "SELECT COUNT(*) FROM memories WHERE content LIKE ?", (like_prefix,)
             ).fetchone()[0],
         )
-    assert residue == (0, 0, 0), f"probe cleanup left residue: {residue}"
+    if residue != (0, 0, 0):
+        raise RuntimeError(f"probe cleanup left residue: {residue}")
 
     return {
         "memories_deleted": memories_deleted,
@@ -105,8 +110,10 @@ def run_probe(storage: Storage) -> ProbeResult:
 
     Logs a disposable, import-shaped sentinel, mines it with the real
     pipeline, asserts it was captured as a mined pattern, then deletes every
-    artifact it created. A clean pre-sweep runs first so leftovers from a
-    prior failed probe never accumulate or get mistaken for real data.
+    artifact it created. A clean pre-sweep runs first, scoped to the constant
+    `SENTINEL_PREFIX` rather than this run's nonce, so leftovers from a
+    prior failed probe (which used a *different* nonce) never accumulate or
+    get mistaken for real data.
 
     Args:
         storage: Storage instance to probe.
@@ -121,7 +128,7 @@ def run_probe(storage: Storage) -> ProbeResult:
     nonce = uuid4().hex[:8]
 
     try:
-        _cleanup(storage, nonce)
+        _cleanup(storage, SENTINEL_PREFIX)
     except Exception as e:  # noqa: BLE001 - reported via ProbeResult, not raised
         return ProbeResult(ok=False, stage="cleanup", error=f"{type(e).__name__}: {e}")
 
@@ -132,7 +139,7 @@ def run_probe(storage: Storage) -> ProbeResult:
         # stage can never pass. This sentinel is 37 chars (8-char nonce). If
         # a user raises the threshold past the sentinel length, the probe
         # fails at the assert stage and hook-check reports it.
-        sentinel = f"import memory_probe_sentinel_{nonce}"
+        sentinel = f"import {SENTINEL_PREFIX}{nonce}"
         storage.log_output(sentinel, session_id=PROBE_SESSION_ID)
     except Exception as e:  # noqa: BLE001
         return ProbeResult(ok=False, stage="log", error=f"{type(e).__name__}: {e}")
@@ -147,12 +154,13 @@ def run_probe(storage: Storage) -> ProbeResult:
             pattern_row = conn.execute(
                 "SELECT COUNT(*) FROM mined_patterns WHERE pattern LIKE ?", (f"%{nonce}%",)
             ).fetchone()
-        assert pattern_row[0] > 0, f"no mined_patterns row for nonce {nonce!r}"
+        if not pattern_row[0] > 0:
+            raise RuntimeError(f"no mined_patterns row for nonce {nonce!r}")
     except Exception as e:  # noqa: BLE001
         return ProbeResult(ok=False, stage="assert", error=f"{type(e).__name__}: {e}")
 
     try:
-        details = _cleanup(storage, nonce)
+        details = _cleanup(storage, SENTINEL_PREFIX)
     except Exception as e:  # noqa: BLE001
         return ProbeResult(ok=False, stage="cleanup", error=f"{type(e).__name__}: {e}")
 

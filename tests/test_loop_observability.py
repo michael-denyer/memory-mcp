@@ -127,6 +127,28 @@ class TestLoopHealth:
         finally:
             storage.close()
 
+    def test_success_past_7_days_boundary_is_amber(self, temp_settings):
+        """A success 7.4 days old must be amber per the documented boundary
+        ("no successful run in 7 days"). Whole-day truncation of
+        days_since_success previously reported this as green, since
+        floor(7.4) == 7 is not > STALENESS_DAYS (7)."""
+        storage = Storage(temp_settings)
+        try:
+            self._seed_run(storage, days_ago=7.4)
+            health = storage.get_loop_health()
+            assert health["state"] == "amber"
+        finally:
+            storage.close()
+
+    def test_success_under_7_days_boundary_is_green(self, temp_settings):
+        storage = Storage(temp_settings)
+        try:
+            self._seed_run(storage, days_ago=6.9)
+            health = storage.get_loop_health()
+            assert health["state"] == "green"
+        finally:
+            storage.close()
+
     def test_error_streak_is_red(self, temp_settings):
         storage = Storage(temp_settings)
         try:
@@ -260,6 +282,35 @@ class TestProbe:
             assert storage.get_loop_health()["outputs_24h"] == 0  # marker excluded
             result = run_probe(storage)  # pre-sweep + fresh round trip
             assert result.ok
+            assert _residue(storage) == (0, 0, 0)
+        finally:
+            storage.close()
+
+    def test_pre_sweep_removes_prior_probe_leftovers(self, temp_settings):
+        """A prior probe's nonce differs from the current run's nonce, so a
+        pre-sweep scoped to that stale nonce (instead of the constant
+        sentinel prefix) leaves the leftover behind forever."""
+        storage = Storage(temp_settings)
+        try:
+            with storage.transaction() as conn:
+                conn.execute(
+                    "INSERT INTO mined_patterns (pattern, pattern_hash, pattern_type)"
+                    " VALUES (?, ?, ?)",
+                    (
+                        "import memory_probe_sentinel_deadbeef",
+                        "leftover-pattern-hash",
+                        "import",
+                    ),
+                )
+            storage.store_memory(
+                content="import memory_probe_sentinel_deadbeef",
+                memory_type=MemoryType.PATTERN,
+                source=MemorySource.MINED,
+            )
+
+            result = run_probe(storage)
+
+            assert result.ok, f"failed at {result.stage}: {result.error}"
             assert _residue(storage) == (0, 0, 0)
         finally:
             storage.close()

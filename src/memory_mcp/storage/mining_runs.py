@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from memory_mcp.logging import get_logger
 
@@ -134,13 +134,18 @@ class MiningRunsMixin:
             else:
                 break
 
+        # days_since_success stays whole-day for display (status/docs show
+        # it), but amber onset must trigger at the exact STALENESS_DAYS
+        # boundary, not at the day *after* whole-day truncation rounds down
+        # to it - e.g. a 7.4-day-old success must already read amber ("no
+        # successful run in 7 days"), which floor(7.4) > 7 == False would
+        # otherwise miss until day 8.
         days_since_success = _days_since(last_success_at)
+        stale = last_success_at is None or _seconds_since(last_success_at) > STALENESS_DAYS * 86400
 
         if len(recent_errors) >= ERROR_STREAK and all(row[0] is not None for row in recent_errors):
             state = "red"
-        elif last_success_at is None or (
-            days_since_success is not None and days_since_success > STALENESS_DAYS
-        ):
+        elif stale:
             state = "amber"
         else:
             state = "green"
@@ -159,8 +164,25 @@ class MiningRunsMixin:
         }
 
 
+def _elapsed_since(timestamp: str) -> timedelta:
+    """Compute the elapsed time since a stored UTC timestamp.
+
+    Args:
+        timestamp: A timestamp string in "%Y-%m-%d %H:%M:%S" UTC format.
+
+    Returns:
+        The `timedelta` between now and `timestamp`.
+    """
+    then = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - then
+
+
 def _days_since(timestamp: str | None) -> int | None:
     """Compute whole days elapsed since a stored UTC timestamp.
+
+    Used only for the `days_since_success` display field - state
+    thresholds must use `_seconds_since` so the amber boundary isn't
+    subject to whole-day truncation.
 
     Args:
         timestamp: A timestamp string in "%Y-%m-%d %H:%M:%S" UTC format, or None.
@@ -170,6 +192,16 @@ def _days_since(timestamp: str | None) -> int | None:
     """
     if timestamp is None:
         return None
-    then = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-    delta = datetime.now(timezone.utc) - then
-    return delta.days
+    return _elapsed_since(timestamp).days
+
+
+def _seconds_since(timestamp: str) -> float:
+    """Compute exact seconds elapsed since a stored UTC timestamp.
+
+    Args:
+        timestamp: A timestamp string in "%Y-%m-%d %H:%M:%S" UTC format.
+
+    Returns:
+        Seconds elapsed as a float.
+    """
+    return _elapsed_since(timestamp).total_seconds()
