@@ -39,7 +39,7 @@ jobs:
         run: |
           VERSION=$(jq -r '.version' server.json)
           echo "Waiting for hot-memory-mcp $VERSION on PyPI"
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -fsL "https://pypi.org/pypi/hot-memory-mcp/${VERSION}/json" > /dev/null; then
               echo "PyPI is serving ${VERSION}"
               exit 0
@@ -80,7 +80,7 @@ jobs:
         run: |
           VERSION=$(jq -r '.version' server.json)
           echo "Waiting for hot-memory-mcp $VERSION sdist on PyPI"
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             SHA=$(curl -fsL "https://pypi.org/pypi/hot-memory-mcp/${VERSION}/json" \
               | jq -r '.urls[] | select(.packagetype=="sdist") | .digests.sha256' || true)
             if [ -n "$SHA" ] && [ "$SHA" != "null" ]; then
