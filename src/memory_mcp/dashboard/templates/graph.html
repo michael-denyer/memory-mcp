@@ -30,11 +30,28 @@
 
     <!-- Graph Visualization -->
     <div class="bg-dark-900 rounded-lg border border-gray-800 p-6">
-        <div id="graph-container" class="h-96 relative">
+        <div id="graph-container" class="h-96 relative bg-dark-950 rounded-lg overflow-hidden">
             <div id="graph-loading" class="absolute inset-0 flex items-center justify-center text-gray-500">
                 Loading graph...
             </div>
-            <svg id="graph-svg" class="w-full h-full hidden" style="touch-action: none; cursor: grab;"></svg>
+            <svg id="graph-svg" class="w-full h-full hidden" style="touch-action: none; cursor: grab;">
+                <defs>
+                    <filter id="node-glow" x="-60%" y="-60%" width="220%" height="220%">
+                        <feGaussianBlur stdDeviation="3"></feGaussianBlur>
+                    </filter>
+                </defs>
+            </svg>
+            <div id="graph-controls" class="hidden absolute top-3 right-3 z-10 flex flex-col gap-2 rounded-lg border border-gray-700 bg-dark-900 px-3 py-2 text-xs">
+                <label class="flex items-center gap-2 text-gray-300 cursor-pointer select-none">
+                    <input type="checkbox" id="toggle-labels" class="accent-purple-500">
+                    <span>Labels</span>
+                </label>
+                <label class="flex items-center gap-2 text-gray-300 cursor-pointer select-none">
+                    <input type="checkbox" id="toggle-links" class="accent-purple-500" checked>
+                    <span>Links</span>
+                </label>
+                <button id="reset-view" class="mt-1 rounded border border-gray-700 px-2 py-1 text-gray-300 hover:bg-dark-800 hover:text-white">Reset view</button>
+            </div>
         </div>
         <div class="mt-4 space-y-2">
             <div id="node-legend" class="flex flex-wrap items-center gap-4 text-sm">
@@ -61,6 +78,7 @@
                 </div>
             </div>
             <div id="edge-legend" class="flex flex-wrap items-center gap-4 text-sm"></div>
+            <p class="text-xs text-gray-600">drag to rearrange · scroll to zoom · drag background to pan</p>
         </div>
     </div>
 
@@ -74,17 +92,26 @@
     </div>
 </div>
 
+<script src="/static/d3-dispatch.min.js"></script>
+<script src="/static/d3-quadtree.min.js"></script>
+<script src="/static/d3-timer.min.js"></script>
+<script src="/static/d3-force.min.js"></script>
 <script>
 (async function() {
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const NODE_COLORS = {project: '#3b82f6', pattern: '#a855f7', reference: '#22c55e', conversation: '#eab308', episodic: '#6b7280'};
     const EDGE_COLORS = {relates_to: '#9ca3af', depends_on: '#3b82f6', contradicts: '#ef4444', supersedes: '#f97316', refines: '#a855f7', elaborates: '#22c55e'};
     const EDGE_FALLBACK = '#9ca3af';
+    const CORE_R = 6.5;
+    const CORE_R_HOVER = 8;
+    const HALO_R = 13;
+    const LABEL_DY = -16;
 
     const resp = await fetch('/api/graph');
     const data = await resp.json();
     const loading = document.getElementById('graph-loading');
     const svg = document.getElementById('graph-svg');
+    const controls = document.getElementById('graph-controls');
     const list = document.getElementById('relationship-list');
     const edgeLegend = document.getElementById('edge-legend');
 
@@ -95,6 +122,7 @@
 
     loading.classList.add('hidden');
     svg.classList.remove('hidden');
+    controls.classList.remove('hidden');
 
     // clientWidth is 0 for SVG elements, and width can stay 0 until first
     // paint (background/lazy-rendered tabs) - wait briefly for real layout.
@@ -107,61 +135,72 @@
     const width = containerRect.width || 800;
     const height = containerRect.height || 400;
     const nodeMap = new Map();
+    data.nodes.forEach((node) => nodeMap.set(node.id, node));
 
-    // Golden-angle spiral: deterministic across reloads and evenly spread,
-    // with no dependence on PRNG quality for small consecutive ids.
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const maxR = Math.min(width, height) * 0.42;
-    const sorted = [...data.nodes].sort((a, b) => a.id - b.id);
-    sorted.forEach((node, i) => {
-        const r = maxR * Math.sqrt((i + 0.5) / sorted.length);
-        const theta = i * 2.39996322972865332;
-        node.x = centerX + r * Math.cos(theta);
-        node.y = centerY + r * Math.sin(theta);
-        node.labelDy = i % 2 === 0 ? 22 : -14;
-        nodeMap.set(node.id, node);
+    const links = data.edges
+        .filter((e) => nodeMap.has(e.from) && nodeMap.has(e.to))
+        .map((e) => ({source: e.from, target: e.to}));
+
+    // Connected components (union-find) drive cluster separation: each
+    // component is pulled toward its own focus so clusters read apart.
+    const parent = new Map();
+    data.nodes.forEach((node) => parent.set(node.id, node.id));
+    function find(x) {
+        while (parent.get(x) !== x) {
+            parent.set(x, parent.get(parent.get(x)));
+            x = parent.get(x);
+        }
+        return x;
+    }
+    links.forEach((l) => {
+        const ra = find(l.source);
+        const rb = find(l.target);
+        if (ra !== rb) parent.set(ra, rb);
+    });
+    const components = new Map();
+    data.nodes.forEach((node) => {
+        const root = find(node.id);
+        if (!components.has(root)) components.set(root, []);
+        components.get(root).push(node);
+    });
+    // Largest component sits at the center; the rest ring around it.
+    const ordered = [...components.values()].sort((a, b) => b.length - a.length);
+    const cx = width / 2;
+    const cy = height / 2;
+    const ringRadius = Math.min(width, height) * 0.28;
+    const ringSlots = Math.max(1, ordered.length - 1);
+    ordered.forEach((members, i) => {
+        let fx = cx;
+        let fy = cy;
+        if (i > 0) {
+            const angle = (2 * Math.PI * (i - 1)) / ringSlots;
+            fx = cx + ringRadius * Math.cos(angle);
+            fy = cy + ringRadius * Math.sin(angle);
+        }
+        members.forEach((node) => { node.focusX = fx; node.focusY = fy; });
     });
 
-    for (let iter = 0; iter < 150; iter++) {
-        data.nodes.forEach((a) => {
-            data.nodes.forEach((b) => {
-                if (a.id !== b.id) {
-                    const dx = b.x - a.x;
-                    const dy = b.y - a.y;
-                    const dist = Math.max(Math.hypot(dx, dy), 1);
-                    const push = Math.min(2000 / (dist * dist), 12);
-                    a.x -= dx / dist * push;
-                    a.y -= dy / dist * push;
-                }
-            });
-        });
-        data.edges.forEach((edge) => {
-            const a = nodeMap.get(edge.from);
-            const b = nodeMap.get(edge.to);
-            if (a && b) {
-                const dx = b.x - a.x;
-                const dy = b.y - a.y;
-                const dist = Math.max(Math.hypot(dx, dy), 1);
-                // Rest-length spring, step-capped so the sim cannot oscillate.
-                const pull = Math.max(-8, Math.min(8, (dist - 110) * 0.02));
-                a.x += dx / dist * pull;
-                a.y += dy / dist * pull;
-                b.x -= dx / dist * pull;
-                b.y -= dy / dist * pull;
-            }
-        });
-        data.nodes.forEach((node) => {
-            node.x += (centerX - node.x) * 0.005;
-            node.y += (centerY - node.y) * 0.005;
-            node.x = Math.max(30, Math.min(width - 30, node.x));
-            node.y = Math.max(30, Math.min(height - 30, node.y));
-        });
-    }
+    // d3-force computes coordinates; rendering below stays hand-rolled.
+    // Per-node foci replace the single center pull; collide is fixed since
+    // labels are no longer always-on.
+    d3.forceSimulation(data.nodes)
+        .force('link', d3.forceLink(links).id((n) => n.id).distance(90).strength(0.6))
+        .force('charge', d3.forceManyBody().strength(-220))
+        .force('x', d3.forceX((n) => n.focusX).strength(0.09))
+        .force('y', d3.forceY((n) => n.focusY).strength(0.14))
+        .force('collide', d3.forceCollide().radius(16).strength(0.9))
+        .stop()
+        .tick(300);
+
+    data.nodes.forEach((node) => {
+        node.x = Math.max(24, Math.min(width - 24, node.x));
+        node.y = Math.max(24, Math.min(height - 24, node.y));
+    });
 
     // ---- viewBox (pan/zoom) ----
     const baseW = width;
-    const viewBox = [0, 0, width, height];
+    const initialViewBox = [0, 0, width, height];
+    const viewBox = initialViewBox.slice();
     function applyViewBox() { svg.setAttribute('viewBox', viewBox.join(' ')); }
     applyViewBox();
 
@@ -172,6 +211,13 @@
             y: viewBox[1] + (evt.clientY - rect.top) / rect.height * viewBox[3],
         };
     }
+
+    // ---- layers (deterministic z-order: edges < halos < cores < labels) ----
+    const edgeGroup = document.createElementNS(SVG_NS, 'g');
+    const haloGroup = document.createElementNS(SVG_NS, 'g');
+    const coreGroup = document.createElementNS(SVG_NS, 'g');
+    const labelGroup = document.createElementNS(SVG_NS, 'g');
+    [edgeGroup, haloGroup, coreGroup, labelGroup].forEach((g) => svg.appendChild(g));
 
     // ---- edges ----
     const edgeRefs = [];
@@ -185,48 +231,74 @@
             line.setAttribute('x2', b.x);
             line.setAttribute('y2', b.y);
             line.setAttribute('stroke', EDGE_COLORS[edge.type] || EDGE_FALLBACK);
-            line.setAttribute('stroke-width', '1.5');
-            svg.appendChild(line);
+            line.setAttribute('stroke-width', '1');
+            line.setAttribute('stroke-opacity', '0.35');
+            edgeGroup.appendChild(line);
             edgeRefs.push({line, a, b});
         }
     });
 
-    // ---- nodes + labels ----
+    // ---- nodes: glow halo under a solid core, plus a hover-only label ----
+    let labelsOn = false;
     data.nodes.forEach((node) => {
-        const circle = document.createElementNS(SVG_NS, 'circle');
-        circle.setAttribute('cx', node.x);
-        circle.setAttribute('cy', node.y);
-        circle.setAttribute('r', '8');
-        circle.setAttribute('fill', NODE_COLORS[node.type] || EDGE_FALLBACK);
-        circle.style.cursor = 'pointer';
-        circle.__node = node;
+        const color = NODE_COLORS[node.type] || EDGE_FALLBACK;
+
+        const halo = document.createElementNS(SVG_NS, 'circle');
+        halo.setAttribute('cx', node.x);
+        halo.setAttribute('cy', node.y);
+        halo.setAttribute('r', HALO_R);
+        halo.setAttribute('fill', color);
+        halo.setAttribute('opacity', '0.25');
+        halo.setAttribute('filter', 'url(#node-glow)');
+        halo.setAttribute('pointer-events', 'none');
+        haloGroup.appendChild(halo);
+
+        const core = document.createElementNS(SVG_NS, 'circle');
+        core.setAttribute('cx', node.x);
+        core.setAttribute('cy', node.y);
+        core.setAttribute('r', CORE_R);
+        core.setAttribute('fill', color);
+        core.style.cursor = 'pointer';
+        core.__node = node;
         const title = document.createElementNS(SVG_NS, 'title');
         title.textContent = node.label;
-        circle.appendChild(title);
-        svg.appendChild(circle);
+        core.appendChild(title);
+        coreGroup.appendChild(core);
 
         const text = document.createElementNS(SVG_NS, 'text');
         text.setAttribute('x', node.x);
-        text.setAttribute('y', node.y + node.labelDy);
+        text.setAttribute('y', node.y + LABEL_DY);
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('font-size', '10');
-        text.setAttribute('fill', '#d1d5db');
+        text.setAttribute('fill', '#e5e7eb');
         text.setAttribute('pointer-events', 'none');
-        const short = node.label.length > 18 ? node.label.slice(0, 18) + '…' : node.label;
-        text.textContent = short;
-        svg.appendChild(text);
+        text.style.visibility = 'hidden';
+        text.textContent = node.label.length > 28 ? node.label.slice(0, 28) + '…' : node.label;
+        labelGroup.appendChild(text);
 
-        node.circle = circle;
+        node.halo = halo;
+        node.core = core;
         node.text = text;
+
+        core.addEventListener('pointerenter', () => {
+            core.setAttribute('r', CORE_R_HOVER);
+            text.style.visibility = 'visible';
+        });
+        core.addEventListener('pointerleave', () => {
+            core.setAttribute('r', CORE_R);
+            if (!labelsOn) text.style.visibility = 'hidden';
+        });
     });
 
     function moveNode(node, x, y) {
         node.x = x;
         node.y = y;
-        node.circle.setAttribute('cx', x);
-        node.circle.setAttribute('cy', y);
+        node.halo.setAttribute('cx', x);
+        node.halo.setAttribute('cy', y);
+        node.core.setAttribute('cx', x);
+        node.core.setAttribute('cy', y);
         node.text.setAttribute('x', x);
-        node.text.setAttribute('y', y + node.labelDy);
+        node.text.setAttribute('y', y + LABEL_DY);
         edgeRefs.forEach((er) => {
             if (er.a === node) { er.line.setAttribute('x1', x); er.line.setAttribute('y1', y); }
             if (er.b === node) { er.line.setAttribute('x2', x); er.line.setAttribute('y2', y); }
@@ -288,6 +360,27 @@
     }
     svg.addEventListener('pointerup', endInteraction);
     svg.addEventListener('pointercancel', endInteraction);
+
+    // ---- view controls ----
+    const labelsToggle = document.getElementById('toggle-labels');
+    const linksToggle = document.getElementById('toggle-links');
+    const resetBtn = document.getElementById('reset-view');
+    labelsOn = labelsToggle.checked;
+    edgeGroup.style.display = linksToggle.checked ? '' : 'none';
+
+    labelsToggle.addEventListener('change', () => {
+        labelsOn = labelsToggle.checked;
+        data.nodes.forEach((node) => {
+            node.text.style.visibility = labelsOn ? 'visible' : 'hidden';
+        });
+    });
+    linksToggle.addEventListener('change', () => {
+        edgeGroup.style.display = linksToggle.checked ? '' : 'none';
+    });
+    resetBtn.addEventListener('click', () => {
+        initialViewBox.forEach((v, i) => { viewBox[i] = v; });
+        applyViewBox();
+    });
 
     // ---- edge-type legend (built from the types actually present) ----
     const presentTypes = [...new Set(data.edges.map((e) => e.type))];
