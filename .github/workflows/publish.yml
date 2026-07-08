@@ -12,16 +12,16 @@ jobs:
     permissions:
       id-token: write # Required for trusted publishing
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081  # v5
 
       - name: Build package
         run: uv build
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
 
   mcp-registry:
     name: Publish to MCP Registry
@@ -31,7 +31,7 @@ jobs:
       id-token: write # OIDC auth to the registry — no secret needed
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       # The registry validates the package exists on PyPI, and the pypi job
       # finishing does not mean the index is serving it yet.
@@ -64,7 +64,7 @@ jobs:
     needs: pypi
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       - name: Check tap token is configured
         env:
