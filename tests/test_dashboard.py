@@ -97,6 +97,20 @@ def test_get_projects_returns_distinct_projects(dashboard_storage):
     assert "project" in labels  # Absolute path shows last component
 
 
+def test_pagination_preserves_project_filter(client, dashboard_storage):
+    """Pagination buttons must carry the project filter in hx-include."""
+    for i in range(3):
+        dashboard_storage.store_memory(
+            f"Project A memory {i}", MemoryType.PROJECT, project_id="project-a"
+        )
+
+    # limit=2 over 3 rows -> 2 pages, so the Next button renders.
+    response = client.get("/api/memories/search?project_filter=project-a&limit=2")
+    assert response.status_code == 200
+    assert "Page 1 of 2" in response.text
+    assert "[name='project_filter']" in response.text
+
+
 class TestMiningLoopBanner:
     def test_empty_db_shows_amber(self, client):
         html = client.get("/mining").text
