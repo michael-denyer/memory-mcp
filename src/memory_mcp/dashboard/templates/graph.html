@@ -96,38 +96,43 @@
     loading.classList.add('hidden');
     svg.classList.remove('hidden');
 
-    const width = svg.clientWidth || 800;
-    const height = svg.clientHeight || 400;
+    // clientWidth is 0 for SVG elements, and width can stay 0 until first
+    // paint (background/lazy-rendered tabs) - wait briefly for real layout.
+    const containerEl = document.getElementById('graph-container');
+    let containerRect = containerEl.getBoundingClientRect();
+    for (let tries = 0; tries < 20 && containerRect.width === 0; tries++) {
+        await new Promise((r) => setTimeout(r, 50));
+        containerRect = containerEl.getBoundingClientRect();
+    }
+    const width = containerRect.width || 800;
+    const height = containerRect.height || 400;
     const nodeMap = new Map();
 
-    // Deterministic PRNG so the layout is stable across reloads.
-    function mulberry32(seed) {
-        let a = seed >>> 0;
-        return function() {
-            a = (a + 0x6D2B79F5) | 0;
-            let t = Math.imul(a ^ (a >>> 15), 1 | a);
-            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-        };
-    }
-
-    data.nodes.forEach((node) => {
-        const rand = mulberry32(node.id);
-        node.x = width * 0.2 + rand() * width * 0.6;
-        node.y = height * 0.2 + rand() * height * 0.6;
+    // Golden-angle spiral: deterministic across reloads and evenly spread,
+    // with no dependence on PRNG quality for small consecutive ids.
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const maxR = Math.min(width, height) * 0.42;
+    const sorted = [...data.nodes].sort((a, b) => a.id - b.id);
+    sorted.forEach((node, i) => {
+        const r = maxR * Math.sqrt((i + 0.5) / sorted.length);
+        const theta = i * 2.39996322972865332;
+        node.x = centerX + r * Math.cos(theta);
+        node.y = centerY + r * Math.sin(theta);
+        node.labelDy = i % 2 === 0 ? 22 : -14;
         nodeMap.set(node.id, node);
     });
 
-    for (let iter = 0; iter < 50; iter++) {
+    for (let iter = 0; iter < 150; iter++) {
         data.nodes.forEach((a) => {
             data.nodes.forEach((b) => {
                 if (a.id !== b.id) {
                     const dx = b.x - a.x;
                     const dy = b.y - a.y;
-                    const dist = Math.max(Math.sqrt(dx*dx + dy*dy), 1);
-                    const force = 1000 / (dist * dist);
-                    a.x -= dx / dist * force;
-                    a.y -= dy / dist * force;
+                    const dist = Math.max(Math.hypot(dx, dy), 1);
+                    const push = Math.min(2000 / (dist * dist), 12);
+                    a.x -= dx / dist * push;
+                    a.y -= dy / dist * push;
                 }
             });
         });
@@ -137,16 +142,18 @@
             if (a && b) {
                 const dx = b.x - a.x;
                 const dy = b.y - a.y;
-                const force = Math.sqrt(dx*dx + dy*dy) * 0.01;
-                a.x += dx * force;
-                a.y += dy * force;
-                b.x -= dx * force;
-                b.y -= dy * force;
+                const dist = Math.max(Math.hypot(dx, dy), 1);
+                // Rest-length spring, step-capped so the sim cannot oscillate.
+                const pull = Math.max(-8, Math.min(8, (dist - 110) * 0.02));
+                a.x += dx / dist * pull;
+                a.y += dy / dist * pull;
+                b.x -= dx / dist * pull;
+                b.y -= dy / dist * pull;
             }
         });
         data.nodes.forEach((node) => {
-            node.x += (width/2 - node.x) * 0.01;
-            node.y += (height/2 - node.y) * 0.01;
+            node.x += (centerX - node.x) * 0.005;
+            node.y += (centerY - node.y) * 0.005;
             node.x = Math.max(30, Math.min(width - 30, node.x));
             node.y = Math.max(30, Math.min(height - 30, node.y));
         });
@@ -200,7 +207,7 @@
 
         const text = document.createElementNS(SVG_NS, 'text');
         text.setAttribute('x', node.x);
-        text.setAttribute('y', node.y + 20);
+        text.setAttribute('y', node.y + node.labelDy);
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('font-size', '10');
         text.setAttribute('fill', '#d1d5db');
@@ -219,7 +226,7 @@
         node.circle.setAttribute('cx', x);
         node.circle.setAttribute('cy', y);
         node.text.setAttribute('x', x);
-        node.text.setAttribute('y', y + 20);
+        node.text.setAttribute('y', y + node.labelDy);
         edgeRefs.forEach((er) => {
             if (er.a === node) { er.line.setAttribute('x1', x); er.line.setAttribute('y1', y); }
             if (er.b === node) { er.line.setAttribute('x2', x); er.line.setAttribute('y2', y); }
