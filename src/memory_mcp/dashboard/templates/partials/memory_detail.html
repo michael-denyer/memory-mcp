@@ -1,0 +1,97 @@
+<!-- Memory detail cell - swapped into the placeholder detail row -->
+<td colspan="7" class="px-6 py-4 bg-dark-800/40 border-l-2 border-blue-500/40">
+    <div class="flex items-start justify-between gap-4 mb-3">
+        <div class="flex items-center gap-2">
+            <span class="px-2 py-0.5 text-xs font-medium rounded border {{ get_type_badge_class(memory.memory_type) }}">
+                {{ memory.memory_type|type_value }}
+            </span>
+            {% if memory.category %}
+            <span class="px-1.5 py-0.5 text-xs bg-gray-600/50 text-gray-300 rounded">{{ memory.category }}</span>
+            {% endif %}
+            <span class="text-xs text-gray-500">#{{ memory.id }}</span>
+        </div>
+        <button type="button"
+                onclick="this.closest('tr').innerHTML=''"
+                class="text-sm text-gray-400 hover:text-white shrink-0">
+            Close
+        </button>
+    </div>
+
+    <p class="text-sm text-gray-200 whitespace-pre-wrap break-words mb-4">{{ memory.content }}</p>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-4">
+        <div>
+            <span class="text-gray-500">Source</span>
+            <p class="text-gray-300">{{ memory.source|type_value }}</p>
+        </div>
+        <div>
+            <span class="text-gray-500">Trust</span>
+            <p class="text-gray-300">{{ "%.2f"|format(memory.trust_score|default(0.0)) }}</p>
+        </div>
+        <div>
+            <span class="text-gray-500">Accessed</span>
+            <p class="text-gray-300">{{ memory.access_count }}&times;</p>
+        </div>
+        <div>
+            <span class="text-gray-500">Used / Retrieved</span>
+            <p class="text-gray-300">{{ memory.used_count }} / {{ memory.retrieved_count }}</p>
+        </div>
+        {% if memory.project_id %}
+        <div>
+            <span class="text-gray-500">Project</span>
+            <p class="text-gray-300 truncate" title="{{ memory.project_id }}">{{ memory.project_id }}</p>
+        </div>
+        {% endif %}
+        {% if memory.session_id %}
+        <div>
+            <span class="text-gray-500">Session</span>
+            <p><a href="/sessions/{{ memory.session_id }}" class="text-blue-400 hover:text-blue-300">{{ memory.session_id[:8] }}</a></p>
+        </div>
+        {% endif %}
+        <div>
+            <span class="text-gray-500">Created</span>
+            <p class="text-gray-300">{{ (memory.created_at|string)[:16] }}</p>
+        </div>
+        {% if memory.last_accessed_at %}
+        <div>
+            <span class="text-gray-500">Last accessed</span>
+            <p class="text-gray-300">{{ (memory.last_accessed_at|string)[:16] }}</p>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if memory.tags %}
+    <div class="flex flex-wrap gap-1 mb-4">
+        {% for tag in memory.tags %}
+        <span class="px-1.5 py-0.5 text-xs bg-gray-700 text-gray-300 rounded">{{ tag }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+            <p class="text-xs text-gray-500 mb-1">Outgoing ({{ relationships_out|length }})</p>
+            {% for rel in relationships_out %}
+            <div class="flex items-center gap-2 text-xs text-gray-300 mb-1">
+                <span class="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 shrink-0">{{ rel.relation_type }}</span>
+                <span class="text-gray-500 shrink-0">#{{ rel.id }}</span>
+                <span class="truncate">{{ rel.snippet }}</span>
+            </div>
+            {% else %}
+            <p class="text-xs text-gray-600">None</p>
+            {% endfor %}
+        </div>
+        <div>
+            <p class="text-xs text-gray-500 mb-1">Incoming ({{ relationships_in|length }})</p>
+            {% for rel in relationships_in %}
+            <div class="flex items-center gap-2 text-xs text-gray-300 mb-1">
+                <span class="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 shrink-0">{{ rel.relation_type }}</span>
+                <span class="text-gray-500 shrink-0">#{{ rel.id }}</span>
+                <span class="truncate">{{ rel.snippet }}</span>
+            </div>
+            {% else %}
+            <p class="text-xs text-gray-600">None</p>
+            {% endfor %}
+        </div>
+    </div>
+</td>

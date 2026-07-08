@@ -387,6 +387,75 @@ async def api_delete(memory_id: int, request: Request) -> HTMLResponse:
     return HTMLResponse(content="")
 
 
+def _snippet(text: str, length: int = 80) -> str:
+    """Truncate text to a short snippet for relationship display."""
+    return text[:length] + "..." if len(text) > length else text
+
+
+def _get_memory_relationships(s: Storage, memory_id: int) -> tuple[list[dict], list[dict]]:
+    """Get outgoing and incoming relationships with the other side's snippet.
+
+    Returns:
+        (outgoing, incoming) lists of {id, snippet, relation_type}, where id is
+        the linked memory's id and snippet is its content truncated to ~80 chars.
+    """
+    with s._connection() as conn:
+        out_rows = conn.execute(
+            """
+            SELECT m.id AS other_id, m.content AS other_content, r.relation_type
+            FROM memory_relationships r
+            JOIN memories m ON m.id = r.to_memory_id
+            WHERE r.from_memory_id = ?
+            ORDER BY r.id
+            """,
+            (memory_id,),
+        ).fetchall()
+        in_rows = conn.execute(
+            """
+            SELECT m.id AS other_id, m.content AS other_content, r.relation_type
+            FROM memory_relationships r
+            JOIN memories m ON m.id = r.from_memory_id
+            WHERE r.to_memory_id = ?
+            ORDER BY r.id
+            """,
+            (memory_id,),
+        ).fetchall()
+
+    def shape(rows: list) -> list[dict]:
+        return [
+            {
+                "id": row["other_id"],
+                "snippet": _snippet(row["other_content"]),
+                "relation_type": row["relation_type"],
+            }
+            for row in rows
+        ]
+
+    return shape(out_rows), shape(in_rows)
+
+
+@app.get("/api/memories/{memory_id}/detail", response_class=HTMLResponse)
+async def api_memory_detail(memory_id: int, request: Request) -> HTMLResponse:
+    """Return an expandable detail cell for a memory row.
+
+    Unknown ids return an empty 200 body so an HTMX swap is a no-op.
+    """
+    s = get_storage()
+    memory = s.get_memory(memory_id)
+    if memory is None:
+        return HTMLResponse(content="")
+    relationships_out, relationships_in = _get_memory_relationships(s, memory_id)
+    return templates.TemplateResponse(
+        request,
+        "partials/memory_detail.html",
+        {
+            "memory": memory,
+            "relationships_out": relationships_out,
+            "relationships_in": relationships_in,
+        },
+    )
+
+
 @app.get("/api/promoted", response_class=HTMLResponse)
 async def api_promoted_list(request: Request) -> HTMLResponse:
     """Return the promoted-memories list partial (refreshable via HTMX)."""
