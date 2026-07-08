@@ -1,5 +1,6 @@
 """Tests for the dashboard FastAPI application."""
 
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -147,3 +148,22 @@ class TestInjectionsPage:
         # so it can't rely on an earlier call having opened the connection.
         response = client.get("/api/injections")
         assert response.status_code == 200
+
+
+class TestKnowledgeGraph:
+    """Graph page stats reflect real relationship counts."""
+
+    def test_graph_page_stats_show_linked_memory_count(self, client, dashboard_storage):
+        # get_relationship_stats() reports the count under 'linked_memories';
+        # the card must read that key, not the fallback 0.
+        from memory_mcp.models import RelationType
+
+        a, _ = dashboard_storage.store_memory("stats node a", MemoryType.PROJECT)
+        b, _ = dashboard_storage.store_memory("stats node b", MemoryType.REFERENCE)
+        dashboard_storage.link_memories(a, b, RelationType.DEPENDS_ON)
+
+        resp = client.get("/graph")
+        assert resp.status_code == 200
+        card = re.search(r"Connected Memories</p>\s*<p[^>]*>(\d+)</p>", resp.text)
+        assert card is not None
+        assert card.group(1) == "2"
