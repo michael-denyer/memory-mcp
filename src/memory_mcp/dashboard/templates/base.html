@@ -49,6 +49,12 @@
             transition: opacity 300ms ease-out;
         }
 
+        /* Collapsed detail placeholders still draw a divide-y border at zero
+           height, doubling every row divider - hide them until populated. */
+        tr[id^="detail-"]:empty {
+            display: none;
+        }
+
         /* Learning-loop health banner (mining page) */
         .loop-banner-green {
             background-color: rgba(34, 197, 94, 0.1);
