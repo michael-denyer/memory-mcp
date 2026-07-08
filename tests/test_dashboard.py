@@ -259,6 +259,26 @@ class TestKnowledgeGraph:
         )
 
 
+class TestStaticAssets:
+    """The dashboard serves its own vendored CSS/JS, no CDN."""
+
+    def test_tailwind_css_served(self, client):
+        resp = client.get("/static/tailwind.css")
+        assert resp.status_code == 200
+        assert "text/css" in resp.headers["content-type"]
+
+    def test_htmx_served(self, client):
+        resp = client.get("/static/htmx.min.js")
+        assert resp.status_code == 200
+        assert "javascript" in resp.headers["content-type"]
+
+    def test_base_page_uses_vendored_assets_not_cdn(self, client):
+        html = client.get("/").text
+        assert "/static/tailwind.css" in html
+        assert "/static/htmx.min.js" in html
+        assert "cdn.tailwindcss.com" not in html
+
+
 class TestMiningLoopBanner:
     def test_empty_db_shows_amber(self, client):
         html = client.get("/mining").text

@@ -7,6 +7,7 @@ from pathlib import Path
 import fastmcp
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from memory_mcp import __version__
@@ -14,8 +15,9 @@ from memory_mcp.config import get_settings
 from memory_mcp.storage import MemorySource, MemoryType, PatternStatus, Storage
 from memory_mcp.storage.mining_runs import PROBE_SESSION_ID
 
-# Template directory
+# Template and static asset directories
 TEMPLATE_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
 # Global storage instance
@@ -38,6 +40,10 @@ app = FastAPI(
     description="Web dashboard for Memory MCP",
     lifespan=lifespan,
 )
+
+# Serve vendored assets (compiled Tailwind CSS, htmx) so the dashboard works
+# fully offline with no CDN dependency.
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 def get_storage() -> Storage:
