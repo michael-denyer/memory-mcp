@@ -1,5 +1,6 @@
 """Tests for the dashboard FastAPI application."""
 
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -243,6 +244,19 @@ class TestKnowledgeGraph:
         assert "conversation" in resp.text  # legend now covers all five node types
         assert "episodic" in resp.text
         assert 'id="edge-legend"' in resp.text
+
+    def test_graph_page_stats_show_linked_memory_count(self, client, dashboard_storage):
+        from memory_mcp.models import RelationType
+
+        a, _ = dashboard_storage.store_memory("stats node a", MemoryType.PROJECT)
+        b, _ = dashboard_storage.store_memory("stats node b", MemoryType.REFERENCE)
+        dashboard_storage.link_memories(a, b, RelationType.DEPENDS_ON)
+
+        resp = client.get("/graph")
+        assert resp.status_code == 200
+        card = re.search(r"Connected Memories</p>\s*<p[^>]*>(\d+)</p>", resp.text)
+        assert card is not None
+        assert card.group(1) == "2"
 
     def test_api_graph_returns_nodes_and_edges(self, client, dashboard_storage):
         from memory_mcp.models import RelationType
