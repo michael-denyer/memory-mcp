@@ -132,14 +132,29 @@
 
     const maxCount = Math.max(...data.days.map(d => d.count), 1);
 
+    // Y-axis max label
+    const maxLabel = document.createElement('p');
+    maxLabel.className = 'text-xs text-gray-500 mb-1';
+    maxLabel.textContent = 'max ' + maxCount + '/day';
+    chart.parentNode.insertBefore(maxLabel, chart);
+
     data.days.forEach((day) => {
         const pct = (day.count / maxCount) * 100;
         const col = document.createElement('div');
         col.className = 'flex-1 flex flex-col justify-end';
         const bar = document.createElement('div');
-        bar.className = 'bg-blue-500 rounded-t';
+        bar.className = 'bg-blue-500 rounded-t relative flex flex-col justify-end overflow-hidden';
         bar.style.height = pct + '%';
+        // Keep non-empty days visible even when a single memory rounds to ~0%.
+        if (day.count > 0) bar.style.minHeight = '2px';
         bar.title = day.day + ': ' + day.count + ' memories (' + day.hot_count + ' hot)';
+        // Orange overlay: the hot fraction of that day's memories, stacked at the base.
+        if (day.count > 0 && day.hot_count > 0) {
+            const hot = document.createElement('div');
+            hot.className = 'bg-orange-500 w-full';
+            hot.style.height = Math.min(100, (day.hot_count / day.count) * 100) + '%';
+            bar.appendChild(hot);
+        }
         col.appendChild(bar);
         chart.appendChild(col);
     });
