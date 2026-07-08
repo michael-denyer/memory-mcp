@@ -74,6 +74,10 @@
     </div>
 </div>
 
+<script src="/static/d3-dispatch.min.js"></script>
+<script src="/static/d3-quadtree.min.js"></script>
+<script src="/static/d3-timer.min.js"></script>
+<script src="/static/d3-force.min.js"></script>
 <script>
 (async function() {
     const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -107,57 +111,30 @@
     const width = containerRect.width || 800;
     const height = containerRect.height || 400;
     const nodeMap = new Map();
+    data.nodes.forEach((node) => nodeMap.set(node.id, node));
 
-    // Golden-angle spiral: deterministic across reloads and evenly spread,
-    // with no dependence on PRNG quality for small consecutive ids.
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const maxR = Math.min(width, height) * 0.42;
-    const sorted = [...data.nodes].sort((a, b) => a.id - b.id);
-    sorted.forEach((node, i) => {
-        const r = maxR * Math.sqrt((i + 0.5) / sorted.length);
-        const theta = i * 2.39996322972865332;
-        node.x = centerX + r * Math.cos(theta);
-        node.y = centerY + r * Math.sin(theta);
-        node.labelDy = i % 2 === 0 ? 22 : -14;
-        nodeMap.set(node.id, node);
+    // d3-force computes coordinates; rendering below stays hand-rolled.
+    // Collision radius covers the label footprint so labels get clear space.
+    const links = data.edges
+        .filter((e) => nodeMap.has(e.from) && nodeMap.has(e.to))
+        .map((e) => ({source: e.from, target: e.to}));
+    const collideRadius = (node) =>
+        Math.min(60, Math.max(28, Math.min(19, node.label.length) * 3));
+
+    d3.forceSimulation(data.nodes)
+        .force('link', d3.forceLink(links).id((n) => n.id).distance(90).strength(0.6))
+        .force('charge', d3.forceManyBody().strength(-220))
+        .force('x', d3.forceX(width / 2).strength(0.07))
+        .force('y', d3.forceY(height / 2).strength(0.12))
+        .force('collide', d3.forceCollide().radius(collideRadius).strength(0.9))
+        .stop()
+        .tick(300);
+
+    data.nodes.forEach((node) => {
+        node.x = Math.max(40, Math.min(width - 40, node.x));
+        node.y = Math.max(20, Math.min(height - 34, node.y));
+        node.labelDy = 20;
     });
-
-    for (let iter = 0; iter < 150; iter++) {
-        data.nodes.forEach((a) => {
-            data.nodes.forEach((b) => {
-                if (a.id !== b.id) {
-                    const dx = b.x - a.x;
-                    const dy = b.y - a.y;
-                    const dist = Math.max(Math.hypot(dx, dy), 1);
-                    const push = Math.min(2000 / (dist * dist), 12);
-                    a.x -= dx / dist * push;
-                    a.y -= dy / dist * push;
-                }
-            });
-        });
-        data.edges.forEach((edge) => {
-            const a = nodeMap.get(edge.from);
-            const b = nodeMap.get(edge.to);
-            if (a && b) {
-                const dx = b.x - a.x;
-                const dy = b.y - a.y;
-                const dist = Math.max(Math.hypot(dx, dy), 1);
-                // Rest-length spring, step-capped so the sim cannot oscillate.
-                const pull = Math.max(-8, Math.min(8, (dist - 110) * 0.02));
-                a.x += dx / dist * pull;
-                a.y += dy / dist * pull;
-                b.x -= dx / dist * pull;
-                b.y -= dy / dist * pull;
-            }
-        });
-        data.nodes.forEach((node) => {
-            node.x += (centerX - node.x) * 0.005;
-            node.y += (centerY - node.y) * 0.005;
-            node.x = Math.max(30, Math.min(width - 30, node.x));
-            node.y = Math.max(30, Math.min(height - 30, node.y));
-        });
-    }
 
     // ---- viewBox (pan/zoom) ----
     const baseW = width;
