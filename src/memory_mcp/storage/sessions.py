@@ -193,33 +193,40 @@ class SessionsMixin:
             return memories
 
     def get_cross_session_patterns(self, min_sessions: int = 2) -> list[dict]:
-        """Find content patterns that appear across multiple sessions.
+        """Find memories injected across multiple sessions.
 
-        Useful for identifying frequently-discussed topics that might
-        warrant promotion to hot cache.
+        The cross-session signal comes from injection history, not content
+        similarity. A memory whose ``injection_log`` rows span at least
+        ``min_sessions`` distinct sessions has proven useful in more than one
+        conversation and is a candidate for hot-cache promotion.
+
+        Content similarity cannot supply this signal here because
+        ``memories.content_hash`` is UNIQUE, so no two memory rows ever share
+        a hash and a GROUP BY content_hash can never span multiple sessions.
 
         Args:
-            min_sessions: Minimum sessions a pattern must appear in
+            min_sessions: Minimum distinct sessions a memory must be injected in.
 
         Returns:
-            List of dicts with pattern info and session counts
+            List of dicts with memory info and cross-session injection counts.
         """
         with self._connection() as conn:
-            # Find memories that appear in multiple sessions via similar content
-            # This uses a simple approach: group by content_hash
             rows = conn.execute(
                 """
                 SELECT
-                    content,
-                    memory_type,
-                    COUNT(DISTINCT session_id) as session_count,
-                    SUM(access_count) as total_accesses,
-                    GROUP_CONCAT(DISTINCT session_id) as sessions
-                FROM memories
-                WHERE session_id IS NOT NULL
-                GROUP BY content_hash
-                HAVING COUNT(DISTINCT session_id) >= ?
-                ORDER BY session_count DESC, total_accesses DESC
+                    m.id,
+                    m.content,
+                    m.memory_type,
+                    m.access_count,
+                    m.is_hot,
+                    COUNT(DISTINCT il.session_id) as session_count,
+                    GROUP_CONCAT(DISTINCT il.session_id) as sessions
+                FROM injection_log il
+                JOIN memories m ON m.id = il.memory_id
+                WHERE il.session_id IS NOT NULL
+                GROUP BY il.memory_id
+                HAVING COUNT(DISTINCT il.session_id) >= ?
+                ORDER BY session_count DESC, m.access_count DESC
                 LIMIT 50
                 """,
                 (min_sessions,),
@@ -227,11 +234,13 @@ class SessionsMixin:
 
             return [
                 {
+                    "id": row["id"],
                     "content": row["content"][:200],  # Truncate for display
                     "memory_type": row["memory_type"],
                     "session_count": row["session_count"],
-                    "total_accesses": row["total_accesses"],
+                    "total_accesses": row["access_count"],
                     "sessions": row["sessions"].split(",") if row["sessions"] else [],
+                    "is_hot": bool(row["is_hot"]),
                 }
                 for row in rows
             ]
