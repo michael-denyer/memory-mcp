@@ -716,12 +716,14 @@ async def sessions_page(request: Request) -> HTMLResponse:
     """Sessions list page."""
     s = get_storage()
     sessions = _get_sessions(s)
+    cross_patterns = s.get_cross_session_patterns(min_sessions=2)
 
     return templates.TemplateResponse(
         request,
         "sessions.html",
         {
             "sessions": sessions,
+            "cross_patterns": cross_patterns,
             "active_page": "sessions",
         },
     )

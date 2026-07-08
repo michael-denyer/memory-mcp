@@ -148,6 +148,34 @@ class TestInjectionResources:
         assert "Page 1 of 2" in client.get("/api/injections?limit=2").text
 
 
+class TestCrossSessionPatterns:
+    """Cross-session patterns are derived from injection history."""
+
+    def test_storage_uses_injection_history(self, dashboard_storage):
+        s = dashboard_storage
+        shared, _ = s.store_memory("shared across sessions", MemoryType.PROJECT)
+        solo, _ = s.store_memory("only one session", MemoryType.PROJECT)
+        s.create_or_get_session("sess-1")
+        s.create_or_get_session("sess-2")
+        s.log_injections_batch([shared], "hot-cache", session_id="sess-1")
+        s.log_injections_batch([shared], "hot-cache", session_id="sess-2")
+        s.log_injections_batch([solo], "hot-cache", session_id="sess-1")
+
+        patterns = s.get_cross_session_patterns(min_sessions=2)
+        by_id = {p["id"]: p for p in patterns}
+        assert by_id[shared]["session_count"] == 2
+        assert solo not in by_id  # single-session memory is excluded
+
+    def test_sessions_page_renders_cross_patterns(self, client, dashboard_storage):
+        mid, _ = dashboard_storage.store_memory("cross session content xyz", MemoryType.PROJECT)
+        dashboard_storage.log_injections_batch([mid], "hot-cache", session_id="sess-a")
+        dashboard_storage.log_injections_batch([mid], "hot-cache", session_id="sess-b")
+
+        html = client.get("/sessions").text
+        assert "Cross-Session Patterns" in html
+        assert "cross session content xyz" in html
+
+
 class TestMiningLoopBanner:
     def test_empty_db_shows_amber(self, client):
         html = client.get("/mining").text

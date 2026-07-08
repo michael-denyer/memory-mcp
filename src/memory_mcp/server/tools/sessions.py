@@ -77,7 +77,18 @@ def cross_session_patterns(
     Returns patterns sorted by session count and total accesses.
     """
     patterns = storage.get_cross_session_patterns(min_sessions=min_sessions)
-    return [CrossSessionPatternResponse(**p) for p in patterns]
+    # Construct from explicit fields: the storage dict also carries id/is_hot
+    # for the dashboard, which are not part of this response model.
+    return [
+        CrossSessionPatternResponse(
+            content=p["content"],
+            memory_type=p["memory_type"],
+            session_count=p["session_count"],
+            total_accesses=p["total_accesses"],
+            sessions=p["sessions"],
+        )
+        for p in patterns
+    ]
 
 
 @mcp.tool
