@@ -18,7 +18,7 @@
         </div>
         <div class="bg-dark-900 rounded-lg border border-gray-800 p-4">
             <p class="text-xs text-gray-400">Connected Memories</p>
-            <p class="text-2xl font-bold text-white">{{ stats.get('connected_memories', 0) }}</p>
+            <p class="text-2xl font-bold text-white">{{ stats.get('linked_memories', 0) }}</p>
         </div>
         {% for rel_type, count in stats.get('by_type', {}).items() %}
         <div class="bg-dark-900 rounded-lg border border-gray-800 p-4">
