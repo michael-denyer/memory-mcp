@@ -527,7 +527,11 @@ async def api_reject_pattern(pattern_id: int, request: Request) -> HTMLResponse:
 
 
 def _get_injection_stats(s: Storage) -> dict:
-    """Get injection statistics."""
+    """Get injection statistics counted from the actual logged resource values.
+
+    ``by_resource`` is an all-time GROUP BY resource so both current resources
+    ('hot-cache', 'recall') and legacy rows ('working-set') are represented.
+    """
     with s._connection() as conn:
         today = conn.execute(
             "SELECT COUNT(*) FROM injection_log WHERE injected_at >= date('now')"
@@ -535,18 +539,28 @@ def _get_injection_stats(s: Storage) -> dict:
         week = conn.execute(
             "SELECT COUNT(*) FROM injection_log WHERE injected_at >= date('now', '-7 days')"
         ).fetchone()[0]
-        hot_cache = conn.execute(
-            "SELECT COUNT(*) FROM injection_log WHERE resource = 'hot-cache'"
+        by_resource = {
+            row["resource"]: row["count"]
+            for row in conn.execute(
+                "SELECT resource, COUNT(*) as count FROM injection_log GROUP BY resource"
+            )
+        }
+    return {"today": today, "week": week, "by_resource": by_resource}
+
+
+def _count_injections(s: Storage, days: int = 7, resource: str | None = None) -> int:
+    """Count injections matching the same day-window and resource filter as the list."""
+    params: list = [f"-{days} days"]
+    resource_filter = ""
+    if resource:
+        resource_filter = "AND resource = ?"
+        params.append(resource)
+    with s._connection() as conn:
+        return conn.execute(
+            f"SELECT COUNT(*) FROM injection_log "
+            f"WHERE injected_at >= datetime('now', ?) {resource_filter}",
+            params,
         ).fetchone()[0]
-        working_set = conn.execute(
-            "SELECT COUNT(*) FROM injection_log WHERE resource = 'working-set'"
-        ).fetchone()[0]
-    return {
-        "today": today,
-        "week": week,
-        "hot_cache": hot_cache,
-        "working_set": working_set,
-    }
 
 
 def _get_injections(
@@ -590,7 +604,10 @@ async def injections_page(
     """Injection history page."""
     s = get_storage()
     injection_stats = _get_injection_stats(s)
-    injections = _get_injections(s, days=days, resource=resource_filter)
+    limit = 50
+    injections = _get_injections(s, days=days, resource=resource_filter, limit=limit)
+    total = _count_injections(s, days=days, resource=resource_filter)
+    total_pages = max(1, (total + limit - 1) // limit)
 
     return templates.TemplateResponse(
         request,
@@ -599,9 +616,10 @@ async def injections_page(
             "injection_stats": injection_stats,
             "injections": injections,
             "resource_filter": resource_filter,
+            "resources": sorted(injection_stats["by_resource"].keys()),
             "days": days,
             "page": 1,
-            "total_pages": 1,
+            "total_pages": total_pages,
             "active_page": "injections",
         },
     )
@@ -620,8 +638,7 @@ async def api_injections(
     offset = (page - 1) * limit
     injections = _get_injections(s, days=days, resource=resource_filter, limit=limit, offset=offset)
 
-    # Rough count for pagination
-    total = len(injections) if len(injections) < limit else limit * 2
+    total = _count_injections(s, days=days, resource=resource_filter)
     total_pages = max(1, (total + limit - 1) // limit)
 
     return templates.TemplateResponse(

@@ -111,6 +111,43 @@ def test_pagination_preserves_project_filter(client, dashboard_storage):
     assert "[name='project_filter']" in response.text
 
 
+class TestInjectionResources:
+    """Injection page reflects the resource values the server actually logs."""
+
+    def _seed(self, storage, resource, n=1):
+        for i in range(n):
+            mid, _ = storage.store_memory(f"{resource} mem {i}", MemoryType.PROJECT)
+            storage.log_injection(mid, resource)
+
+    def test_stats_group_by_actual_resource(self, dashboard_storage):
+        from memory_mcp.dashboard.app import _get_injection_stats
+
+        self._seed(dashboard_storage, "hot-cache", 2)
+        self._seed(dashboard_storage, "recall", 3)
+        self._seed(dashboard_storage, "working-set", 1)  # legacy rows stay counted
+
+        stats = _get_injection_stats(dashboard_storage)
+        assert stats["by_resource"] == {"hot-cache": 2, "recall": 3, "working-set": 1}
+
+    def test_recall_badge_renders_recall_not_working_set(self, client, dashboard_storage):
+        mid, _ = dashboard_storage.store_memory("badge content", MemoryType.PROJECT)
+        dashboard_storage.log_injection(mid, "recall")
+
+        html = client.get("/api/injections").text
+        assert "recall" in html
+        assert "working-set" not in html
+
+    def test_pagination_total_pages_reflects_real_count(self, client, dashboard_storage):
+        # Exactly `limit` rows -> a real COUNT yields 1 page; the old guess (limit*2)
+        # produced a phantom second page.
+        self._seed(dashboard_storage, "recall", 2)
+        assert "Page 1 of" not in client.get("/api/injections?limit=2").text
+
+        # One more row tips it to a genuine second page.
+        self._seed(dashboard_storage, "recall", 1)
+        assert "Page 1 of 2" in client.get("/api/injections?limit=2").text
+
+
 class TestMiningLoopBanner:
     def test_empty_db_shows_amber(self, client):
         html = client.get("/mining").text

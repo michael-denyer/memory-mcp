@@ -22,11 +22,11 @@
         </div>
         <div class="bg-dark-900 rounded-lg border border-gray-800 p-4">
             <p class="text-xs text-gray-400">Hot Cache Injections</p>
-            <p class="text-2xl font-bold text-orange-400">{{ injection_stats.hot_cache }}</p>
+            <p class="text-2xl font-bold text-orange-400">{{ injection_stats.by_resource.get('hot-cache', 0) }}</p>
         </div>
         <div class="bg-dark-900 rounded-lg border border-gray-800 p-4">
-            <p class="text-xs text-gray-400">Working Set Injections</p>
-            <p class="text-2xl font-bold text-blue-400">{{ injection_stats.working_set }}</p>
+            <p class="text-xs text-gray-400">Recall Injections</p>
+            <p class="text-2xl font-bold text-blue-400">{{ injection_stats.by_resource.get('recall', 0) }}</p>
         </div>
     </div>
 
@@ -40,8 +40,9 @@
                     hx-include="[name='days']"
                     class="px-3 py-2 bg-dark-800 border border-gray-700 rounded-lg text-gray-200 focus:outline-none focus:border-blue-500">
                 <option value="" {% if not resource_filter %}selected{% endif %}>All resources</option>
-                <option value="hot-cache" {% if resource_filter == 'hot-cache' %}selected{% endif %}>Hot Cache</option>
-                <option value="working-set" {% if resource_filter == 'working-set' %}selected{% endif %}>Working Set</option>
+                {% for r in resources %}
+                <option value="{{ r }}" {% if resource_filter == r %}selected{% endif %}>{{ r.replace('-', ' ').title() }}</option>
+                {% endfor %}
             </select>
             <select name="days"
                     hx-get="/api/injections"
