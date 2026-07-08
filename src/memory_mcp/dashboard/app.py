@@ -7,6 +7,7 @@ from pathlib import Path
 import fastmcp
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from memory_mcp import __version__
@@ -14,8 +15,9 @@ from memory_mcp.config import get_settings
 from memory_mcp.storage import MemorySource, MemoryType, PatternStatus, Storage
 from memory_mcp.storage.mining_runs import PROBE_SESSION_ID
 
-# Template directory
+# Template and static asset directories
 TEMPLATE_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
 # Global storage instance
@@ -38,6 +40,10 @@ app = FastAPI(
     description="Web dashboard for Memory MCP",
     lifespan=lifespan,
 )
+
+# Serve vendored assets (compiled Tailwind CSS, htmx) so the dashboard works
+# fully offline with no CDN dependency.
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 def get_storage() -> Storage:
@@ -387,18 +393,94 @@ async def api_delete(memory_id: int, request: Request) -> HTMLResponse:
     return HTMLResponse(content="")
 
 
-@app.get("/api/hot-cache", response_class=HTMLResponse)
-async def api_hot_cache_list(request: Request) -> HTMLResponse:
-    """Return hot cache list partial for HTMX polling."""
-    s = get_storage()
-    hot_memories = s.get_hot_memories()
+def _snippet(text: str, length: int = 80) -> str:
+    """Truncate text to a short snippet for relationship display."""
+    return text[:length] + "..." if len(text) > length else text
 
+
+def _get_memory_relationships(s: Storage, memory_id: int) -> tuple[list[dict], list[dict]]:
+    """Get outgoing and incoming relationships with the other side's snippet.
+
+    Returns:
+        (outgoing, incoming) lists of {id, snippet, relation_type}, where id is
+        the linked memory's id and snippet is its content truncated to ~80 chars.
+    """
+    with s._connection() as conn:
+        out_rows = conn.execute(
+            """
+            SELECT m.id AS other_id, m.content AS other_content, r.relation_type
+            FROM memory_relationships r
+            JOIN memories m ON m.id = r.to_memory_id
+            WHERE r.from_memory_id = ?
+            ORDER BY r.id
+            """,
+            (memory_id,),
+        ).fetchall()
+        in_rows = conn.execute(
+            """
+            SELECT m.id AS other_id, m.content AS other_content, r.relation_type
+            FROM memory_relationships r
+            JOIN memories m ON m.id = r.from_memory_id
+            WHERE r.to_memory_id = ?
+            ORDER BY r.id
+            """,
+            (memory_id,),
+        ).fetchall()
+
+    def shape(rows: list) -> list[dict]:
+        return [
+            {
+                "id": row["other_id"],
+                "snippet": _snippet(row["other_content"]),
+                "relation_type": row["relation_type"],
+            }
+            for row in rows
+        ]
+
+    return shape(out_rows), shape(in_rows)
+
+
+@app.get("/api/memories/{memory_id}/detail", response_class=HTMLResponse)
+async def api_memory_detail(memory_id: int, request: Request) -> HTMLResponse:
+    """Return an expandable detail cell for a memory row.
+
+    Unknown ids return an empty 200 body so an HTMX swap is a no-op.
+    """
+    s = get_storage()
+    memory = s.get_memory(memory_id)
+    if memory is None:
+        return HTMLResponse(content="")
+    relationships_out, relationships_in = _get_memory_relationships(s, memory_id)
+    return templates.TemplateResponse(
+        request,
+        "partials/memory_detail.html",
+        {
+            "memory": memory,
+            "relationships_out": relationships_out,
+            "relationships_in": relationships_in,
+        },
+    )
+
+
+@app.get("/api/promoted", response_class=HTMLResponse)
+async def api_promoted_list(request: Request) -> HTMLResponse:
+    """Return the promoted-memories list partial (refreshable via HTMX)."""
+    s = get_storage()
     return templates.TemplateResponse(
         request,
         "partials/hot_list.html",
-        {
-            "memories": hot_memories,
-        },
+        {"memories": s.get_promoted_memories()},
+    )
+
+
+@app.get("/api/hot-cache/items", response_class=HTMLResponse)
+async def api_hot_cache_items(request: Request) -> HTMLResponse:
+    """Return the session-aware hot-cache list partial (refreshable via HTMX)."""
+    s = get_storage()
+    return templates.TemplateResponse(
+        request,
+        "partials/hot_cache_list.html",
+        {"hot_cache": s.get_hot_cache()},
     )
 
 
@@ -527,7 +609,11 @@ async def api_reject_pattern(pattern_id: int, request: Request) -> HTMLResponse:
 
 
 def _get_injection_stats(s: Storage) -> dict:
-    """Get injection statistics."""
+    """Get injection statistics counted from the actual logged resource values.
+
+    ``by_resource`` is an all-time GROUP BY resource so both current resources
+    ('hot-cache', 'recall') and legacy rows ('working-set') are represented.
+    """
     with s._connection() as conn:
         today = conn.execute(
             "SELECT COUNT(*) FROM injection_log WHERE injected_at >= date('now')"
@@ -535,18 +621,28 @@ def _get_injection_stats(s: Storage) -> dict:
         week = conn.execute(
             "SELECT COUNT(*) FROM injection_log WHERE injected_at >= date('now', '-7 days')"
         ).fetchone()[0]
-        hot_cache = conn.execute(
-            "SELECT COUNT(*) FROM injection_log WHERE resource = 'hot-cache'"
+        by_resource = {
+            row["resource"]: row["count"]
+            for row in conn.execute(
+                "SELECT resource, COUNT(*) as count FROM injection_log GROUP BY resource"
+            )
+        }
+    return {"today": today, "week": week, "by_resource": by_resource}
+
+
+def _count_injections(s: Storage, days: int = 7, resource: str | None = None) -> int:
+    """Count injections matching the same day-window and resource filter as the list."""
+    params: list = [f"-{days} days"]
+    resource_filter = ""
+    if resource:
+        resource_filter = "AND resource = ?"
+        params.append(resource)
+    with s._connection() as conn:
+        return conn.execute(
+            f"SELECT COUNT(*) FROM injection_log "
+            f"WHERE injected_at >= datetime('now', ?) {resource_filter}",
+            params,
         ).fetchone()[0]
-        working_set = conn.execute(
-            "SELECT COUNT(*) FROM injection_log WHERE resource = 'working-set'"
-        ).fetchone()[0]
-    return {
-        "today": today,
-        "week": week,
-        "hot_cache": hot_cache,
-        "working_set": working_set,
-    }
 
 
 def _get_injections(
@@ -590,7 +686,10 @@ async def injections_page(
     """Injection history page."""
     s = get_storage()
     injection_stats = _get_injection_stats(s)
-    injections = _get_injections(s, days=days, resource=resource_filter)
+    limit = 50
+    injections = _get_injections(s, days=days, resource=resource_filter, limit=limit)
+    total = _count_injections(s, days=days, resource=resource_filter)
+    total_pages = max(1, (total + limit - 1) // limit)
 
     return templates.TemplateResponse(
         request,
@@ -599,9 +698,10 @@ async def injections_page(
             "injection_stats": injection_stats,
             "injections": injections,
             "resource_filter": resource_filter,
+            "resources": sorted(injection_stats["by_resource"].keys()),
             "days": days,
             "page": 1,
-            "total_pages": 1,
+            "total_pages": total_pages,
             "active_page": "injections",
         },
     )
@@ -620,8 +720,7 @@ async def api_injections(
     offset = (page - 1) * limit
     injections = _get_injections(s, days=days, resource=resource_filter, limit=limit, offset=offset)
 
-    # Rough count for pagination
-    total = len(injections) if len(injections) < limit else limit * 2
+    total = _count_injections(s, days=days, resource=resource_filter)
     total_pages = max(1, (total + limit - 1) // limit)
 
     return templates.TemplateResponse(
@@ -699,12 +798,14 @@ async def sessions_page(request: Request) -> HTMLResponse:
     """Sessions list page."""
     s = get_storage()
     sessions = _get_sessions(s)
+    cross_patterns = s.get_cross_session_patterns(min_sessions=2)
 
     return templates.TemplateResponse(
         request,
         "sessions.html",
         {
             "sessions": sessions,
+            "cross_patterns": cross_patterns,
             "active_page": "sessions",
         },
     )

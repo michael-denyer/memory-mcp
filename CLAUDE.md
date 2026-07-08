@@ -158,6 +158,7 @@ uv run ruff format .          # Format
 - **Two CLI entrypoints**: `memory-mcp` (server) vs `memory-mcp-cli` (tools) - don't confuse them
 - **Package name vs import name**: PyPI package is `hot-memory-mcp`, import as `memory_mcp`
 - **Version in __init__.py**: Uses `importlib.metadata` to read from pyproject.toml - don't hardcode
+- **Dashboard CSS is compiled**: the dashboard serves a vendored, offline `src/memory_mcp/dashboard/static/tailwind.css` (no CDN). Run `scripts/build-dashboard-css.sh` after adding new Tailwind classes to any dashboard template, or they won't be styled.
 
 ## Release Process
 
