@@ -387,18 +387,25 @@ async def api_delete(memory_id: int, request: Request) -> HTMLResponse:
     return HTMLResponse(content="")
 
 
-@app.get("/api/hot-cache", response_class=HTMLResponse)
-async def api_hot_cache_list(request: Request) -> HTMLResponse:
-    """Return hot cache list partial for HTMX polling."""
+@app.get("/api/promoted", response_class=HTMLResponse)
+async def api_promoted_list(request: Request) -> HTMLResponse:
+    """Return the promoted-memories list partial (refreshable via HTMX)."""
     s = get_storage()
-    hot_memories = s.get_hot_memories()
-
     return templates.TemplateResponse(
         request,
         "partials/hot_list.html",
-        {
-            "memories": hot_memories,
-        },
+        {"memories": s.get_promoted_memories()},
+    )
+
+
+@app.get("/api/hot-cache/items", response_class=HTMLResponse)
+async def api_hot_cache_items(request: Request) -> HTMLResponse:
+    """Return the session-aware hot-cache list partial (refreshable via HTMX)."""
+    s = get_storage()
+    return templates.TemplateResponse(
+        request,
+        "partials/hot_cache_list.html",
+        {"hot_cache": s.get_hot_cache()},
     )
 
 

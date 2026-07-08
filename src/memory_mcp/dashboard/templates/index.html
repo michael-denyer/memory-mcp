@@ -14,7 +14,8 @@
     <div id="stats-container"
          hx-get="/api/stats"
          hx-trigger="refresh"
-         hx-swap="innerHTML">
+         hx-swap="innerHTML"
+         data-autorefresh>
         {% include "partials/stats_cards.html" %}
     </div>
 

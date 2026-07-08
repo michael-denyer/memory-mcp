@@ -134,7 +134,7 @@
 
                 <!-- Auto-refresh toggle -->
                 <div class="flex items-center space-x-2">
-                    <label class="flex items-center space-x-2 cursor-pointer text-sm text-gray-400">
+                    <label id="auto-refresh-label" class="flex items-center space-x-2 cursor-pointer text-sm text-gray-400">
                         <input type="checkbox"
                                id="auto-refresh-toggle"
                                class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-900">
@@ -173,7 +173,14 @@
     <script>
         (function() {
             const toggle = document.getElementById('auto-refresh-toggle');
+            const label = document.getElementById('auto-refresh-label');
             const key = 'memory-mcp-auto-refresh';
+
+            // Nothing on this page can refresh: hide the control entirely.
+            if (document.querySelectorAll('[data-autorefresh]').length === 0) {
+                if (label) label.style.display = 'none';
+                return;
+            }
 
             // Load preference
             const saved = localStorage.getItem(key);
@@ -196,11 +203,9 @@
             function startAutoRefresh() {
                 if (intervalId) return;
                 intervalId = setInterval(() => {
-                    // Trigger HTMX refresh on elements with hx-trigger="every 5s"
-                    const statsEl = document.getElementById('stats-container');
-                    if (statsEl) {
-                        htmx.trigger(statsEl, 'refresh');
-                    }
+                    document.querySelectorAll('[data-autorefresh]').forEach((el) => {
+                        htmx.trigger(el, 'refresh');
+                    });
                 }, 5000);
             }
 
