@@ -234,6 +234,31 @@ class TestMemoryDetail:
         assert resp.text == ""
 
 
+class TestKnowledgeGraph:
+    """Graph page legend and graph data API."""
+
+    def test_graph_page_has_full_node_and_edge_legend(self, client, dashboard_storage):
+        resp = client.get("/graph")
+        assert resp.status_code == 200
+        assert "conversation" in resp.text  # legend now covers all five node types
+        assert "episodic" in resp.text
+        assert 'id="edge-legend"' in resp.text
+
+    def test_api_graph_returns_nodes_and_edges(self, client, dashboard_storage):
+        from memory_mcp.models import RelationType
+
+        a, _ = dashboard_storage.store_memory("graph node a", MemoryType.PROJECT)
+        b, _ = dashboard_storage.store_memory("graph node b", MemoryType.REFERENCE)
+        dashboard_storage.link_memories(a, b, RelationType.DEPENDS_ON)
+
+        data = client.get("/api/graph").json()
+        ids = {n["id"] for n in data["nodes"]}
+        assert {a, b} <= ids
+        assert any(
+            e["from"] == a and e["to"] == b and e["type"] == "depends_on" for e in data["edges"]
+        )
+
+
 class TestMiningLoopBanner:
     def test_empty_db_shows_amber(self, client):
         html = client.get("/mining").text
