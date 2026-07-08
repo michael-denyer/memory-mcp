@@ -211,6 +211,29 @@ class TestHotCacheRefresh:
         assert "pinned" in resp.text
 
 
+class TestMemoryDetail:
+    """Expandable memory-detail row endpoint."""
+
+    def test_detail_shows_full_content_and_relationship(self, client, dashboard_storage):
+        from memory_mcp.models import RelationType
+
+        long_content = "detailed memory body " + "x" * 300
+        a, _ = dashboard_storage.store_memory(long_content, MemoryType.PROJECT)
+        b, _ = dashboard_storage.store_memory("the linked neighbour memory", MemoryType.REFERENCE)
+        dashboard_storage.link_memories(a, b, RelationType.RELATES_TO)
+
+        resp = client.get(f"/api/memories/{a}/detail")
+        assert resp.status_code == 200
+        assert "x" * 300 in resp.text  # full content, not the row's truncated view
+        assert "the linked neighbour memory" in resp.text  # outgoing relationship snippet
+        assert "relates_to" in resp.text
+
+    def test_detail_unknown_id_returns_empty_200(self, client, dashboard_storage):
+        resp = client.get("/api/memories/999999/detail")
+        assert resp.status_code == 200
+        assert resp.text == ""
+
+
 class TestMiningLoopBanner:
     def test_empty_db_shows_amber(self, client):
         html = client.get("/mining").text

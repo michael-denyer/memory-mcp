@@ -15,6 +15,7 @@
         {% if memories %}
             {% for memory in memories %}
                 {% include "partials/memory_row.html" %}
+                <tr id="detail-{{ memory.id }}"></tr>
             {% endfor %}
         {% else %}
             <tr>
