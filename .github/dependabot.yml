@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # pyproject.toml + uv.lock, including the pinned hatchling in [build-system]
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Workflow actions (currently tag-pinned; keeps SHAs updated if pinned later)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
