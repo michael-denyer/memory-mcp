@@ -47,7 +47,7 @@ Repository = "https://github.com/michael-denyer/memory-mcp"
 Issues = "https://github.com/michael-denyer/memory-mcp/issues"
 
 [build-system]
-requires = ["hatchling==1.30.1"]  # Exact pin: a compromised build backend executes arbitrary code at install time
+requires = ["hatchling==1.31.0"]  # Exact pin: a compromised build backend executes arbitrary code at install time
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
