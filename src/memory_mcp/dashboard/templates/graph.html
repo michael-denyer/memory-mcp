@@ -118,7 +118,6 @@
         nodeMap.set(node.id, node);
     });
 
-    // Force iterations (unchanged tuning).
     for (let iter = 0; iter < 50; iter++) {
         data.nodes.forEach((a) => {
             data.nodes.forEach((b) => {
@@ -305,7 +304,7 @@
         });
     }
 
-    // ---- relationship list (unchanged behavior) ----
+    // ---- relationship list ----
     data.edges.slice(0, 20).forEach((edge) => {
         const from = nodeMap.get(edge.from);
         const to = nodeMap.get(edge.to);
