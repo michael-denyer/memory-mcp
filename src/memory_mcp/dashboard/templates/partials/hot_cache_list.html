@@ -1,0 +1,21 @@
+<!-- Session-aware hot cache list partial - refreshable via HTMX -->
+{% if hot_cache %}
+    {% for memory in hot_cache %}
+    <div class="p-3 flex items-start gap-3">
+        <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+                <span class="px-2 py-0.5 text-xs rounded-full bg-blue-900 text-blue-300">{{ memory.memory_type|type_value }}</span>
+                {% if memory.category %}
+                <span class="px-2 py-0.5 text-xs rounded-full bg-gray-700 text-gray-300">{{ memory.category }}</span>
+                {% endif %}
+            </div>
+            <p class="text-gray-300 text-sm truncate">{{ memory.content[:150] }}{% if memory.content|length > 150 %}...{% endif %}</p>
+        </div>
+    </div>
+    {% endfor %}
+{% else %}
+    <div class="p-6 text-center text-gray-500">
+        <p>Hot cache is empty</p>
+        <p class="text-sm mt-1">Recall some memories or let auto-promotion populate the promoted memories</p>
+    </div>
+{% endif %}

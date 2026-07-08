@@ -50,27 +50,13 @@
                 <p class="text-gray-400 text-sm">{{ hot_cache|length }} items &middot; Session-aware context injected to Claude</p>
             </div>
         </div>
-        <div class="bg-dark-900 rounded-lg border border-gray-800 divide-y divide-gray-800">
-            {% if hot_cache %}
-                {% for memory in hot_cache %}
-                <div class="p-3 flex items-start gap-3">
-                    <div class="flex-1 min-w-0">
-                        <div class="flex items-center gap-2 mb-1">
-                            <span class="px-2 py-0.5 text-xs rounded-full bg-blue-900 text-blue-300">{{ memory.memory_type|type_value }}</span>
-                            {% if memory.category %}
-                            <span class="px-2 py-0.5 text-xs rounded-full bg-gray-700 text-gray-300">{{ memory.category }}</span>
-                            {% endif %}
-                        </div>
-                        <p class="text-gray-300 text-sm truncate">{{ memory.content[:150] }}{% if memory.content|length > 150 %}...{% endif %}</p>
-                    </div>
-                </div>
-                {% endfor %}
-            {% else %}
-                <div class="p-6 text-center text-gray-500">
-                    <p>Hot cache is empty</p>
-                    <p class="text-sm mt-1">Recall some memories or let auto-promotion populate the promoted memories</p>
-                </div>
-            {% endif %}
+        <div id="hot-cache-items"
+             class="bg-dark-900 rounded-lg border border-gray-800 divide-y divide-gray-800"
+             hx-get="/api/hot-cache/items"
+             hx-trigger="refresh"
+             hx-swap="innerHTML"
+             data-autorefresh>
+            {% include "partials/hot_cache_list.html" %}
         </div>
     </div>
 
@@ -87,10 +73,14 @@
                 </p>
             </div>
         </div>
-        <div id="hot-cache-list" class="space-y-3">
+        <div id="hot-cache-list" class="space-y-3"
+             hx-get="/api/promoted"
+             hx-trigger="refresh"
+             hx-swap="innerHTML"
+             data-autorefresh>
             {% if promoted_memories %}
                 {% for memory in promoted_memories %}
-                    {% set is_pinned = memory.id in (promoted_stats.get('pinned_ids', [])|default([], true)) %}
+                    {% set is_pinned = memory.is_pinned %}
                     {% include "partials/hot_item.html" %}
                 {% endfor %}
             {% else %}

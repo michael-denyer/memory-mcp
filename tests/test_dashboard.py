@@ -176,6 +176,41 @@ class TestCrossSessionPatterns:
         assert "cross session content xyz" in html
 
 
+class TestHotCacheRefresh:
+    """Both hot-cache lists expose refreshable partial endpoints."""
+
+    def test_promoted_partial_contains_promoted_memory(self, client, dashboard_storage):
+        mid, _ = dashboard_storage.store_memory("promoted partial content", MemoryType.PROJECT)
+        dashboard_storage.promote_to_hot(mid)
+        resp = client.get("/api/promoted")
+        assert resp.status_code == 200
+        assert "promoted partial content" in resp.text
+
+    def test_hot_cache_items_partial_contains_memory(self, client, dashboard_storage):
+        mid, _ = dashboard_storage.store_memory("session aware content", MemoryType.PROJECT)
+        dashboard_storage.promote_to_hot(mid)
+        resp = client.get("/api/hot-cache/items")
+        assert resp.status_code == 200
+        assert "session aware content" in resp.text
+
+    def test_promoted_partial_shows_pinned_badge(self, client, dashboard_storage):
+        mid, _ = dashboard_storage.store_memory("pinned memory content", MemoryType.PROJECT)
+        dashboard_storage.promote_to_hot(mid, pin=True)
+        resp = client.get("/api/promoted")
+        assert resp.status_code == 200
+        assert "pinned" in resp.text
+
+    def test_hot_cache_page_renders_pinned_badge_on_initial_load(self, client, dashboard_storage):
+        # Initial render must use memory.is_pinned (not the empty pinned_ids),
+        # so the pin badge survives a page load, matching the refresh partial.
+        mid, _ = dashboard_storage.store_memory("initial pinned content", MemoryType.PROJECT)
+        dashboard_storage.promote_to_hot(mid, pin=True)
+        resp = client.get("/hot-cache")
+        assert resp.status_code == 200
+        assert "initial pinned content" in resp.text
+        assert "pinned" in resp.text
+
+
 class TestMiningLoopBanner:
     def test_empty_db_shows_amber(self, client):
         html = client.get("/mining").text
