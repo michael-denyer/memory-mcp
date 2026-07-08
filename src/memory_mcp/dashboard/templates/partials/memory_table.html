@@ -40,7 +40,7 @@
         {% if page > 1 %}
         <button hx-get="/api/memories/search?page={{ page - 1 }}"
                 hx-target="#memory-table-body"
-                hx-include="[name='query'], [name='type_filter']"
+                hx-include="[name='query'], [name='type_filter'], [name='project_filter']"
                 class="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors">
             Previous
         </button>
@@ -48,7 +48,7 @@
         {% if page < total_pages %}
         <button hx-get="/api/memories/search?page={{ page + 1 }}"
                 hx-target="#memory-table-body"
-                hx-include="[name='query'], [name='type_filter']"
+                hx-include="[name='query'], [name='type_filter'], [name='project_filter']"
                 class="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors">
             Next
         </button>
