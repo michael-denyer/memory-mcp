@@ -496,6 +496,8 @@ Make `UserPromptSubmit` the only hook. Rejected because `SessionStart` with `--f
 
 ## Appendix C. Risks
 
+PR-1, realised on 2026-09-11. The hosted `macos-14` runner advertises an MPS device whose shared pool cannot allocate 44 MiB, so every test that loads the real sentence-transformers model fails with `MPS backend out of memory`. Torch has no switch to hide MPS. The root amended PR-1 to add an `embedding_device` setting (`MEMORY_MCP_EMBEDDING_DEVICE`) that the provider passes to `SentenceTransformer(device=...)`, with the CI job pinned to `cpu`. Files list for PR-1 gains `src/memory_mcp/config.py`.
+
 PR-2. `claude --plugin-dir` may not exist in this Claude Code version. The owner reads `claude --help` and records the substitute. If no flag loads a plugin from a directory, the owner installs from the worktree path with `claude plugin add` and uninstalls afterwards.
 
 PR-2. The `UserPromptSubmit` hook spawns a Python process on every prompt. The perf rule of 1.5 seconds median holds only if the embedding engine stays lazy. Any later change that touches `Storage.__init__` must keep the unit test `test_storage_does_not_build_embedding_engine_until_needed` green.
