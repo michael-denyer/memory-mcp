@@ -326,13 +326,17 @@ class RetrievalMixin:
 
             return [self._row_to_memory(row, conn) for row in rows]
 
-    def get_hot_cache(self) -> list[Memory]:
+    def get_hot_cache(self, project_id: str | None = None) -> list[Memory]:
         """Get the hot cache: recent recalls + predictions + top promoted items.
 
         Combines:
         1. Recently recalled memories (from retrieval_events with was_used=1)
         2. Predicted next memories (from access patterns)
         3. Top salience promoted memories (to fill remaining slots)
+
+        Args:
+            project_id: Restrict the promoted slots to this project and the
+                global memories. None returns every promoted memory.
 
         Returns:
             List of memories for the hot cache, capped at hot_cache_max_items
@@ -367,7 +371,7 @@ class RetrievalMixin:
 
         # 3. Fill with top salience promoted memories
         if len(hot_cache) < max_items:
-            promoted = self._get_promoted_by_salience()
+            promoted = self._get_promoted_by_salience(project_id=project_id)
             for memory in promoted:
                 add_memory(memory)
 
@@ -383,9 +387,9 @@ class RetrievalMixin:
         """Alias for get_hot_cache (backwards compatibility)."""
         return self.get_hot_cache()
 
-    def _get_promoted_by_salience(self) -> list[Memory]:
+    def _get_promoted_by_salience(self, project_id: str | None = None) -> list[Memory]:
         """Get promoted memories sorted by salience score (highest first)."""
-        promoted = self.get_promoted_memories()
+        promoted = self.get_promoted_memories(project_id=project_id)
         for memory in promoted:
             memory.salience_score = self._compute_salience_score(
                 importance_score=memory.importance_score,
