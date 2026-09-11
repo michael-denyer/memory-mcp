@@ -147,7 +147,8 @@ uv run ruff format .          # Format
 - All defaults should be optimized for immediate value
 - `auto_promote=True`, `auto_demote=True`, `mining_auto_approve_enabled=True`
 - Auto-detect hardware (MLX on Apple Silicon)
-- Auto-bootstrap from project docs when promoted memories is empty
+- Bootstrap from project docs with one `memory-mcp-cli bootstrap` run (`auto_bootstrap` is off
+  by default, and no hook runs it)
 - Configuration exists for power users, not as a requirement
 
 ### When Working on This Project

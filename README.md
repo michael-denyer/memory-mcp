@@ -76,7 +76,7 @@ Add to `~/.claude.json`:
 See [Reference](docs/REFERENCE.md) for full configuration options.
 </details>
 
-Restart Claude Code. The hot cache auto-populates from your project docs.
+Restart Claude Code. Run `memory-mcp-cli bootstrap` once to seed memories from your project docs; the hooks inject whatever is promoted, but nothing seeds itself.
 
 > **First run**: Embedding model (~90MB) downloads automatically. Takes 30-60 seconds once.
 
@@ -104,7 +104,7 @@ flowchart LR
     VS <-->|"related"| KG
 ```
 
-The **hot cache** (~10 items) reaches Claude through two plugin hooks. `SessionStart` runs `memory-mcp-cli hot-cache --force` and `UserPromptSubmit` runs `memory-mcp-cli hot-cache`, and Claude Code adds each command's stdout to the conversation. The command prints once per session unless the text changes, so a prompt costs nothing when nothing moved. The set combines recent recalls, predicted next memories, and top promoted items. **Promoted memories** (~20 items) is the backing store of frequently-used memories. Memories used 3+ times auto-promote; unused ones demote after 14 days.
+The **hot cache** (~10 items) reaches Claude through two plugin hooks. `SessionStart` runs `memory-mcp-cli hot-cache --force` and `UserPromptSubmit` runs `memory-mcp-cli hot-cache`, and Claude Code adds each command's stdout to the conversation. The command prints only when the text differs from what the session last saw, which is cheap while the set is stable and reprints in full when it shifts. The set combines recent recalls, predicted next memories, and top promoted items. **Promoted memories** (~20 items) is the backing store of frequently-used memories. Memories used 3+ times auto-promote; unused ones demote after 14 days.
 
 ## What Makes It Different
 

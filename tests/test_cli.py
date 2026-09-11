@@ -664,9 +664,22 @@ class TestHotCacheCommand:
         self._seed_two_promoted(temp_db)
         self._run()
         first = capsys.readouterr().out
+        assert "zebra-42" in first
 
         assert self._run(force=True) == 0
         assert capsys.readouterr().out == first
+
+    def test_force_clears_the_stamp_even_when_it_prints_nothing(self, temp_db, capsys):
+        self._seed_two_promoted(temp_db)
+        self._run()
+        capsys.readouterr()
+
+        with patch.object(Storage, "get_hot_cache", return_value=[]):
+            assert self._run(force=True) == 0
+        assert capsys.readouterr().out == ""
+
+        assert self._run() == 0
+        assert "zebra-42" in capsys.readouterr().out
 
     def test_logs_injection_rows_with_resource_hook(self, temp_db):
         self._seed_two_promoted(temp_db)

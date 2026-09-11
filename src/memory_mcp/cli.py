@@ -133,6 +133,12 @@ def _print_hot_cache(force: bool) -> None:
     session_id = _session_id_from_stdin()
     settings = get_settings()
 
+    stamp_path = _injection_stamp_path(settings, session_id)
+    if force and stamp_path is not None:
+        # Forcing means Claude's context was reset, so whatever this session
+        # was shown is gone even if this run then prints nothing.
+        stamp_path.unlink(missing_ok=True)
+
     storage = Storage(settings)
     try:
         memories = storage.get_hot_cache()
@@ -142,8 +148,7 @@ def _print_hot_cache(force: bool) -> None:
         text = format_hot_cache_for_injection(memories, settings.hot_cache_display_max_chars)
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-        stamp_path = _injection_stamp_path(settings, session_id)
-        if stamp_path is not None and not force and stamp_path.exists():
+        if stamp_path is not None and stamp_path.exists():
             if stamp_path.read_text(encoding="utf-8").strip() == digest:
                 return
 

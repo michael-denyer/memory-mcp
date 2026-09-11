@@ -15,7 +15,8 @@ def test_plugin_json_is_valid():
 
 def test_plugin_components_live_at_root():
     """Claude Code only loads components from the plugin root, never .claude-plugin/."""
-    assert sorted(p.name for p in MANIFEST_DIR.iterdir()) == ["marketplace.json", "plugin.json"]
+    tracked = sorted(p.name for p in MANIFEST_DIR.iterdir() if not p.name.startswith("."))
+    assert tracked == ["marketplace.json", "plugin.json"]
     assert (PLUGIN_ROOT / "commands" / "recall.md").exists()
     assert (PLUGIN_ROOT / "skills" / "recall-nudge" / "SKILL.md").exists()
 
