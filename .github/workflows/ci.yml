@@ -72,6 +72,9 @@ jobs:
         run: uv sync --group dev
 
       - name: Run embedding tests
+        env:
+          # Hosted macOS runners report an MPS device whose allocations fail at 45 MiB.
+          PYTORCH_MPS_HIGH_WATERMARK_RATIO: "0.0"
         run: uv run pytest -p no:randomly --no-header -o addopts="" tests/test_embeddings.py
 
   pre-commit:
