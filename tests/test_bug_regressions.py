@@ -1180,3 +1180,31 @@ class TestLogResponseTranscriptParsing:
 
         assert len(outputs) == 1
         assert "What is X?" in outputs[0][1]
+
+
+class TestResourceInjectionNames:
+    """The two resources must be distinguishable in injection_log."""
+
+    def test_promoted_resource_logs_distinct_resource_name(self, tmp_path, monkeypatch):
+        """The v0.7 rename left promoted-memories logging itself as hot-cache."""
+        from memory_mcp import server
+
+        settings = Settings(db_path=tmp_path / "test.db", promoted_resource_enabled=True)
+        test_storage = Storage(settings)
+        monkeypatch.setattr(server.app, "storage", test_storage)
+        monkeypatch.setattr(server.app, "settings", settings)
+
+        memory_id, _ = test_storage.store_memory("Deploys go through helm", MemoryType.PROJECT)
+        test_storage.promote_to_hot(memory_id)
+
+        server.promoted_memories_resource()
+
+        try:
+            with test_storage._connection() as conn:
+                resources = [
+                    row[0] for row in conn.execute("SELECT resource FROM injection_log").fetchall()
+                ]
+        finally:
+            test_storage.close()
+
+        assert resources == ["promoted-memories"]
