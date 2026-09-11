@@ -303,6 +303,43 @@ class TestLogResponseCommand:
             storage.close()
         assert used == 1
 
+    def test_log_response_demotes_stale_hot_memory(self, temp_db, tmp_path):
+        """The Stop hook runs maintenance, so a hot memory nobody has touched
+        for 30 days is cold by the time the turn ends."""
+        from memory_mcp.config import get_settings
+
+        storage = Storage(get_settings())
+        memory_id, _ = storage.store_memory("stale hot fact about widgets", MemoryType.PROJECT)
+        storage.promote_to_hot(memory_id)
+        with storage.transaction() as conn:
+            conn.execute(
+                "UPDATE memories SET last_accessed_at = datetime('now', '-30 days') WHERE id = ?",
+                (memory_id,),
+            )
+        storage.close()
+
+        hook_input, popen_patch = self._hook_stdin_and_popen_patch(
+            tmp_path, assistant_text="some unrelated assistant reply"
+        )
+
+        with (
+            patch("subprocess.Popen", side_effect=popen_patch),
+            patch("sys.stdin.read", return_value=hook_input),
+            patch("sys.argv", ["memory-mcp-cli", "log-response"]),
+        ):
+            assert main() == 0
+
+        storage = Storage(get_settings())
+        try:
+            with storage._connection() as conn:
+                is_hot = conn.execute(
+                    "SELECT is_hot FROM memories WHERE id = ?", (memory_id,)
+                ).fetchone()[0]
+        finally:
+            storage.close()
+
+        assert is_hot == 0
+
     def test_auto_mark_failure_never_blocks_log_response(self, temp_db, tmp_path):
         """mark_used_memories raising must not fail the Stop hook."""
         hook_input, popen_patch = self._hook_stdin_and_popen_patch(

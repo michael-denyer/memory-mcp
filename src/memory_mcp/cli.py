@@ -380,6 +380,14 @@ def log_response(ctx: click.Context) -> None:
                 log.info(f"auto-marked {marked} injected memories as used")
         except Exception as e:
             log.warning(f"auto-mark failed (non-fatal): {e}")
+
+        try:
+            # The Stop hook is the only unattended caller of maintenance;
+            # otherwise demotion waits for someone to invoke an MCP tool.
+            storage.demote_stale_hot_memories()
+            storage.improve_hot_cache_from_injections(dry_run=False)
+        except Exception as e:  # maintenance must never fail the Stop hook
+            click.echo(f"hot cache maintenance failed: {e}", err=True)
     finally:
         storage.close()
 
