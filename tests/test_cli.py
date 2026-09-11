@@ -1,5 +1,6 @@
 """Tests for CLI commands."""
 
+import hashlib
 import io
 import json
 import subprocess
@@ -689,3 +690,17 @@ class TestHotCacheCommand:
         captured = capsys.readouterr()
         assert captured.out == ""
         assert "boom" in captured.err
+
+    def test_stamp_filename_is_hashed_session_id(self, tmp_path):
+        db_path = tmp_path / "data" / "memory.db"
+        db_path.parent.mkdir()
+
+        with patch.dict("os.environ", {"MEMORY_MCP_DB_PATH": str(db_path)}):
+            self._seed_two_promoted(db_path)
+            assert self._run(stdin='{"session_id": "../../escape"}') == 0
+
+        assert not (tmp_path / "escape").exists()
+        assert not (db_path.parent / "escape").exists()
+
+        injected = db_path.parent / "injected"
+        assert [p.name for p in injected.iterdir()] == [hashlib.sha256(b"../../escape").hexdigest()]
