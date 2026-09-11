@@ -30,7 +30,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "memory-mcp-cli bootstrap --quiet"
+            "command": "memory-mcp-cli hot-cache --force"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memory-mcp-cli hot-cache"
           }
         ]
       }
