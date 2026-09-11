@@ -239,6 +239,23 @@ def log_output(
         storage.close()
 
 
+def _text_of_content(content: object) -> str:
+    """Extract the text of one transcript turn.
+
+    Claude Code writes a turn's `content` as a bare string on about a third of
+    real transcripts and as a list of typed blocks on the rest.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return ""
+
+
 @cli.command("log-response")
 @click.pass_context
 def log_response(ctx: click.Context) -> None:
@@ -321,10 +338,7 @@ def log_response(ctx: click.Context) -> None:
             entry = json.loads(line)
             msg = entry.get("message", {})
             role = msg.get("role")
-            content = msg.get("content", [])
-
-            text_parts = [c.get("text", "") for c in content if c.get("type") == "text"]
-            text = "\n".join(text_parts)
+            text = _text_of_content(msg.get("content"))
 
             if role == "assistant" and text and last_response is None:
                 last_response = text

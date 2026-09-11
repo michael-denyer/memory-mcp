@@ -1121,3 +1121,62 @@ class TestRecallTypeFiltering:
         # Results should only be PATTERN or REFERENCE
         for mem in result.memories:
             assert mem.memory_type in [MemoryType.PATTERN, MemoryType.REFERENCE]
+
+
+class TestLogResponseTranscriptParsing:
+    """Real transcripts store a turn's content as a bare string, not a block list."""
+
+    def test_log_response_accepts_string_user_content(self, temp_db, tmp_path):
+        """A string `content` on the user turn must not crash the Stop hook."""
+        import json
+        import subprocess
+        from unittest.mock import patch
+
+        from memory_mcp.cli import main
+        from memory_mcp.config import get_settings
+
+        transcript = tmp_path / "string-content.jsonl"
+        transcript.write_text(
+            "\n".join(
+                [
+                    json.dumps({"message": {"role": "user", "content": "What is X?"}}),
+                    json.dumps(
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": [
+                                    {"type": "text", "text": "X is the deploy hint zebra-42."}
+                                ],
+                            }
+                        }
+                    ),
+                ]
+            )
+        )
+
+        hook_input = json.dumps({"session_id": "s", "transcript_path": str(transcript)})
+
+        real_popen = subprocess.Popen
+
+        def popen_without_mining_spawn(args, **kwargs):
+            if args and args[0] == "memory-mcp-cli":
+                raise FileNotFoundError("mining spawn suppressed in test")
+            return real_popen(args, **kwargs)
+
+        with (
+            patch("subprocess.Popen", side_effect=popen_without_mining_spawn),
+            patch("sys.stdin.read", return_value=hook_input),
+            patch("sys.argv", ["memory-mcp-cli", "log-response"]),
+        ):
+            result = main()
+
+        assert result == 0
+
+        storage = Storage(get_settings())
+        try:
+            outputs = storage.get_recent_outputs(hours=1)
+        finally:
+            storage.close()
+
+        assert len(outputs) == 1
+        assert "What is X?" in outputs[0][1]
