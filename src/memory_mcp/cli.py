@@ -3,6 +3,7 @@
 These commands can be called from shell scripts and Claude Code hooks.
 """
 
+import hashlib
 import json
 import sys
 import time
@@ -14,6 +15,7 @@ from rich.console import Console
 from rich.table import Table
 
 from memory_mcp.config import Settings, find_bootstrap_files, get_settings
+from memory_mcp.helpers import format_hot_cache_for_injection
 from memory_mcp.logging import get_logger
 from memory_mcp.probe import run_probe
 from memory_mcp.project import get_current_project_id
@@ -89,6 +91,78 @@ def cli(ctx: click.Context, use_json: bool) -> None:
     """CLI commands for memory-mcp."""
     ctx.ensure_object(dict)
     ctx.obj["json"] = use_json
+
+
+def _session_id_from_stdin() -> str | None:
+    """Read the session id from Claude Code's hook payload on stdin."""
+    if sys.stdin.isatty():
+        return None
+
+    raw = sys.stdin.read().strip()
+    if not raw:
+        return None
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    session_id = payload.get("session_id")
+    return session_id if isinstance(session_id, str) else None
+
+
+def _print_hot_cache(force: bool) -> None:
+    """Print the hot cache once per session unless forced, and log the injection."""
+    session_id = _session_id_from_stdin()
+    settings = get_settings()
+
+    storage = Storage(settings)
+    try:
+        memories = storage.get_hot_cache()
+        if not memories:
+            return
+
+        text = format_hot_cache_for_injection(memories, settings.hot_cache_display_max_chars)
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+        stamp_path = settings.db_path.parent / "injected" / session_id if session_id else None
+        if stamp_path is not None and not force and stamp_path.exists():
+            if stamp_path.read_text(encoding="utf-8").strip() == digest:
+                return
+
+        click.echo(text)
+
+        if stamp_path is not None:
+            stamp_path.parent.mkdir(parents=True, exist_ok=True)
+            stamp_path.write_text(digest, encoding="utf-8")
+
+        storage.log_injections_batch(
+            memory_ids=[m.id for m in memories],
+            resource="hook",
+            session_id=session_id,
+            project_id=get_current_project_id(),
+        )
+    finally:
+        storage.close()
+
+
+@cli.command("hot-cache")
+@click.option("--force", is_flag=True, help="Print even if this session already saw this text")
+def hot_cache(force: bool) -> None:
+    """Print the hot cache for Claude Code to inject as context.
+
+    Claude Code adds a hook's plain stdout to the conversation, so this is the
+    only path that puts memories in front of Claude with no tool call. The
+    SessionStart hook runs it with --force; UserPromptSubmit runs it without,
+    so unchanged text is printed once per session instead of every turn.
+    """
+    try:
+        _print_hot_cache(force=force)
+    except Exception as e:  # a failing hook must never block Claude's turn
+        click.echo(f"hot-cache failed: {e}", err=True)
 
 
 @cli.command("log-output")
