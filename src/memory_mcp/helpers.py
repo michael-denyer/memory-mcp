@@ -1429,6 +1429,36 @@ def format_hot_cache_concise(
     return "\n".join(lines)
 
 
+def format_hot_cache_for_injection(memories: list[Memory], max_chars: int) -> str:
+    """Format hot cache memories as the stdout a Claude Code hook injects.
+
+    Args:
+        memories: Hot cache memories, already ordered by relevance
+        max_chars: Content is truncated to this length with a trailing ellipsis
+
+    Returns:
+        One header line, one line per memory, and a closing instruction. An
+        empty list returns an empty string so the hook injects nothing.
+
+    Example:
+        >>> format_hot_cache_for_injection([], max_chars=200)
+        ''
+    """
+    if not memories:
+        return ""
+
+    lines = ["[MEMORY: Hot cache]"]
+
+    for m in memories:
+        content = m.content[:max_chars] + "..." if len(m.content) > max_chars else m.content
+        tags_str = f" [{', '.join(m.tags[:3])}]" if m.tags else ""
+        lines.append(f"- [id:{m.id}] {content}{tags_str}")
+
+    lines.append("Call mark_memory_used(id) when one of these was useful.")
+
+    return "\n".join(lines)
+
+
 # ========== Query Intent Detection ==========
 
 # Intent patterns map keyword patterns to preferred categories
