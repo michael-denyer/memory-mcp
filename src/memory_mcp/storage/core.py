@@ -89,10 +89,20 @@ class Storage(
         self.settings = settings or get_settings()
         self._conn: sqlite3.Connection | None = None
         self._lock = threading.RLock()  # Reentrant lock for nested calls
-        # Use settings-aware embedding engine, not global singleton
-        self._embedding_engine = EmbeddingEngine(self.settings)
+        self._embedding_engine_instance: EmbeddingEngine | None = None
         self._hot_cache_metrics: HotCacheMetrics | None = None  # Lazy-loaded from DB
         log.info("Storage initialized with db_path={}", self.settings.db_path)
+
+    @property
+    def _embedding_engine(self) -> EmbeddingEngine:
+        """Settings-aware embedding engine, built on first use.
+
+        Deferred so that SQL-only callers such as the hot-cache hook never pay
+        the model load.
+        """
+        if self._embedding_engine_instance is None:
+            self._embedding_engine_instance = EmbeddingEngine(self.settings)
+        return self._embedding_engine_instance
 
     @property
     def db_path(self) -> Path:
