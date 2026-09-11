@@ -28,6 +28,13 @@ class Settings(BaseSettings):
             "'mlx' (force MLX), 'sentence-transformers' (force ST)"
         ),
     )
+    embedding_device: str | None = Field(
+        default=None,
+        description=(
+            "Torch device for the sentence-transformers backend, for example cpu or mps; "
+            "None lets the library choose"
+        ),
+    )
 
     # Promoted memories (backing store for hot cache)
     promoted_max_items: int = Field(default=20, description="Maximum promoted memories")

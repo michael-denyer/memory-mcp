@@ -245,6 +245,36 @@ class TestSentenceTransformerProvider:
         """Provider name should include model name."""
         assert "all-MiniLM-L6-v2" in provider.name
 
+    def test_provider_passes_device_from_settings(self):
+        """A configured embedding_device should reach SentenceTransformer."""
+        settings = Settings(
+            embedding_backend="sentence-transformers",
+            embedding_device="cpu",
+        )
+        provider = create_provider(settings)
+
+        with patch("sentence_transformers.SentenceTransformer") as mock_st:
+            mock_st.return_value.get_sentence_embedding_dimension.return_value = 384
+            mock_st.return_value.encode.return_value = np.zeros(384, dtype=np.float32)
+            provider.embed("test")
+
+        assert mock_st.call_args.kwargs["device"] == "cpu"
+
+    def test_provider_omits_device_when_setting_is_none(self):
+        """With no configured device the library default should stand."""
+        settings = Settings(
+            embedding_backend="sentence-transformers",
+            embedding_device=None,
+        )
+        provider = create_provider(settings)
+
+        with patch("sentence_transformers.SentenceTransformer") as mock_st:
+            mock_st.return_value.get_sentence_embedding_dimension.return_value = 384
+            mock_st.return_value.encode.return_value = np.zeros(384, dtype=np.float32)
+            provider.embed("test")
+
+        assert "device" not in mock_st.call_args.kwargs
+
 
 class TestCreateProvider:
     """Tests for the provider factory."""

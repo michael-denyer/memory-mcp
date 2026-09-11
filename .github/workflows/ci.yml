@@ -73,8 +73,9 @@ jobs:
 
       - name: Run embedding tests
         env:
-          # Hosted macOS runners report an MPS device whose allocations fail at 45 MiB.
-          PYTORCH_MPS_HIGH_WATERMARK_RATIO: "0.0"
+          # Hosted macOS runners advertise an MPS device whose shared pool cannot
+          # allocate 44 MiB, and torch offers no switch to hide it.
+          MEMORY_MCP_EMBEDDING_DEVICE: "cpu"
         run: uv run pytest -p no:randomly --no-header -o addopts="" tests/test_embeddings.py
 
   pre-commit:
