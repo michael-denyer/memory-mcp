@@ -4,6 +4,17 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Apple Silicon import crash** - `is_mlx_available()` caught only `ImportError`, so the
+  `AttributeError` that `transformers` 5.13 raises through `mlx_lm` killed the server, the CLI
+  and every hook at import time on every Apple Silicon machine. Any failure in the MLX import
+  chain now means MLX is unavailable, logs one warning naming the exception type, and falls
+  back to the sentence-transformers backend. A new `test-macos` CI job covers this path, which
+  the Ubuntu-only matrix never ran.
+
 ## [0.8.0] - 2026-07-02
 
 ### Added
