@@ -114,6 +114,20 @@ def _session_id_from_stdin() -> str | None:
     return session_id if isinstance(session_id, str) else None
 
 
+def _injection_stamp_path(settings: Settings, session_id: str | None) -> Path | None:
+    """Locate the file holding the hash of what this session was already shown.
+
+    The filename is a digest of the session id, not the id itself: the id
+    arrives from hook stdin, where a value like `../../x` would otherwise
+    write outside the injection directory.
+    """
+    if not session_id:
+        return None
+
+    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    return settings.db_path.parent / "injected" / digest
+
+
 def _print_hot_cache(force: bool) -> None:
     """Print the hot cache once per session unless forced, and log the injection."""
     session_id = _session_id_from_stdin()
@@ -128,7 +142,7 @@ def _print_hot_cache(force: bool) -> None:
         text = format_hot_cache_for_injection(memories, settings.hot_cache_display_max_chars)
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-        stamp_path = settings.db_path.parent / "injected" / session_id if session_id else None
+        stamp_path = _injection_stamp_path(settings, session_id)
         if stamp_path is not None and not force and stamp_path.exists():
             if stamp_path.read_text(encoding="utf-8").strip() == digest:
                 return
