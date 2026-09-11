@@ -27,6 +27,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Embedding engine is built on first use** - `Storage.__init__` no longer constructs an
   `EmbeddingEngine`, so a hook that only reads SQL never touches the model stack
 
+### Fixed
+
+- **Stop hook crashed on a third of real transcripts** - `log-response` assumed a turn's
+  `content` was always a list of typed blocks. Claude Code writes it as a plain string on 886 of
+  the 2,696 transcripts under `~/.claude/projects`, and every one of those raised
+  `AttributeError: 'str' object has no attribute 'get'`
+- **A used memory never reached the next injection** - `mark_used_memories` bumped `used_count`
+  but wrote no `retrieval_events` row, and the hot cache's recent-recalls and prediction slots
+  read that table alone. Both slots were empty on every install
+- **Maintenance only ran when a human asked** - Demotion and injection-feedback promotion lived
+  inside two manual MCP tools. The Stop hook now runs both at the end of each turn, so stale
+  memories leave the promoted set on their own
+- **The promoted set was capped at the hot cache size** - The v0.7 rename split
+  `hot_cache_max_items` from `promoted_max_items`, but `promote_to_hot` and the salience
+  normaliser kept reading the former, holding 10 promoted memories instead of 20
+- **The hot cache ignored the current project** - `get_hot_cache` took no `project_id`, so its
+  promoted slots drew from every project at once. The hook and the MCP resource now pass the
+  detected project
+- **Both resources logged themselves as `hot-cache`** - `memory://promoted-memories` now logs
+  `promoted-memories`, so injection analysis can tell the two apart. `memory://hot-cache` also
+  records its hit and miss counts, which only the promoted resource did
+
 ### Removed
 
 - **`SessionStart` no longer runs `bootstrap`** - The hook now prints the hot cache instead.
