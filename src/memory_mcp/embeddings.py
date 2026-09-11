@@ -27,12 +27,23 @@ def is_apple_silicon() -> bool:
 
 
 def is_mlx_available() -> bool:
-    """Check if mlx-embeddings is installed and available."""
+    """Check if mlx-embeddings is installed and available.
+
+    Any failure inside the third-party import chain means MLX is unavailable, so every
+    exception is caught rather than ImportError alone. transformers 5.13 makes mlx_lm
+    raise AttributeError while its module body runs, which killed the server, the CLI
+    and every hook at import time on Apple Silicon.
+    """
     try:
         from mlx_embeddings.utils import load  # noqa: F401
 
         return True
-    except ImportError:
+    except Exception as e:
+        log.warning(
+            "MLX unavailable ({}: {}); using the sentence-transformers backend instead.",
+            type(e).__name__,
+            e,
+        )
         return False
 
 

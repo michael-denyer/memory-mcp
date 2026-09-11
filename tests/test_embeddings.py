@@ -1,5 +1,6 @@
 """Tests for embedding provider interface."""
 
+import builtins
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -354,6 +355,22 @@ class TestPlatformDetection:
         with patch.dict("sys.modules", {"mlx": None, "mlx.core": None}):
             with patch("builtins.__import__", side_effect=ImportError("No module named 'mlx'")):
                 assert is_mlx_available() is False
+
+    def test_is_mlx_available_false_when_import_raises_non_import_error(self):
+        """Should return False when the mlx import raises something other than ImportError.
+
+        transformers 5.13 makes the mlx_embeddings import chain raise AttributeError from
+        mlx_lm's module body, which propagates out of __import__ past an ImportError guard.
+        """
+        real_import = builtins.__import__
+
+        def crash_on_mlx(name, *args, **kwargs):
+            if name.startswith("mlx_embeddings"):
+                raise AttributeError("'str' object has no attribute '__module__'")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", crash_on_mlx):
+            assert is_mlx_available() is False
 
 
 class TestMLXModelMappings:
