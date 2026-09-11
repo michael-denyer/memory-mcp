@@ -280,7 +280,7 @@ def promoted_memories_resource() -> str:
     memory_ids = [m.id for m in hot_memories]
     storage.log_injections_batch(
         memory_ids=memory_ids,
-        resource="hot-cache",
+        resource="promoted-memories",
         session_id=session_id,
         project_id=project_id,
     )
