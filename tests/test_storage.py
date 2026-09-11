@@ -4342,3 +4342,17 @@ class TestLazyEmbeddingEngine:
                     stor.store_memory("x", MemoryType.PROJECT)
             finally:
                 stor.close()
+
+
+class TestMarkUsedFeedsRecentRecalls:
+    """A memory Claude echoed back must reach the hot cache's recent-recalls slot."""
+
+    def test_mark_used_memories_populates_recent_recalls(self, storage):
+        memory_id, _ = storage.store_memory(
+            "The deploy password hint is zebra-42.", MemoryType.PROJECT
+        )
+        storage.log_injection(memory_id, resource="hook", session_id="s1")
+
+        assert storage.mark_used_memories("the hint is zebra-42") == 1
+
+        assert [m.id for m in storage.get_recent_recalls()] == [memory_id]

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from memory_mcp.embeddings import content_hash
 from memory_mcp.logging import get_logger
 
 if TYPE_CHECKING:
@@ -567,6 +568,20 @@ class InjectionTrackingMixin:
                 """,
                 [(mid,) for mid in matched_ids],
             )
+
+            if self.settings.retrieval_tracking_enabled:
+                # The hot cache's recent-recalls slot reads retrieval_events
+                # alone, and a hook injection never writes one, so without
+                # this row a used memory never reaches the next injection.
+                query_hash = content_hash(response_text)
+                conn.executemany(
+                    """
+                    INSERT INTO retrieval_events
+                        (query_hash, memory_id, similarity, was_used)
+                    VALUES (?, ?, 1.0, 1)
+                    """,
+                    [(query_hash, mid) for mid in matched_ids],
+                )
 
         log.info("Auto-marked {} memories as used (window={}h)", len(matched_ids), window_hours)
         return len(matched_ids)
