@@ -242,8 +242,8 @@ def log_output(
 def _text_of_content(content: object) -> str:
     """Extract the text of one transcript turn.
 
-    Claude Code writes a turn's `content` as a bare string on about a third of
-    real transcripts and as a list of typed blocks on the rest.
+    Claude Code writes a turn's `content` as a bare string on many real
+    transcripts and as a list of typed blocks on the rest.
     """
     if isinstance(content, str):
         return content
