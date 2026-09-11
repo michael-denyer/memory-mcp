@@ -221,7 +221,7 @@ class TestHotCachePromotion:
     def test_promote_respects_max_items(self, storage):
         """Hot cache should respect max_items limit."""
         # Create more memories than hot cache allows
-        max_hot = storage.settings.hot_cache_max_items
+        max_hot = storage.settings.promoted_max_items
         memory_ids = []
 
         for i in range(max_hot + 5):
@@ -324,7 +324,7 @@ class TestHotCacheLRU:
             # Small hot cache for testing
             settings = Settings(
                 db_path=Path(tmpdir) / "lru.db",
-                hot_cache_max_items=3,
+                promoted_max_items=3,
                 semantic_dedup_enabled=False,
             )
             storage = Storage(settings)
@@ -363,7 +363,7 @@ class TestHotCacheLRU:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(
                 db_path=Path(tmpdir) / "pin.db",
-                hot_cache_max_items=2,
+                promoted_max_items=2,
                 semantic_dedup_enabled=False,
             )
             storage = Storage(settings)
@@ -405,7 +405,7 @@ class TestHotCacheLRU:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(
                 db_path=Path(tmpdir) / "allpin.db",
-                hot_cache_max_items=2,
+                promoted_max_items=2,
                 semantic_dedup_enabled=False,
             )
             storage = Storage(settings)
@@ -429,7 +429,7 @@ class TestHotCacheLRU:
     def test_unpin_allows_eviction(self):
         """Unpinning a memory makes it eligible for eviction."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            settings = Settings(db_path=Path(tmpdir) / "unpin.db", hot_cache_max_items=2)
+            settings = Settings(db_path=Path(tmpdir) / "unpin.db", promoted_max_items=2)
             storage = Storage(settings)
 
             # Fill cache with pinned memories
