@@ -141,7 +141,7 @@ def _print_hot_cache(force: bool) -> None:
 
     storage = Storage(settings)
     try:
-        memories = storage.get_hot_cache()
+        memories = storage.get_hot_cache(project_id=get_current_project_id())
         if not memories:
             return
 

@@ -4377,3 +4377,22 @@ class TestPromotedCapacity:
             assert len(stor.get_promoted_memories()) == 15
         finally:
             stor.close()
+
+
+class TestHotCacheProjectFilter:
+    """The hook injects into one project, so the hot cache has to know which."""
+
+    def test_get_hot_cache_filters_by_project(self, storage):
+        in_project, _ = storage.store_memory(
+            "Project a deploys with helm", MemoryType.PROJECT, project_id="a"
+        )
+        other_project, _ = storage.store_memory(
+            "Project b deploys with ansible", MemoryType.PROJECT, project_id="b"
+        )
+        global_memory, _ = storage.store_memory("Always run the linter", MemoryType.PROJECT)
+        for memory_id in (in_project, other_project, global_memory):
+            storage.promote_to_hot(memory_id)
+
+        visible = {m.id for m in storage.get_hot_cache(project_id="a")}
+
+        assert visible == {in_project, global_memory}
