@@ -243,7 +243,7 @@ class HotCacheMixin:
             # Check hot cache limit
             hot_count = conn.execute("SELECT COUNT(*) FROM memories WHERE is_hot = 1").fetchone()[0]
 
-            if hot_count >= self.settings.hot_cache_max_items:
+            if hot_count >= self.settings.promoted_max_items:
                 # Find lowest-scoring non-pinned memory to evict
                 evict_id = self._find_eviction_candidate(conn)
                 if evict_id is None:
@@ -263,7 +263,7 @@ class HotCacheMixin:
                 log.warning(
                     "Evicted memory id={} from hot cache (cache pressure, {} items)",
                     evict_id,
-                    self.settings.hot_cache_max_items,
+                    self.settings.promoted_max_items,
                 )
 
             # Promote the memory

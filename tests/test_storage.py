@@ -339,7 +339,7 @@ class TestHotCacheMetrics:
         """Evicting from hot cache should increment evictions."""
         settings = Settings(
             db_path=tmp_path / "test.db",
-            hot_cache_max_items=2,
+            promoted_max_items=2,
             semantic_dedup_enabled=False,
         )
         stor = Storage(settings)
@@ -4356,3 +4356,24 @@ class TestMarkUsedFeedsRecentRecalls:
         assert storage.mark_used_memories("the hint is zebra-42") == 1
 
         assert [m.id for m in storage.get_recent_recalls()] == [memory_id]
+
+
+class TestPromotedCapacity:
+    """The promoted set is capped by promoted_max_items, not by the hot cache size."""
+
+    def test_promote_to_hot_caps_at_promoted_max_items(self, tmp_path):
+        settings = Settings(
+            db_path=tmp_path / "cap.db",
+            semantic_dedup_enabled=False,
+            promoted_max_items=20,
+            hot_cache_max_items=10,
+        )
+        stor = Storage(settings)
+        try:
+            for n in range(15):
+                memory_id, _ = stor.store_memory(f"promoted fact number {n}", MemoryType.PROJECT)
+                assert stor.promote_to_hot(memory_id) is True
+
+            assert len(stor.get_promoted_memories()) == 15
+        finally:
+            stor.close()
