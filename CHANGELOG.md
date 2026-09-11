@@ -33,10 +33,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **Stop hook crashed on a third of real transcripts** - `log-response` assumed a turn's
-  `content` was always a list of typed blocks. Claude Code writes it as a plain string on 886 of
-  the 2,696 transcripts under `~/.claude/projects`, and every one of those raised
-  `AttributeError: 'str' object has no attribute 'get'`
+- **Stop hook crashed on real transcripts** - `log-response` assumed a turn's `content` was
+  always a list of typed blocks. Claude Code writes it as a plain string on a large share of the
+  transcripts under `~/.claude/projects`, and every one of those raised
+  `AttributeError: 'str' object has no attribute 'get'` instead of logging the turn
 - **A used memory never reached the next injection** - `mark_used_memories` bumped `used_count`
   but wrote no `retrieval_events` row, and the hot cache's recent-recalls and prediction slots
   read that table alone. Both slots were empty on every install
@@ -45,7 +45,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   memories leave the promoted set on their own
 - **The promoted set was capped at the hot cache size** - The v0.7 rename split
   `hot_cache_max_items` from `promoted_max_items`, but `promote_to_hot` and the salience
-  normaliser kept reading the former, holding 10 promoted memories instead of 20
+  normalizer kept reading the former, holding 10 promoted memories instead of 20
 - **The hot cache ignored the current project** - `get_hot_cache` took no `project_id`, so its
   promoted slots drew from every project at once. The hook and the MCP resource now pass the
   detected project
