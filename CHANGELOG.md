@@ -4,6 +4,29 @@ All notable changes to Memory MCP are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Hot cache injection through hooks** - New `memory-mcp-cli hot-cache` command prints the hot
+  cache to stdout, which Claude Code adds to the conversation. The plugin runs it from
+  `SessionStart` (with `--force`) and from `UserPromptSubmit`, so frequently-used memories reach
+  Claude with no tool call. Nothing injected them before: MCP resources are only reachable
+  through an `@` mention or a resource tool
+- **Per-session injection stamp** - The command records a hash of what it printed under
+  `<db directory>/injected/`, so identical text is printed once per session instead of on every
+  prompt. `--force` prints regardless, which is what `SessionStart` needs after `/clear` and
+  `/compact`
+
+### Changed
+
+- **Plugin components moved to the plugin root** - `commands/`, `skills/recall-nudge/` and the
+  testing resources now sit at the repo root instead of inside `.claude-plugin/`, which Claude
+  Code does not scan for components. No slash command or skill loaded before this
+- **Embedding engine is built on first use** - `Storage.__init__` no longer constructs an
+  `EmbeddingEngine`, so a hook that only reads SQL never touches the model stack. The
+  `hot-cache` command runs in ~0.2s against ~6.3s for a command that embeds
+
 ## [0.8.0] - 2026-07-02
 
 ### Added
