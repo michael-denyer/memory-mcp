@@ -12,6 +12,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   backend, for example `cpu`. Leaving it unset lets the library choose, which is the existing
   behaviour. The macOS CI job sets it to `cpu` because hosted runners advertise an MPS device
   whose shared pool cannot allocate 44 MiB.
+- **Hot cache injection through hooks** - New `memory-mcp-cli hot-cache` command prints the hot
+  cache to stdout, which Claude Code adds to the conversation. The plugin runs it from
+  `SessionStart` (with `--force`) and from `UserPromptSubmit`, so frequently-used memories reach
+  Claude with no tool call. Nothing injected them before. MCP resources are reachable only
+  through an `@` mention or a resource tool, and the old `SessionStart` hook printed nothing
+  Claude could read
+- **Per-session injection stamp** - The command records a hash of what it printed under
+  `<db directory>/injected/`, so identical text is printed once per session instead of on every
+  prompt. `--force` discards the record and prints regardless, which is what `SessionStart`
+  needs after `/clear` and `/compact`
+
+### Changed
+
+- **Plugin components moved to the plugin root** - `commands/`, `skills/recall-nudge/` and the
+  testing resources now sit at the repo root instead of inside `.claude-plugin/`, which Claude
+  Code does not scan for components. No slash command or skill loaded before this
+- **Embedding engine is built on first use** - `Storage.__init__` no longer constructs an
+  `EmbeddingEngine`, so a hook that only reads SQL never touches the model stack
+
+### Removed
+
+- **`SessionStart` no longer runs `bootstrap`** - The hook now prints the hot cache instead.
+  First-run seeding from project docs is a manual `memory-mcp-cli bootstrap`, and the once-a-day
+  learning-loop staleness warning that `bootstrap --quiet` echoed no longer reaches the session
 
 ### Fixed
 

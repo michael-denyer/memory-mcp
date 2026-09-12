@@ -30,7 +30,7 @@ Other memory solutions help, but they still require tool calls for every lookup 
 
 **Memory MCP fixes this with a two-tier architecture:**
 
-1. **Hot cache (0ms)** — Frequently-used knowledge auto-injected into context *before Claude even starts thinking*. No tool call needed.
+1. **Hot cache (0ms)** — Frequently-used knowledge printed into context by the plugin's `SessionStart` and `UserPromptSubmit` hooks *before Claude even starts thinking*. Claude Code adds a hook's stdout to the conversation, so no tool call is needed.
 2. **Cold storage (~50ms)** — Everything else, searchable by meaning via semantic similarity.
 
 The system learns what you use and promotes it automatically. Your most valuable knowledge becomes instantly available. No manual curation required.
@@ -42,7 +42,7 @@ The system learns what you use and promotes it automatically. Your most valuable
 | "Let me explain our architecture again..." | Project facts persist and isolate per repo |
 | Copy-paste the same patterns every session | Patterns auto-promoted to instant access |
 | 500k+ token context windows | Hot cache keeps it lean (~20 items) |
-| Tool call latency on every memory lookup | Hot cache: **0ms** — already in context |
+| Tool call latency on every memory lookup | Hot cache: **0ms** — a hook already put it in context |
 | Stale information lingers forever | Trust scoring demotes outdated facts |
 | Flat list of disconnected facts | Knowledge graph connects related concepts |
 
@@ -76,7 +76,7 @@ Add to `~/.claude.json`:
 See [Reference](docs/REFERENCE.md) for full configuration options.
 </details>
 
-Restart Claude Code. The hot cache auto-populates from your project docs.
+Restart Claude Code. Run `memory-mcp-cli bootstrap` once to seed memories from your project docs; the hooks inject whatever is promoted, but nothing seeds itself.
 
 > **First run**: Embedding model (~90MB) downloads automatically. Takes 30-60 seconds once.
 
@@ -98,21 +98,21 @@ flowchart LR
         KG[(Knowledge graph)]
     end
 
-    REQ -->|"auto-injected"| HC
+    REQ -->|"hook stdout"| HC
     HC -.->|"draws from"| PM
     REQ -->|"recall()"| VS
     VS <-->|"related"| KG
 ```
 
-The **hot cache** (~10 items) is injected into every request — it combines recent recalls, predicted next memories, and top promoted items. **Promoted memories** (~20 items) is the backing store of frequently-used memories. Memories used 3+ times auto-promote; unused ones demote after 14 days.
+The **hot cache** (~10 items) reaches Claude through two plugin hooks. `SessionStart` runs `memory-mcp-cli hot-cache --force` and `UserPromptSubmit` runs `memory-mcp-cli hot-cache`, and Claude Code adds each command's stdout to the conversation. The command prints only when the text differs from what the session last saw, which is cheap while the set is stable and reprints in full when it shifts. The set combines recent recalls, predicted next memories, and top promoted items. **Promoted memories** (~20 items) is the backing store of frequently-used memories. Memories used 3+ times auto-promote; unused ones demote after 14 days.
 
 ## What Makes It Different
 
-Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's **hot cache bypasses this entirely** — your most-used knowledge is already in context when Claude starts thinking.
+Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's **hot cache bypasses this entirely** — a hook prints your most-used knowledge into the conversation before Claude starts thinking.
 
 | | Memory MCP | Generic Memory Servers |
 |---|------------|------------------------|
-| **Hot cache** | Auto-injected at 0ms | Every lookup = tool call |
+| **Hot cache** | Injected by a hook at 0ms | Every lookup = tool call |
 | **Self-organizing** | Learns and promotes automatically | Manual curation required |
 | **Project-aware** | Auto-isolates by git repo | One big pile of memories |
 | **Knowledge graph** | Multi-hop recall across concepts | Flat list of facts |

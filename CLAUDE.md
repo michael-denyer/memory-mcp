@@ -7,7 +7,8 @@
 This project differentiates from generic memory servers (like mcp-memory-service) through:
 
 1. **Two-Tier Memory Architecture**
-   - **Hot Cache**: Session-aware context injected at 0ms (no tool call needed)
+   - **Hot Cache**: Session-aware context printed into Claude's context at 0ms by the
+     `SessionStart` and `UserPromptSubmit` hooks (no tool call needed)
    - **Cold Storage**: Semantic search for everything else
 
 2. **Salience-Based Promotion**
@@ -67,7 +68,7 @@ flowchart LR
         KG[(Knowledge Graph)]
     end
 
-    REQ -->|"auto-injected"| HC
+    REQ -->|"hook stdout"| HC
     HC -.->|"draws from"| PM
     REQ -->|"recall()"| VS
     VS <-->|"expand_relations"| KG
@@ -77,7 +78,8 @@ flowchart LR
 
 | Path | Purpose |
 |------|---------|
-| `.claude-plugin/` | Claude Code plugin (hooks, commands, agents) |
+| `.claude-plugin/` | Plugin and marketplace manifests only |
+| `commands/`, `skills/`, `agents/`, `hooks/` | Plugin components, which Claude Code loads from the plugin root |
 | `src/memory_mcp/server/` | MCP server package (tools, resources) |
 | `src/memory_mcp/storage/` | Storage package (SQLite, vectors, hot cache) |
 | `src/memory_mcp/mining.py` | Pattern extraction |
@@ -86,10 +88,13 @@ flowchart LR
 
 ## Plugin-First Approach
 
-The Claude Code plugin (`.claude-plugin/`) is the primary distribution:
+The Claude Code plugin is the primary distribution. Its manifest lives in
+`.claude-plugin/plugin.json`, and every component sits at the repo root, because
+Claude Code does not look inside `.claude-plugin/` for components:
 
-- **Slash commands** (`/memory-mcp:*`) - 14 commands in `.claude-plugin/commands/`
-- **Hooks** - SessionStart (bootstrap), Stop (log response), PreCompact (memory analyst)
+- **Slash commands** (`/memory-mcp:*`) - 14 commands in `commands/`
+- **Hooks** - SessionStart and UserPromptSubmit (print the hot cache for injection),
+  Stop (log response), PreCompact (memory analyst)
 - **Agents** - Memory Analyst for pre-compaction knowledge extraction
 
 Users install via `claude plugins add michael-denyer/memory-mcp`.
@@ -99,7 +104,8 @@ The CLI (`memory-mcp-cli`) and MCP tools power the plugin internally.
 
 ### v0.7.x (Current)
 - **Renamed resources for clarity**: `working-set` → `hot-cache`, `hot-cache` → `promoted-memories`
-- **Hot cache is primary injection**: Session-aware context (~10 items) auto-injected
+- **Hot cache is primary injection**: Session-aware context (~10 items), printed by
+  `memory-mcp-cli hot-cache` from the `SessionStart` and `UserPromptSubmit` hooks
 - **Promoted memories backing store**: ~20 items, disabled by default
 - **Beads integration**: `import-beads` CLI command to seed memories from beads issues
 - **Dynamic versioning**: Version pulled from pyproject.toml via importlib.metadata
@@ -141,7 +147,8 @@ uv run ruff format .          # Format
 - All defaults should be optimized for immediate value
 - `auto_promote=True`, `auto_demote=True`, `mining_auto_approve_enabled=True`
 - Auto-detect hardware (MLX on Apple Silicon)
-- Auto-bootstrap from project docs when promoted memories is empty
+- Bootstrap from project docs with one `memory-mcp-cli bootstrap` run (`auto_bootstrap` is off
+  by default, and no hook runs it)
 - Configuration exists for power users, not as a requirement
 
 ### When Working on This Project

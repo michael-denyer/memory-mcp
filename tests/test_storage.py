@@ -1,5 +1,7 @@
 """Tests for storage module."""
 
+from unittest.mock import Mock, patch
+
 import pytest
 
 from memory_mcp.config import Settings
@@ -4323,3 +4325,20 @@ class TestMiningIntegration:
             assert len(memories) == 0
         finally:
             stor.close()
+
+
+class TestLazyEmbeddingEngine:
+    """The embedding engine must not load until a caller needs an embedding."""
+
+    def test_storage_does_not_build_embedding_engine_until_needed(self, temp_settings):
+        with patch(
+            "memory_mcp.storage.core.EmbeddingEngine",
+            Mock(side_effect=RuntimeError("must not load")),
+        ):
+            stor = Storage(temp_settings)
+            try:
+                assert isinstance(stor.get_hot_cache(), list)
+                with pytest.raises(RuntimeError, match="must not load"):
+                    stor.store_memory("x", MemoryType.PROJECT)
+            finally:
+                stor.close()

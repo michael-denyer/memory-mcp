@@ -1,5 +1,7 @@
 """Tests for CLI commands."""
 
+import hashlib
+import io
 import json
 import subprocess
 import sys
@@ -11,7 +13,7 @@ import pytest
 
 from memory_mcp.cli import main
 from memory_mcp.config import Settings
-from memory_mcp.storage import Storage
+from memory_mcp.storage import MemoryType, Storage
 
 
 @pytest.fixture
@@ -611,3 +613,107 @@ class TestCliIntegration:
         )
         assert result.returncode == 0
         assert "file" in result.stdout.lower()
+
+
+class TestHotCacheCommand:
+    """Tests for `hot-cache`, the command Claude Code's hooks run for injection."""
+
+    def _seed_two_promoted(self, temp_db):
+        storage = Storage(Settings(db_path=temp_db))
+        try:
+            for content in (
+                "The deploy password hint is zebra-42.",
+                "Run make lint before every push.",
+            ):
+                memory_id, _ = storage.store_memory(content, MemoryType.PROJECT)
+                storage.promote_to_hot(memory_id)
+        finally:
+            storage.close()
+
+    def _run(self, force=False, stdin='{"session_id":"s1"}'):
+        argv = ["memory-mcp-cli", "hot-cache"]
+        if force:
+            argv.append("--force")
+        with patch("sys.stdin", io.StringIO(stdin)), patch("sys.argv", argv):
+            return main()
+
+    def test_prints_nothing_when_empty(self, temp_db, capsys):
+        assert self._run() == 0
+        assert capsys.readouterr().out == ""
+
+    def test_prints_memories_with_ids(self, temp_db, capsys):
+        self._seed_two_promoted(temp_db)
+
+        assert self._run() == 0
+
+        lines = capsys.readouterr().out.splitlines()
+        assert lines[0] == "[MEMORY: Hot cache]"
+        assert len([ln for ln in lines if ln.startswith("- [id:")]) == 2
+        assert any("zebra-42" in ln for ln in lines)
+        assert lines[-1] == "Call mark_memory_used(id) when one of these was useful."
+
+    def test_second_call_same_session_prints_nothing(self, temp_db, capsys):
+        self._seed_two_promoted(temp_db)
+        self._run()
+        capsys.readouterr()
+
+        assert self._run() == 0
+        assert capsys.readouterr().out == ""
+
+    def test_force_prints_again(self, temp_db, capsys):
+        self._seed_two_promoted(temp_db)
+        self._run()
+        first = capsys.readouterr().out
+        assert "zebra-42" in first
+
+        assert self._run(force=True) == 0
+        assert capsys.readouterr().out == first
+
+    def test_force_clears_the_stamp_even_when_it_prints_nothing(self, temp_db, capsys):
+        self._seed_two_promoted(temp_db)
+        self._run()
+        capsys.readouterr()
+
+        with patch.object(Storage, "get_hot_cache", return_value=[]):
+            assert self._run(force=True) == 0
+        assert capsys.readouterr().out == ""
+
+        assert self._run() == 0
+        assert "zebra-42" in capsys.readouterr().out
+
+    def test_logs_injection_rows_with_resource_hook(self, temp_db):
+        self._seed_two_promoted(temp_db)
+
+        assert self._run() == 0
+
+        storage = Storage(Settings(db_path=temp_db))
+        try:
+            with storage._connection() as conn:
+                rows = conn.execute(
+                    "SELECT memory_id FROM injection_log WHERE resource = 'hook'"
+                ).fetchall()
+        finally:
+            storage.close()
+        assert len(rows) == 2
+
+    def test_exception_goes_to_stderr_and_exit_zero(self, temp_db, capsys):
+        with patch.object(Storage, "get_hot_cache", side_effect=RuntimeError("boom")):
+            assert self._run() == 0
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "boom" in captured.err
+
+    def test_stamp_filename_is_hashed_session_id(self, tmp_path):
+        db_path = tmp_path / "data" / "memory.db"
+        db_path.parent.mkdir()
+
+        with patch.dict("os.environ", {"MEMORY_MCP_DB_PATH": str(db_path)}):
+            self._seed_two_promoted(db_path)
+            assert self._run(stdin='{"session_id": "../../escape"}') == 0
+
+        assert not (tmp_path / "escape").exists()
+        assert not (db_path.parent / "escape").exists()
+
+        injected = db_path.parent / "injected"
+        assert [p.name for p in injected.iterdir()] == [hashlib.sha256(b"../../escape").hexdigest()]
