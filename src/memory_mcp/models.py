@@ -33,7 +33,7 @@ class PromotionSource(str, Enum):
 
     MANUAL = "manual"  # Explicitly promoted by user
     AUTO_THRESHOLD = "auto_threshold"  # Auto-promoted based on access count
-    MINED_APPROVED = "mined_approved"  # Approved from mining candidates
+    MINED_APPROVED = "mined_approved"  # Legacy value, kept so old rows still parse
     PREDICTED = "predicted"  # Pre-warmed based on access pattern prediction
     SESSION_END = "session_end"  # Promoted during session consolidation
 
@@ -74,15 +74,6 @@ class RelationType(str, Enum):
     CONTRADICTS = "contradicts"  # Conflicting information
     ELABORATES = "elaborates"  # Provides more detail
     MENTIONS = "mentions"  # Source content mentions an entity (weaker than elaborates)
-
-
-class PatternStatus(str, Enum):
-    """Status of mined patterns in the approval workflow."""
-
-    PENDING = "pending"  # Awaiting review
-    APPROVED = "approved"  # Approved for promotion
-    REJECTED = "rejected"  # Rejected (won't be promoted)
-    PROMOTED = "promoted"  # Already promoted to memory
 
 
 class AuditOperation(str, Enum):
@@ -216,24 +207,6 @@ class Session:
     project_path: str | None  # Working directory
     memory_count: int
     log_count: int
-
-
-@dataclass
-class MinedPattern:
-    """A pattern extracted from output logs."""
-
-    id: int
-    pattern: str
-    pattern_hash: str
-    pattern_type: str
-    occurrence_count: int
-    first_seen: datetime
-    last_seen: datetime
-    status: PatternStatus = PatternStatus.PENDING
-    source_log_id: int | None = None  # Originating output_log ID
-    confidence: float = 0.5  # Extraction confidence (0-1)
-    score: float = 0.0  # Computed promotion score
-    memory_id: int | None = None  # Linked memory ID for exact-match promotion
 
 
 @dataclass

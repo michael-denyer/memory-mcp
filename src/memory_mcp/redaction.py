@@ -1,8 +1,4 @@
-"""Secret redaction utilities.
-
-This module is kept separate from mining.py to avoid circular imports,
-since output_logging.py needs redaction but mining.py imports from storage.
-"""
+"""Secret redaction utilities."""
 
 from __future__ import annotations
 

@@ -31,10 +31,6 @@ Run Phase 14 of Memory MCP testing: Error Handling & Edge Cases.
 - `mcp__memory__get_session("nonexistent-session-id")` → invalid session
 - `mcp__memory__end_session("bad-id")` → non-existent session
 
-**14.7 Mining Edge Cases**:
-- `mcp__memory__run_mining(hours=0)` → zero hours
-- `mcp__memory__approve_candidate(pattern_id=999)` → non-existent candidate
-
 ## Tracking
 
 Report results:
@@ -46,6 +42,5 @@ Report results:
 | 14.4 Link/Unlink Errors | ⬜ | |
 | 14.5 Trust Boundaries | ⬜ | |
 | 14.6 Session Errors | ⬜ | |
-| 14.7 Mining Edge Cases | ⬜ | |
 
 Proceed to Phase 15: Cleanup.

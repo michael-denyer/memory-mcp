@@ -5,12 +5,7 @@ import uuid
 
 from fastmcp import FastMCP
 
-from memory_mcp.config import (
-    check_stop_hook_configured,
-    find_bootstrap_files,
-    get_hook_install_instructions,
-    get_settings,
-)
+from memory_mcp.config import find_bootstrap_files, get_settings
 from memory_mcp.helpers import (
     build_ranking_factors as _build_ranking_factors,
 )
@@ -46,12 +41,6 @@ storage = Storage(settings)
 mcp = FastMCP("memory-mcp")
 
 log.info("Memory MCP server initialized")
-
-# Warn if Stop hook not configured (pattern mining won't work without it)
-if settings.warn_missing_hook and settings.mining_enabled:
-    if not check_stop_hook_configured():
-        log.warning("Stop hook not configured - pattern mining will not auto-log outputs")
-        log.warning(get_hook_install_instructions())
 
 
 # ========== Helper Function Wrappers ==========

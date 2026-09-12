@@ -25,212 +25,11 @@ def temp_db():
             yield db_path
 
 
-class TestLogOutputCommand:
-    """Tests for the log-output CLI command."""
-
-    def test_log_output_from_stdin(self, temp_db):
-        """Should log content from stdin."""
-        with patch("sys.stdin.read", return_value="Test content from stdin"):
-            with patch("sys.argv", ["memory-mcp-cli", "log-output"]):
-                result = main()
-        assert result == 0
-
-    def test_log_output_from_content_arg(self, temp_db):
-        """Should log content from --content argument."""
-        with patch("sys.argv", ["memory-mcp-cli", "log-output", "-c", "Test content from arg"]):
-            result = main()
-        assert result == 0
-
-    def test_log_output_json_format(self, temp_db, capsys):
-        """Should output JSON when --json flag is used."""
-        with patch("sys.argv", ["memory-mcp-cli", "--json", "log-output", "-c", "Test content"]):
-            result = main()
-
-        assert result == 0
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert output["success"] is True
-        assert "log_id" in output
-
-    def test_log_output_empty_content_fails(self, temp_db):
-        """Should fail with empty content."""
-        with patch("sys.stdin.read", return_value=""):
-            with patch("sys.argv", ["memory-mcp-cli", "log-output"]):
-                result = main()
-        assert result == 1
-
-    def test_log_output_from_file(self, temp_db):
-        """Should log content from file."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-            f.write("Test content from file")
-            f.flush()
-
-            with patch("sys.argv", ["memory-mcp-cli", "log-output", "-f", f.name]):
-                result = main()
-
-        assert result == 0
-
-    def test_log_output_stores_project_id(self, temp_db):
-        """Should store project_id when project awareness is enabled.
-
-        This is a regression test for the bug where log_output CLI
-        didn't pass project_id to storage, causing run_mining to find
-        0 outputs (since mining filters by project_id).
-        """
-        from memory_mcp.config import get_settings
-        from memory_mcp.storage import Storage
-
-        test_project_id = "github/test-org/test-repo"
-
-        # Mock get_current_project_id to return a known project
-        with patch("memory_mcp.cli.get_current_project_id", return_value=test_project_id):
-            with patch("sys.argv", ["memory-mcp-cli", "log-output", "-c", "Test with project_id"]):
-                result = main()
-
-        assert result == 0
-
-        # Verify the project_id was stored
-        settings = get_settings()
-        storage = Storage(settings)
-        try:
-            outputs = storage.get_recent_outputs(hours=1, project_id=test_project_id)
-            assert len(outputs) >= 1
-            # The output should be found when filtering by project_id
-            contents = [content for _, content, _, _, _ in outputs]
-            assert any("Test with project_id" in c for c in contents)
-        finally:
-            storage.close()
-
-    def test_log_output_project_id_enables_mining(self, temp_db):
-        """Mining should find outputs logged with matching project_id.
-
-        This tests the full flow: log_output with project_id → run_mining
-        finds the output because project_ids match.
-        """
-        test_project_id = "github/test-org/test-repo"
-
-        # Log output with project_id
-        with patch("memory_mcp.cli.get_current_project_id", return_value=test_project_id):
-            with patch(
-                "sys.argv", ["memory-mcp-cli", "log-output", "-c", "We use FastAPI for the API"]
-            ):
-                result = main()
-        assert result == 0
-
-        # Run mining with same project_id
-        with patch("memory_mcp.cli.get_current_project_id", return_value=test_project_id):
-            with patch("sys.argv", ["memory-mcp-cli", "--json", "run-mining"]):
-                result = main()
-
-        assert result == 0
-
-
-class TestRunMiningCommand:
-    """Tests for the run-mining CLI command."""
-
-    def test_run_mining_basic(self, temp_db, capsys):
-        """Should run mining without errors."""
-        with patch("sys.argv", ["memory-mcp-cli", "run-mining"]):
-            result = main()
-
-        assert result == 0
-        captured = capsys.readouterr()
-        assert "Mining Results" in captured.out or "Outputs processed" in captured.out
-
-    def test_run_mining_json_format(self, temp_db, capsys):
-        """Should output JSON when --json flag is used."""
-        with patch("sys.argv", ["memory-mcp-cli", "--json", "run-mining"]):
-            result = main()
-
-        assert result == 0
-        captured = capsys.readouterr()
-        output = json.loads(captured.out)
-        assert "outputs_processed" in output
-        assert "patterns_found" in output
-
-    def test_run_mining_with_hours(self, temp_db, capsys):
-        """Should accept --hours argument."""
-        with patch("sys.argv", ["memory-mcp-cli", "run-mining", "--hours", "48"]):
-            result = main()
-
-        assert result == 0
-
-
 class TestLogResponseCommand:
     """Tests for the log-response CLI command (Stop hook entrypoint)."""
 
-    def test_log_response_stores_session_id(self, temp_db, tmp_path):
-        """Outputs logged via the Stop hook carry the hook input's session_id.
-
-        Mining inherits session provenance from the source log
-        (get_recent_outputs returns session_id per log), so log-response
-        must pass the session_id through to storage.log_output.
-        """
-        from memory_mcp.config import get_settings
-        from memory_mcp.storage import Storage
-
-        transcript = tmp_path / "transcript.jsonl"
-        lines = [
-            json.dumps(
-                {
-                    "message": {
-                        "role": "user",
-                        "content": [{"type": "text", "text": "Which web framework do we use?"}],
-                    }
-                }
-            ),
-            json.dumps(
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": "We use FastAPI for the API layer."}],
-                    }
-                }
-            ),
-        ]
-        transcript.write_text("\n".join(lines))
-
-        hook_input = json.dumps(
-            {"transcript_path": str(transcript), "session_id": "sess-hook-test"}
-        )
-
-        # Intercept only the detached mining spawn; the raised error is
-        # swallowed by log-response's try/except, and `tail` keeps working
-        # because subprocess.run delegates to the real Popen.
-        real_popen = subprocess.Popen
-
-        def popen_without_mining_spawn(args, **kwargs):
-            if args and args[0] == "memory-mcp-cli":
-                raise FileNotFoundError("mining spawn suppressed in test")
-            return real_popen(args, **kwargs)
-
-        with (
-            patch("subprocess.Popen", side_effect=popen_without_mining_spawn),
-            patch("sys.stdin.read", return_value=hook_input),
-            patch("sys.argv", ["memory-mcp-cli", "log-response"]),
-        ):
-            result = main()
-        assert result == 0
-
-        settings = get_settings()
-        storage = Storage(settings)
-        try:
-            outputs = storage.get_recent_outputs(hours=1)
-            assert len(outputs) == 1
-            _, content, _, _, session_id = outputs[0]
-            assert "We use FastAPI" in content
-            assert session_id == "sess-hook-test"
-        finally:
-            storage.close()
-
-    def _hook_stdin_and_popen_patch(self, tmp_path, assistant_text):
-        """Build hook stdin JSON + a Popen patch that suppresses the mining spawn.
-
-        Mirrors test_log_response_stores_session_id: writes a transcript with
-        a user/assistant turn, wraps hook JSON pointing at it, and intercepts
-        only the detached mining spawn (subprocess.run's `tail` call still
-        delegates to the real Popen).
-        """
+    def _hook_stdin(self, tmp_path, assistant_text):
+        """Build the Stop hook's stdin JSON over a two-turn transcript."""
         transcript = tmp_path / "transcript.jsonl"
         lines = [
             json.dumps(
@@ -252,22 +51,11 @@ class TestLogResponseCommand:
         ]
         transcript.write_text("\n".join(lines))
 
-        hook_input = json.dumps(
-            {"transcript_path": str(transcript), "session_id": "sess-auto-mark-test"}
-        )
-
-        real_popen = subprocess.Popen
-
-        def popen_without_mining_spawn(args, **kwargs):
-            if args and args[0] == "memory-mcp-cli":
-                raise FileNotFoundError("mining spawn suppressed in test")
-            return real_popen(args, **kwargs)
-
-        return hook_input, popen_without_mining_spawn
+        return json.dumps({"transcript_path": str(transcript), "session_id": "sess-auto-mark-test"})
 
     def test_log_response_auto_marks_used_memories(self, temp_db, tmp_path, capsys):
         """A response echoing a distinctive token from an injected memory
-        auto-marks that memory as used, right after log_output."""
+        auto-marks that memory as used."""
         from memory_mcp.config import get_settings
         from memory_mcp.models import MemorySource, MemoryType
         from memory_mcp.storage import Storage
@@ -281,12 +69,9 @@ class TestLogResponseCommand:
         storage.log_injection(memory_id, resource="hot-cache", session_id="s1")
         storage.close()
 
-        hook_input, popen_patch = self._hook_stdin_and_popen_patch(
-            tmp_path, assistant_text="ran make deploy-staging"
-        )
+        hook_input = self._hook_stdin(tmp_path, assistant_text="ran make deploy-staging")
 
         with (
-            patch("subprocess.Popen", side_effect=popen_patch),
             patch("sys.stdin.read", return_value=hook_input),
             patch("sys.argv", ["memory-mcp-cli", "log-response"]),
         ):
@@ -318,12 +103,9 @@ class TestLogResponseCommand:
             )
         storage.close()
 
-        hook_input, popen_patch = self._hook_stdin_and_popen_patch(
-            tmp_path, assistant_text="some unrelated assistant reply"
-        )
+        hook_input = self._hook_stdin(tmp_path, assistant_text="some unrelated assistant reply")
 
         with (
-            patch("subprocess.Popen", side_effect=popen_patch),
             patch("sys.stdin.read", return_value=hook_input),
             patch("sys.argv", ["memory-mcp-cli", "log-response"]),
         ):
@@ -342,18 +124,69 @@ class TestLogResponseCommand:
 
     def test_auto_mark_failure_never_blocks_log_response(self, temp_db, tmp_path):
         """mark_used_memories raising must not fail the Stop hook."""
-        hook_input, popen_patch = self._hook_stdin_and_popen_patch(
-            tmp_path, assistant_text="some unrelated assistant reply"
-        )
+        hook_input = self._hook_stdin(tmp_path, assistant_text="some unrelated assistant reply")
 
         with (
             patch.object(Storage, "mark_used_memories", side_effect=RuntimeError("boom")),
-            patch("subprocess.Popen", side_effect=popen_patch),
             patch("sys.stdin.read", return_value=hook_input),
             patch("sys.argv", ["memory-mcp-cli", "log-response"]),
         ):
             result = main()
         assert result == 0
+
+    def test_log_response_still_marks_used_without_mining(self, temp_db, tmp_path):
+        """The Stop hook feeds the recent-recalls slot with no mining in the chain."""
+        storage = Storage(Settings(db_path=temp_db))
+        memory_id, _ = storage.store_memory(
+            "the deploy password hint is zebra-42", MemoryType.PROJECT
+        )
+        storage.log_injection(memory_id, resource="hook", session_id="lane3")
+        storage.close()
+
+        hook_input = self._hook_stdin(tmp_path, assistant_text="The hint is zebra-42, as I recall.")
+
+        with (
+            patch("sys.stdin.read", return_value=hook_input),
+            patch("sys.argv", ["memory-mcp-cli", "log-response"]),
+        ):
+            assert main() == 0
+
+        storage = Storage(Settings(db_path=temp_db))
+        try:
+            with storage._connection() as conn:
+                used_rows = conn.execute(
+                    "SELECT memory_id FROM retrieval_events WHERE was_used = 1"
+                ).fetchall()
+            recalled = [m.id for m in storage.get_recent_recalls()]
+        finally:
+            storage.close()
+
+        assert [row["memory_id"] for row in used_rows] == [memory_id]
+        assert memory_id in recalled
+
+
+class TestBootstrapCommand:
+    """Tests for the bootstrap CLI command."""
+
+    def test_bootstrap_skips_claude_md_and_does_not_promote(self, temp_db, tmp_path, capsys):
+        """Claude Code already injects CLAUDE.md, and bootstrap no longer promotes."""
+        (tmp_path / "CLAUDE.md").write_text("- the claude instruction is aardvark-7\n")
+        (tmp_path / "README.md").write_text("- the readme fact is buffalo-9\n")
+
+        with patch("sys.argv", ["memory-mcp-cli", "bootstrap", "-r", str(tmp_path)]):
+            assert main() == 0
+
+        storage = Storage(Settings(db_path=temp_db))
+        try:
+            with storage._connection() as conn:
+                rows = conn.execute("SELECT content, is_hot FROM memories").fetchall()
+        finally:
+            storage.close()
+
+        contents = [row["content"] for row in rows]
+        assert any("buffalo-9" in c for c in contents)
+        assert not any("aardvark-7" in c for c in contents)
+        assert [row["is_hot"] for row in rows] == [0] * len(rows)
 
 
 class TestSeedCommand:
@@ -455,166 +288,6 @@ This is the third paragraph about dependencies.
         assert result == 1
 
 
-class TestHookCheckProbe:
-    """Tests for the loop_probe entry in hook-check."""
-
-    def test_probe_runs_by_default_and_passes(self, temp_db, capsys):
-        with patch("sys.argv", ["memory-mcp-cli", "--json", "hook-check"]):
-            result = main()
-        checks = {c["name"]: c for c in json.loads(capsys.readouterr().out)["checks"]}
-        assert "loop_probe" in checks
-        assert checks["loop_probe"]["ok"]
-        assert result == 0
-
-    def test_no_probe_skips(self, temp_db, capsys):
-        with patch("sys.argv", ["memory-mcp-cli", "--json", "hook-check", "--no-probe"]):
-            main()
-        names = [c["name"] for c in json.loads(capsys.readouterr().out)["checks"]]
-        assert "loop_probe" not in names
-
-    def test_probe_failure_fails_hook_check(self, temp_db, capsys):
-        with patch("memory_mcp.cli.run_probe") as mock_probe:
-            from memory_mcp.probe import ProbeResult
-
-            mock_probe.return_value = ProbeResult(ok=False, stage="mine", error="boom")
-            with patch("sys.argv", ["memory-mcp-cli", "--json", "hook-check"]):
-                result = main()
-        assert result != 0
-        out = json.loads(capsys.readouterr().out)
-        assert not out["success"]
-        probe = [c for c in out["checks"] if c["name"] == "loop_probe"][0]
-        assert "stage=mine" in probe["message"]
-
-
-def _ts(days_ago: float = 0) -> str:
-    from datetime import datetime, timedelta, timezone
-
-    dt = datetime.now(timezone.utc) - timedelta(days=days_ago)
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
-
-
-class TestStatusLearningLoop:
-    def test_json_includes_learning_loop(self, temp_db, capsys):
-        with patch("sys.argv", ["memory-mcp-cli", "--json", "status"]):
-            result = main()
-        assert result == 0
-        payload = json.loads(capsys.readouterr().out)
-        loop = payload["learning_loop"]
-        assert loop["state"] == "amber"  # empty DB: never produced
-        assert loop["outputs_24h"] == 0
-
-    def test_counts_reflect_activity(self, temp_db, capsys):
-        from memory_mcp.config import Settings
-        from memory_mcp.mining import run_mining
-        from memory_mcp.storage import Storage
-
-        settings = Settings(db_path=temp_db)
-        storage = Storage(settings)
-        storage.log_output("import numpy", session_id="s1")
-        run_mining(storage, hours=1)
-        storage.close()
-        with patch("sys.argv", ["memory-mcp-cli", "--json", "status"]):
-            main()
-        loop = json.loads(capsys.readouterr().out)["learning_loop"]
-        assert loop["state"] == "green"
-        assert loop["outputs_24h"] == 1
-        assert loop["last_success_at"] is not None
-
-
-class TestBootstrapLoopWarning:
-    """Tests for the SessionStart staleness warning printed by `bootstrap`."""
-
-    def _seed_stale(self, db_path):
-        storage = Storage(Settings(db_path=db_path))
-        storage.record_mining_run(
-            started_at=_ts(days_ago=10),
-            finished_at=_ts(days_ago=10),
-            stats={"outputs_processed": 1, "patterns_found": 0, "new_memories": 0},
-        )
-        storage.close()
-
-    def test_stale_loop_warns_even_when_quiet(self, temp_db, tmp_path, capsys):
-        self._seed_stale(temp_db)
-        with patch("sys.argv", ["memory-mcp-cli", "bootstrap", "-r", str(tmp_path), "-q"]):
-            result = main()
-        assert result == 0
-        assert "memory loop hasn't produced" in capsys.readouterr().out
-
-    def test_healthy_loop_stays_silent(self, temp_db, tmp_path, capsys):
-        storage = Storage(Settings(db_path=temp_db))
-        storage.record_mining_run(
-            started_at=_ts(),
-            finished_at=_ts(),
-            stats={"outputs_processed": 1, "patterns_found": 1, "new_memories": 1},
-        )
-        storage.close()
-        with patch("sys.argv", ["memory-mcp-cli", "bootstrap", "-r", str(tmp_path), "-q"]):
-            main()
-        assert "memory loop" not in capsys.readouterr().out
-
-    def test_rate_limited_to_once_per_day(self, temp_db, tmp_path, capsys):
-        self._seed_stale(temp_db)
-        argv = ["memory-mcp-cli", "bootstrap", "-r", str(tmp_path), "-q"]
-        with patch("sys.argv", argv):
-            main()
-        capsys.readouterr()
-        with patch("sys.argv", argv):
-            main()
-        assert "memory loop" not in capsys.readouterr().out
-
-    def test_disabled_by_setting(self, temp_db, tmp_path, capsys):
-        self._seed_stale(temp_db)
-        with patch.dict("os.environ", {"MEMORY_MCP_LOOP_WARNINGS_ENABLED": "0"}):
-            with patch("sys.argv", ["memory-mcp-cli", "bootstrap", "-r", str(tmp_path), "-q"]):
-                main()
-        assert "memory loop" not in capsys.readouterr().out
-
-    def test_internal_error_degrades_to_silence(self, temp_db, tmp_path, capsys):
-        self._seed_stale(temp_db)
-        with patch.object(Storage, "get_loop_health", side_effect=RuntimeError("boom")):
-            with patch("sys.argv", ["memory-mcp-cli", "bootstrap", "-r", str(tmp_path), "-q"]):
-                result = main()
-        assert result == 0
-        assert "memory loop" not in capsys.readouterr().out
-
-
-class TestBootstrapJsonLoopWarning:
-    """Tests for --json bootstrap embedding the staleness warning in the
-    JSON payload instead of echoing it as bare text before the payload,
-    which corrupted `| jq` consumption of stdout."""
-
-    def _seed_stale(self, db_path):
-        storage = Storage(Settings(db_path=db_path))
-        storage.record_mining_run(
-            started_at=_ts(days_ago=10),
-            finished_at=_ts(days_ago=10),
-            stats={"outputs_processed": 1, "patterns_found": 0, "new_memories": 0},
-        )
-        storage.close()
-
-    def test_stale_loop_warning_embedded_in_json_payload(self, temp_db, tmp_path, capsys):
-        self._seed_stale(temp_db)
-        with patch("sys.argv", ["memory-mcp-cli", "--json", "bootstrap", "-r", str(tmp_path)]):
-            result = main()
-        assert result == 0
-        out = capsys.readouterr().out
-        payload = json.loads(out)  # must parse cleanly - no bare text prefix
-        assert "memory loop hasn't produced" in payload["loop_warning"]
-
-    def test_second_json_run_within_stamp_window_has_no_warning(self, temp_db, tmp_path, capsys):
-        self._seed_stale(temp_db)
-        argv = ["memory-mcp-cli", "--json", "bootstrap", "-r", str(tmp_path)]
-        with patch("sys.argv", argv):
-            main()
-        capsys.readouterr()
-        with patch("sys.argv", argv):
-            result = main()
-        assert result == 0
-        out = capsys.readouterr().out
-        payload = json.loads(out)  # still valid JSON, just no warning this time
-        assert payload.get("loop_warning") in (None, "")
-
-
 class TestCliIntegration:
     """Integration tests using subprocess."""
 
@@ -628,17 +301,6 @@ class TestCliIntegration:
         )
         assert result.returncode == 0
         assert "memory-mcp-cli" in result.stdout or "CLI commands" in result.stdout
-
-    def test_log_output_help(self):
-        """Should show log-output help."""
-        result = subprocess.run(
-            [sys.executable, "-m", "memory_mcp.cli", "log-output", "--help"],
-            capture_output=True,
-            text=True,
-            cwd=Path(__file__).parent.parent,
-        )
-        assert result.returncode == 0
-        assert "content" in result.stdout.lower()
 
     def test_seed_help(self):
         """Should show seed help."""

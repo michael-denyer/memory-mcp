@@ -56,7 +56,7 @@ uv tool install hot-memory-mcp   # or: pip install hot-memory-mcp
 claude plugins add michael-denyer/memory-mcp
 ```
 
-The plugin gives you auto-configured hooks, slash commands, and the Memory Analyst agent. MLX is auto-detected on Apple Silicon.
+The plugin gives you auto-configured hooks and slash commands. MLX is auto-detected on Apple Silicon.
 
 <details>
 <summary>Manual config (no plugin)</summary>
@@ -116,7 +116,6 @@ Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's *
 | **Self-organizing** | Learns and promotes automatically | Manual curation required |
 | **Project-aware** | Auto-isolates by git repo | One big pile of memories |
 | **Knowledge graph** | Multi-hop recall across concepts | Flat list of facts |
-| **Pattern mining** | Learns from Claude's outputs | Not available |
 | **Trust scoring** | Outdated info decays and sinks | All memories equal |
 | **Setup** | One command, local SQLite | Often needs cloud setup |
 
@@ -143,7 +142,7 @@ memory-mcp-cli dashboard    # Opens at http://localhost:8765
 
 ![Dashboard](docs/images/dashboard.png)
 
-Browse memories, hot cache, mining candidates, sessions, and knowledge graph. The mining page shows a green/amber/red health banner tracking learning loop freshness.
+Browse memories, hot cache, injection history, sessions, and the knowledge graph.
 
 ## How to Use
 
@@ -151,7 +150,7 @@ Memory MCP is designed to run as three complementary components:
 
 | Component | Purpose |
 |-----------|---------|
-| **Claude Code Plugin** | Hooks, slash commands, and Memory Analyst agent for seamless integration |
+| **Claude Code Plugin** | Hooks that inject the hot cache, plus the `/memory-mcp:*` slash commands |
 | **MCP Server** | Core memory tools available to Claude via Model Context Protocol |
 | **Dashboard** | Web UI to browse, manage, and debug your memory database |
 

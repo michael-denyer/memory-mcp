@@ -30,6 +30,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Code does not scan for components. No slash command or skill loaded before this
 - **Embedding engine is built on first use** - `Storage.__init__` no longer constructs an
   `EmbeddingEngine`, so a hook that only reads SQL never touches the model stack
+- **Schema version 19** - `migrate_v18_to_v19` drops `mining_runs`, `mined_patterns` and
+  `output_log`. Existing databases lose the three tables the first time they are opened
+- **`bootstrap` promotes only when asked** - `--promote` is opt-in and `--no-promote` is the
+  default. Bootstrapping a repo used to push every parsed chunk into the hot cache, which buried
+  the memories that earned their place through use
+- **`bootstrap` skips `CLAUDE.md` and `.claude/CLAUDE.md`** - Claude Code already injects both,
+  so seeding them duplicated context. The default file list is now `README.md`, `README`,
+  `CONTRIBUTING.md`, `docs/README.md` and `ARCHITECTURE.md`
 
 ### Fixed
 
@@ -58,6 +66,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`SessionStart` no longer runs `bootstrap`** - The hook now prints the hot cache instead.
   First-run seeding from project docs is a manual `memory-mcp-cli bootstrap`, and the once-a-day
   learning-loop staleness warning that `bootstrap --quiet` echoed no longer reaches the session
+- **Pattern mining** - `src/memory_mcp/mining.py`, `storage/mining_store.py`,
+  `storage/output_logging.py` and `server/tools/mining.py` are gone, along with the
+  `log_output`, `mining_status`, `review_candidates`, `approve_candidate`, `reject_candidate`,
+  `bulk_reject_candidates` and `run_mining` MCP tools, the
+  `memory-mcp-cli log-output` and `memory-mcp-cli run-mining` commands, and the
+  `hooks/memory-log-response.sh` script. Mining produced zero patterns in every recorded run,
+  it promoted straight into the hot cache without the promotion gates, and it inflated its own
+  access counts through `recall()`. Promotion now follows whether an injected memory was used
+- **Learning-loop observability** - `src/memory_mcp/probe.py`, `storage/mining_runs.py`, the
+  `memory-mcp-cli hook-check` command, the `Learning Loop` section of `memory-mcp-cli status`
+  and its `learning_loop` JSON key, the once-a-day staleness warning, and the dashboard's
+  `/mining` page with its health banner all existed to watch mining. Nothing is left to watch
+- **NER entity extraction** - `extract_entities_ner` lived in `mining.py`. `transformers` stays
+  in the dependency list because `sentence-transformers` needs it
+- **Mining settings** - `MEMORY_MCP_MINING_ENABLED`, `MEMORY_MCP_MINING_MIN_PATTERN_LENGTH`,
+  `MEMORY_MCP_MINING_AUTO_APPROVE_ENABLED`, `MEMORY_MCP_MINING_AUTO_APPROVE_CONFIDENCE`,
+  `MEMORY_MCP_MINING_AUTO_APPROVE_OCCURRENCES`, `MEMORY_MCP_NER_ENABLED`,
+  `MEMORY_MCP_NER_CONFIDENCE_THRESHOLD`, `MEMORY_MCP_LOG_RETENTION_DAYS`,
+  `MEMORY_MCP_LOOP_WARNINGS_ENABLED` and `MEMORY_MCP_WARN_MISSING_HOOK` no longer exist
+- **Mining storage methods** - `log_output`, `get_recent_outputs`, `upsert_mined_pattern`,
+  `get_promotion_candidates`, `get_mined_pattern`, `delete_mined_pattern`,
+  `update_pattern_status`, `expire_stale_patterns`, `record_mining_run`, `get_loop_health`,
+  `cleanup_old_logs` and `decay_unused_mined_memories` are gone. `run_full_cleanup` no longer
+  returns `patterns_expired`, `logs_deleted`, `mined_memories_demoted` or
+  `mined_memories_floored`
+- **Memory Analyst agent** - `agents/memory-analyst.md` is gone. Its report leaned on the mining
+  and learning-loop views, and the same health picture is in `memory-mcp-cli status` and the
+  dashboard. The `MinedPattern` and `PatternStatus` model types and the `record_mining` metrics
+  helper go too, all three unreachable once the pipeline left
 
 ### Fixed
 

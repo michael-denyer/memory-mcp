@@ -76,7 +76,6 @@ def metrics_status() -> dict:
     Returns counters and gauges for key operations:
     - recall: queries, results returned/gated, hot hits, empty results
     - store: total stores, by type, merges, contradictions
-    - mining: runs, patterns found/new/updated
     - hot_cache: promotions, demotions, evictions, utilization
 
     Useful for debugging performance issues, monitoring usage patterns,

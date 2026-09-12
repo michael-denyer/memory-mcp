@@ -1,7 +1,7 @@
 [project]
 name = "hot-memory-mcp"
 version = "0.8.0"
-description = "Engram-inspired memory MCP server with hot cache and pattern mining"
+description = "Engram-inspired memory MCP server with a hook-injected hot cache and semantic recall"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -29,7 +29,7 @@ dependencies = [
     "fastapi>=0.100,<1",  # Web dashboard
     "uvicorn[standard]>=0.20,<1",  # ASGI server for dashboard
     "jinja2>=3.0,<4",  # Template engine for dashboard
-    "transformers>=4.0,<6",  # NER-based entity extraction; >=5.0.0rc3 fixes GHSA advisory
+    "transformers>=4.0,<6",  # Required by sentence-transformers; >=5.0.0rc3 fixes GHSA advisory
     # Apple Silicon gets MLX by default for 10x faster embeddings
     "mlx-embeddings>=0.0.5; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]

@@ -7,7 +7,6 @@ This document provides complete reference for all MCP tools, resources, and CLI 
 - [MCP Tools](#mcp-tools)
   - [Memory Operations](#memory-operations)
   - [Hot Cache Management](#hot-cache-management)
-  - [Pattern Mining](#pattern-mining)
   - [Seeding & Bootstrap](#seeding--bootstrap)
   - [Knowledge Graph](#knowledge-graph)
   - [Trust Management](#trust-management)
@@ -179,71 +178,6 @@ Unpin a memory, allowing auto-eviction.
 
 ---
 
-### Pattern Mining
-
-#### `log_output`
-
-Log content for pattern mining.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `content` | string | Yes | - | Output content to log |
-| `session_id` | string | No | `null` | Session ID for provenance |
-
----
-
-#### `run_mining`
-
-Run pattern extraction on recent logs.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `hours` | int | No | `24` | Hours of logs to process |
-
-**Returns**: `{outputs_processed, patterns_found, new_patterns, updated_patterns, auto_approved}`
-
-Patterns meeting auto-approve thresholds (default: confidence ≥ 0.8, occurrences ≥ 3) are automatically promoted to hot cache.
-
----
-
-#### `mining_status`
-
-Show pattern mining statistics.
-
-**Returns**: `{enabled, promotion_threshold, candidates_ready, outputs_last_24h, candidates[]}`
-
----
-
-#### `review_candidates`
-
-Review mined patterns ready for promotion.
-
-**Returns**: List of candidate patterns with id, pattern, type, occurrences, first_seen, last_seen.
-
----
-
-#### `approve_candidate`
-
-Approve a mined pattern, storing as memory and promoting to hot cache.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `pattern_id` | int | Yes | - | Candidate pattern ID |
-| `memory_type` | string | No | `"pattern"` | Type to assign |
-| `tags` | list[str] | No | `null` | Tags to assign |
-
----
-
-#### `reject_candidate`
-
-Reject a mined pattern, removing from candidates.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `pattern_id` | int | Yes | - | Pattern to reject |
-
----
-
 ### Seeding & Bootstrap
 
 #### `bootstrap_project`
@@ -259,11 +193,10 @@ Bootstrap hot cache from project documentation files.
 | `tags` | list[str] | No | `null` | Tags to apply |
 
 **Auto-detected files** (priority order):
-1. CLAUDE.md, .claude/CLAUDE.md
-2. README.md, README
-3. CONTRIBUTING.md
-4. docs/README.md
-5. ARCHITECTURE.md
+1. README.md, README
+2. CONTRIBUTING.md
+3. docs/README.md
+4. ARCHITECTURE.md
 
 **Returns**: `BootstrapResponse` with files_found, files_processed, memories_created, etc.
 
@@ -547,9 +480,9 @@ Run database maintenance (vacuum, analyze, auto-demote).
 
 #### `run_cleanup`
 
-Comprehensive cleanup of stale data.
+Clean up stale data in one call.
 
-**Returns**: `{hot_cache_demoted, patterns_expired, logs_deleted, memories_deleted}`
+**Returns**: `{success, hot_cache_demoted, memories_deleted, memories_deleted_by_type, injections_deleted, low_utility_penalized, injection_feedback_promoted, injection_feedback_warnings}`
 
 ---
 
@@ -596,7 +529,7 @@ Use when switching models or fixing dimension mismatches.
 
 #### `metrics_status`
 
-Get observability metrics for recall, store, mining, and hot cache.
+Get observability metrics for recall, store, and hot cache.
 
 ---
 
@@ -607,7 +540,7 @@ Get observability metrics for recall, store, mining, and hot cache.
 Auto-injectable system context with high-confidence patterns.
 
 - Instant recall (no tool call needed)
-- Auto-bootstraps from README.md, CLAUDE.md if empty
+- Auto-bootstraps from README.md, CONTRIBUTING.md if empty
 - Records hit/miss metrics
 
 **Content format**:
@@ -638,34 +571,11 @@ memory-mcp-cli bootstrap -r /path/to/project
 # Specific files only
 memory-mcp-cli bootstrap -f README.md -f ARCHITECTURE.md
 
-# Without promoting to hot cache
-memory-mcp-cli bootstrap --no-promote
+# Promote seeded memories to the hot cache
+memory-mcp-cli bootstrap --promote
 
 # JSON output
 memory-mcp-cli --json bootstrap
-```
-
-### `memory-mcp-cli log-output`
-
-Log content for pattern mining.
-
-```bash
-# From stdin
-echo "Some content" | memory-mcp-cli log-output
-
-# From argument
-memory-mcp-cli log-output -c "Some content"
-
-# From file
-memory-mcp-cli log-output -f /path/to/file
-```
-
-### `memory-mcp-cli run-mining`
-
-Run pattern extraction.
-
-```bash
-memory-mcp-cli run-mining --hours 24
 ```
 
 ### `memory-mcp-cli seed`
@@ -782,16 +692,6 @@ All settings via environment variables with `MEMORY_MCP_` prefix.
 | `DEFAULT_RECALL_LIMIT` | `5` | Default results per recall |
 | `DEFAULT_CONFIDENCE_THRESHOLD` | `0.7` | Minimum similarity |
 | `HIGH_CONFIDENCE_THRESHOLD` | `0.85` | "High" confidence threshold |
-
-### Mining
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MINING_ENABLED` | `true` | Enable pattern mining |
-| `LOG_RETENTION_DAYS` | `7` | Days to retain output logs |
-| `MINING_AUTO_APPROVE_ENABLED` | `true` | Auto-approve high-confidence patterns |
-| `MINING_AUTO_APPROVE_CONFIDENCE` | `0.8` | Min confidence for auto-approval |
-| `MINING_AUTO_APPROVE_OCCURRENCES` | `3` | Min occurrences for auto-approval |
 
 ### Predictive Cache
 

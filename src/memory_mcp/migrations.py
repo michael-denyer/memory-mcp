@@ -12,7 +12,7 @@ from memory_mcp.logging import get_logger
 log = get_logger("migrations")
 
 # Current schema version - increment when making breaking changes
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 SCHEMA = """
 -- Schema version tracking
@@ -41,24 +41,6 @@ CREATE TABLE IF NOT EXISTS memory_tags (
     memory_id INTEGER REFERENCES memories(id) ON DELETE CASCADE,
     tag TEXT NOT NULL,
     PRIMARY KEY (memory_id, tag)
-);
-
--- Output log (7-day rolling)
-CREATE TABLE IF NOT EXISTS output_log (
-    id INTEGER PRIMARY KEY,
-    content TEXT NOT NULL,
-    timestamp TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
--- Mined patterns (candidates for promotion)
-CREATE TABLE IF NOT EXISTS mined_patterns (
-    id INTEGER PRIMARY KEY,
-    pattern TEXT NOT NULL,
-    pattern_hash TEXT UNIQUE,
-    pattern_type TEXT NOT NULL,
-    occurrence_count INTEGER DEFAULT 1,
-    first_seen TEXT DEFAULT CURRENT_TIMESTAMP,
-    last_seen TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Trust history (audit trail for trust changes)
@@ -115,8 +97,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_memories_hash ON memories(content_hash);
 CREATE INDEX IF NOT EXISTS idx_memories_hot ON memories(is_hot);
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(memory_type);
-CREATE INDEX IF NOT EXISTS idx_output_log_timestamp ON output_log(timestamp);
-CREATE INDEX IF NOT EXISTS idx_mined_patterns_hash ON mined_patterns(pattern_hash);
 CREATE INDEX IF NOT EXISTS idx_trust_history_memory ON trust_history(memory_id);
 CREATE INDEX IF NOT EXISTS idx_trust_history_reason ON trust_history(reason);
 CREATE INDEX IF NOT EXISTS idx_relationships_from ON memory_relationships(from_memory_id);
@@ -267,10 +247,6 @@ def migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
     add_column_if_missing(conn, "memories", "session_id", "TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id)")
 
-    # Add session_id to output_log table
-    add_column_if_missing(conn, "output_log", "session_id", "TEXT")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_output_log_session ON output_log(session_id)")
-
     log.info("Created sessions table and session tracking columns")
 
 
@@ -292,23 +268,6 @@ def migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_sequences_last ON access_sequences(last_seen)")
     log.info("Created access_sequences table for predictive cache")
-
-
-def migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
-    """Enhance mined_patterns table for mining quality improvements."""
-    # Add status column for approval workflow
-    add_column_if_missing(conn, "mined_patterns", "status", "TEXT DEFAULT 'pending'")
-    # Add source_log_id for provenance tracking
-    add_column_if_missing(
-        conn, "mined_patterns", "source_log_id", "INTEGER REFERENCES output_log(id)"
-    )
-    # Add confidence score from extraction
-    add_column_if_missing(conn, "mined_patterns", "confidence", "REAL DEFAULT 0.5")
-    # Add computed promotion score
-    add_column_if_missing(conn, "mined_patterns", "score", "REAL DEFAULT 0.0")
-    # Index for filtering by status
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_mined_patterns_status ON mined_patterns(status)")
-    log.info("Enhanced mined_patterns table with status, provenance, and scoring")
 
 
 def migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
@@ -445,22 +404,6 @@ def migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
     log.info("Created memory_fts table and triggers for hybrid keyword search")
 
 
-def migrate_v12_to_v13(conn: sqlite3.Connection) -> None:
-    """Add project_id to output_log for project-scoped mining.
-
-    Without this, mining would process logs from all projects regardless
-    of which project is currently active, potentially leaking patterns
-    across project boundaries.
-    """
-    # Add project_id column to output_log
-    add_column_if_missing(conn, "output_log", "project_id", "TEXT")
-
-    # Create index for project-based filtering
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_output_log_project ON output_log(project_id)")
-
-    log.info("Added project_id to output_log for project-scoped mining")
-
-
 def migrate_v13_to_v14(conn: sqlite3.Connection) -> None:
     """Add category column for memory subcategorization.
 
@@ -528,37 +471,16 @@ def migrate_v15_to_v16(conn: sqlite3.Connection) -> None:
     log.info("Added helpfulness tracking columns (v16)")
 
 
-def migrate_v16_to_v17(conn: sqlite3.Connection) -> None:
-    """Add memory_id to mined_patterns for exact-match promotion.
+def migrate_v18_to_v19(conn: sqlite3.Connection) -> None:
+    """Drop the pattern-mining tables (v19).
 
-    When patterns are approved and stored as memories, link the memory_id
-    back to the pattern so promotion can use exact match instead of
-    semantic search (which can miss short patterns or match wrong memories).
+    Promotion is driven by whether an injected memory was used, so nothing
+    reads output logs, mined patterns, or mining run history any more.
     """
-    add_column_if_missing(
-        conn, "mined_patterns", "memory_id", "INTEGER REFERENCES memories(id) ON DELETE SET NULL"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_mined_patterns_memory ON mined_patterns(memory_id)"
-    )
-    log.info("Added memory_id column to mined_patterns for exact-match promotion (v17)")
-
-
-def migrate_v17_to_v18(conn: sqlite3.Connection) -> None:
-    """Add mining_runs table for learning-loop observability (v18)."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS mining_runs (
-            id INTEGER PRIMARY KEY,
-            started_at TEXT NOT NULL,
-            finished_at TEXT,
-            outputs_processed INTEGER DEFAULT 0,
-            patterns_found INTEGER DEFAULT 0,
-            memories_created INTEGER DEFAULT 0,
-            error TEXT
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_mining_runs_started ON mining_runs(started_at)")
-    log.info("Added mining_runs table (v18)")
+    conn.execute("DROP TABLE IF EXISTS mining_runs")
+    conn.execute("DROP TABLE IF EXISTS mined_patterns")
+    conn.execute("DROP TABLE IF EXISTS output_log")
+    log.info("Dropped mining_runs, mined_patterns, and output_log tables (v19)")
 
 
 # ========== Migration Runner ==========
@@ -578,8 +500,6 @@ def run_migrations(conn: sqlite3.Connection, from_version: int, settings: Settin
         migrate_v5_to_v6(conn)
     if from_version < 7:
         migrate_v6_to_v7(conn)
-    if from_version < 8:
-        migrate_v7_to_v8(conn)
     if from_version < 9:
         migrate_v8_to_v9(conn)
     if from_version < 10:
@@ -588,18 +508,14 @@ def run_migrations(conn: sqlite3.Connection, from_version: int, settings: Settin
         migrate_v10_to_v11(conn)
     if from_version < 12:
         migrate_v11_to_v12(conn)
-    if from_version < 13:
-        migrate_v12_to_v13(conn)
     if from_version < 14:
         migrate_v13_to_v14(conn)
     if from_version < 15:
         migrate_v14_to_v15(conn)
     if from_version < 16:
         migrate_v15_to_v16(conn)
-    if from_version < 17:
-        migrate_v16_to_v17(conn)
-    if from_version < 18:
-        migrate_v17_to_v18(conn)
+    if from_version < 19:
+        migrate_v18_to_v19(conn)
 
 
 def check_schema_version(conn: sqlite3.Connection) -> None:

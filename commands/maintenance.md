@@ -16,8 +16,8 @@ Perform database maintenance operations.
 - Auto-demote stale hot memories
 
 **run_cleanup** additionally:
-- Expires old mining patterns
-- Deletes old output logs
 - Applies type-specific retention policies
+- Decays access sequences and old injection records
+- Penalizes memories retrieved often but never used
 
 **validate_embeddings** checks if embedding model changed since database was created.

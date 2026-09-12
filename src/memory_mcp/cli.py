@@ -6,7 +6,6 @@ These commands can be called from shell scripts and Claude Code hooks.
 import hashlib
 import json
 import sys
-import time
 import uuid
 from pathlib import Path
 
@@ -17,71 +16,12 @@ from rich.table import Table
 from memory_mcp.config import Settings, find_bootstrap_files, get_settings
 from memory_mcp.helpers import format_hot_cache_for_injection
 from memory_mcp.logging import get_logger
-from memory_mcp.probe import run_probe
 from memory_mcp.project import get_current_project_id
 from memory_mcp.storage import MemorySource, MemoryType, Storage
 from memory_mcp.text_parsing import parse_content_into_chunks
 
 console = Console()
 log = get_logger("cli")
-
-LOOP_WARNING_STAMP_TTL_SECONDS = 24 * 60 * 60
-
-
-def _loop_warning_line(settings: Settings) -> str | None:
-    """Build a one-line staleness/error warning for the learning loop, if due.
-
-    Rate-limited to once per 24h via a stamp file next to the database, so
-    that repeated `bootstrap` invocations (e.g. one per Claude Code session)
-    don't spam the same warning. The stamp is only touched when a warning is
-    actually emitted, so the first stale/erroring day always fires
-    immediately once the rate limit from the prior warning has expired.
-
-    Args:
-        settings: Active configuration, used to check the feature flag and
-            locate the database (and therefore the stamp file).
-
-    Returns:
-        The warning line to print, or None if the loop is healthy, warnings
-        are disabled, the rate limit hasn't elapsed, or any internal error
-        occurred while computing loop health. A broken warning system must
-        never break session start, so all errors degrade to silence.
-    """
-    try:
-        if not settings.loop_warnings_enabled:
-            return None
-
-        stamp_path = Path(settings.db_path).parent / "loop-warning.stamp"
-        if stamp_path.exists():
-            age_seconds = time.time() - stamp_path.stat().st_mtime
-            if age_seconds < LOOP_WARNING_STAMP_TTL_SECONDS:
-                return None
-
-        storage = Storage(settings)
-        try:
-            health = storage.get_loop_health()
-        finally:
-            storage.close()
-
-        state = health.get("state")
-        if state == "red":
-            line = "memory loop is erroring (last 3 runs failed) — run `memory-mcp-cli hook-check`"
-        elif state == "amber":
-            days = health.get("days_since_success")
-            if days is None:
-                line = "memory loop has never produced — run `memory-mcp-cli hook-check`"
-            else:
-                line = (
-                    f"memory loop hasn't produced in {days} days — run `memory-mcp-cli hook-check`"
-                )
-        else:
-            return None
-
-        stamp_path.parent.mkdir(parents=True, exist_ok=True)
-        stamp_path.touch()
-        return line
-    except Exception:
-        return None
 
 
 @click.group()
@@ -184,61 +124,6 @@ def hot_cache(force: bool) -> None:
         click.echo(f"hot-cache failed: {e}", err=True)
 
 
-@cli.command("log-output")
-@click.option("-c", "--content", help="Content to log (or use stdin)")
-@click.option(
-    "-f", "--file", "filepath", type=click.Path(exists=True), help="Read content from file"
-)
-@click.option("-p", "--project-id", help="Project ID override (default: derived from cwd)")
-@click.option("-s", "--session-id", help="Session ID for provenance tracking")
-@click.pass_context
-def log_output(
-    ctx: click.Context,
-    content: str | None,
-    filepath: str | None,
-    project_id: str | None,
-    session_id: str | None,
-) -> None:
-    """Log output content for pattern mining."""
-    settings = get_settings()
-    use_json = ctx.obj["json"]
-
-    if not settings.mining_enabled:
-        click.echo("Mining is disabled", err=True)
-        raise SystemExit(1)
-
-    # Read content from file or stdin
-    if filepath:
-        content = Path(filepath).read_text(encoding="utf-8")
-    elif content is None:
-        content = sys.stdin.read()
-
-    if not content.strip():
-        click.echo("No content to log", err=True)
-        raise SystemExit(1)
-
-    if len(content) > settings.max_content_length:
-        click.echo(
-            f"Content too long ({len(content)} chars). Max: {settings.max_content_length}",
-            err=True,
-        )
-        raise SystemExit(1)
-
-    # Use explicit project_id or derive from cwd
-    if project_id is None and settings.project_awareness_enabled:
-        project_id = get_current_project_id()
-
-    storage = Storage(settings)
-    try:
-        log_id = storage.log_output(content, project_id=project_id, session_id=session_id)
-        if use_json:
-            click.echo(json.dumps({"success": True, "log_id": log_id}))
-        else:
-            click.echo(f"Logged output (id={log_id})")
-    finally:
-        storage.close()
-
-
 def _text_of_content(content: object) -> str:
     """Extract the text of one transcript turn.
 
@@ -259,10 +144,11 @@ def _text_of_content(content: object) -> str:
 @cli.command("log-response")
 @click.pass_context
 def log_response(ctx: click.Context) -> None:
-    """Log Claude's response from hook input for pattern mining.
+    """Mark injected memories that Claude's reply used, then run maintenance.
 
-    This is called by Claude Code's Stop hook. It reads the hook input from stdin,
-    extracts the transcript path, and logs the assistant's last response.
+    This is called by Claude Code's Stop hook. It reads the hook input from
+    stdin, finds the transcript, and matches the last assistant response
+    against memories injected earlier in the session.
 
     The hook input JSON should contain either:
     - transcript_path: Direct path to the transcript file
@@ -271,9 +157,6 @@ def log_response(ctx: click.Context) -> None:
     import subprocess
 
     settings = get_settings()
-
-    if not settings.mining_enabled:
-        return  # Silent exit if mining disabled
 
     # Read hook input from stdin
     hook_input = sys.stdin.read().strip()
@@ -285,8 +168,6 @@ def log_response(ctx: click.Context) -> None:
     except json.JSONDecodeError:
         return
 
-    # Session provenance for the logged output; mining inherits the session
-    # from the source log, so losing it here breaks session linking downstream
     session_id = data.get("session_id") or data.get("sessionId")
 
     # Find transcript path (multiple formats supported)
@@ -363,17 +244,8 @@ def log_response(ctx: click.Context) -> None:
     if len(content) < 20:
         return
 
-    # Truncate if too long
-    if len(content) > settings.max_content_length:
-        content = content[: settings.max_content_length]
-
-    # Log the content
-    project_id = get_current_project_id() if settings.project_awareness_enabled else None
-
     storage = Storage(settings)
     try:
-        storage.log_output(content, project_id=project_id, session_id=session_id)
-
         try:
             marked = storage.mark_used_memories(last_response)
             if marked:
@@ -391,38 +263,18 @@ def log_response(ctx: click.Context) -> None:
     finally:
         storage.close()
 
-    # Spawn async mining (doesn't block the hook)
-    try:
-        mining_args = ["memory-mcp-cli", "run-mining", "--hours", "1"]
-        if project_id:
-            mining_args.extend(["--project-id", project_id])
-        subprocess.Popen(
-            mining_args,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,  # Detach from parent process
-        )
-    except Exception:
-        pass  # Mining is optional
-
 
 @cli.command("pre-compact")
-@click.option("--skip-mining", is_flag=True, help="Skip background mining")
 @click.pass_context
-def pre_compact(ctx: click.Context, skip_mining: bool) -> None:
+def pre_compact(ctx: click.Context) -> None:
     """Consolidate session memories before conversation compaction.
 
     Called by Claude Code's PreCompact hook. Reads hook input from stdin,
     extracts session info, and runs end_session() to promote top episodic
     memories to long-term storage.
 
-    Also spawns background mining to extract patterns from output logs.
-    Mining runs async and doesn't block compaction.
-
-    Designed to be quiet - exits 0 even on errors to not block compaction.
+    Exits 0 even on errors so a failure never blocks compaction.
     """
-    import subprocess
-
     settings = get_settings()
     use_json = ctx.obj["json"]
 
@@ -453,7 +305,6 @@ def pre_compact(ctx: click.Context, skip_mining: bool) -> None:
         return
 
     storage = Storage(settings)
-    mining_started = False
     try:
         # Run end_session to promote episodic memories to long-term storage
         result = storage.end_session(
@@ -461,19 +312,6 @@ def pre_compact(ctx: click.Context, skip_mining: bool) -> None:
             promote_top=True,
             promote_type=MemoryType.PROJECT,
         )
-
-        # Spawn background mining (async, doesn't block)
-        if not skip_mining:
-            try:
-                subprocess.Popen(
-                    ["memory-mcp-cli", "run-mining", "--hours", "24"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,  # Detach from parent process
-                )
-                mining_started = True
-            except Exception:
-                pass  # Mining is optional, don't fail if it can't start
 
         if use_json:
             click.echo(
@@ -484,7 +322,6 @@ def pre_compact(ctx: click.Context, skip_mining: bool) -> None:
                         "session_id": session_id,
                         "promoted_count": result.get("promoted_count", 0),
                         "top_memories": result.get("top_memories", []),
-                        "mining_started": mining_started,
                     }
                 )
             )
@@ -492,50 +329,11 @@ def pre_compact(ctx: click.Context, skip_mining: bool) -> None:
             promoted = result.get("promoted_count", 0)
             if promoted > 0:
                 click.echo(f"Pre-compact: promoted {promoted} memories from session")
-            if mining_started:
-                click.echo("Pre-compact: mining started in background")
     except Exception as e:
         # Silent failure for hooks - don't block compaction
         if use_json:
             click.echo(json.dumps({"success": False, "error": str(e)}))
         # Always exit 0 to not block compaction
-    finally:
-        storage.close()
-
-
-@cli.command("run-mining")
-@click.option("--hours", default=24, help="Hours of logs to process")
-@click.option("-p", "--project-id", help="Project ID override (default: derived from cwd)")
-@click.pass_context
-def run_mining(ctx: click.Context, hours: int, project_id: str | None) -> None:
-    """Run pattern mining on logged outputs."""
-    settings = get_settings()
-    use_json = ctx.obj["json"]
-
-    if not settings.mining_enabled:
-        click.echo("Mining is disabled", err=True)
-        raise SystemExit(1)
-
-    from memory_mcp.mining import run_mining as do_mining
-
-    storage = Storage(settings)
-    try:
-        # Use explicit project_id or derive from cwd
-        if project_id is None and settings.project_awareness_enabled:
-            project_id = get_current_project_id()
-
-        result = do_mining(storage, hours=hours, project_id=project_id)
-        if use_json:
-            click.echo(json.dumps(result))
-        else:
-            console.print("[bold]Mining Results[/bold]")
-            console.print(f"  Outputs processed: [cyan]{result['outputs_processed']}[/cyan]")
-            console.print(f"  Patterns found: [cyan]{result['patterns_found']}[/cyan]")
-            console.print(f"  New memories: [green]{result['new_memories']}[/green]")
-            console.print(f"  Updated patterns: [yellow]{result['updated_patterns']}[/yellow]")
-            promoted = result.get("promoted_to_hot", 0)
-            if promoted > 0:
-                console.print(f"  Promoted to hot: [magenta]{promoted}[/magenta]")
     finally:
         storage.close()
 
@@ -643,8 +441,8 @@ def seed(ctx: click.Context, file: str, memory_type: str, promote: bool) -> None
 )
 @click.option(
     "--promote/--no-promote",
-    default=True,
-    help="Promote to hot cache (default: yes)",
+    default=False,
+    help="Promote seeded memories to the hot cache (default: no)",
 )
 @click.option(
     "--tag",
@@ -668,10 +466,11 @@ def bootstrap(
     tags: tuple[str, ...],
     quiet: bool,
 ) -> None:
-    """Bootstrap hot cache from project documentation files.
+    """Store memories from project documentation files.
 
-    Scans for common documentation files (README.md, CLAUDE.md, etc.),
-    parses them into memories, and promotes to hot cache.
+    Scans for common documentation files (README.md, CONTRIBUTING.md, etc.)
+    and parses them into memories. CLAUDE.md is skipped because Claude Code
+    already injects it.
 
     Examples:
 
@@ -684,25 +483,14 @@ def bootstrap(
         # Bootstrap specific files only
         memory-mcp-cli bootstrap -f README.md -f ARCHITECTURE.md
 
-        # Bootstrap without promoting to hot cache
-        memory-mcp-cli bootstrap --no-promote
+        # Bootstrap and promote everything to the hot cache
+        memory-mcp-cli bootstrap --promote
 
         # JSON output for scripting
         memory-mcp-cli --json bootstrap
     """
-    # Loop staleness warning: computed first (before the empty-repo early
-    # return and before the quiet gate) so the rate-limit stamp is touched
-    # on every invocation that surfaces a warning, regardless of output
-    # mode. Plain mode echoes it immediately, ahead of the payload, so it
-    # reaches hook stdout (the injected session context) even under `-q`.
-    # JSON mode never echoes it as bare text - doing so would prepend
-    # unparseable text before the JSON payload, breaking `| jq` consumers -
-    # instead it's folded into the payload's "loop_warning" key below.
     settings = get_settings()
-    warning = _loop_warning_line(settings)
     use_json = ctx.obj["json"]
-    if warning and not use_json:
-        click.echo(warning)
 
     root = Path(root_path).expanduser().resolve()
 
@@ -729,7 +517,6 @@ def bootstrap(
                         "hot_cache_promoted": 0,
                         "errors": [],
                         "message": message,
-                        "loop_warning": warning,
                     }
                 )
             )
@@ -755,7 +542,7 @@ def bootstrap(
         return
 
     if use_json:
-        click.echo(json.dumps({**result, "loop_warning": warning}))
+        click.echo(json.dumps(result))
     else:
         console.print("[bold]Bootstrap Results[/bold]")
         console.print(f"  Files processed: [cyan]{result.get('files_processed', 0)}[/cyan]")
@@ -1007,7 +794,6 @@ def status(ctx: click.Context) -> None:
         hot_memories = storage.get_hot_memories()
         metrics = storage.get_hot_cache_metrics()
         memory_stats = storage.get_stats()
-        health = storage.get_loop_health()
 
         if use_json:
             click.echo(
@@ -1020,7 +806,6 @@ def status(ctx: click.Context) -> None:
                             {"id": m.id, "content": m.content[:100], "type": m.memory_type.value}
                             for m in hot_memories
                         ],
-                        "learning_loop": health,
                     }
                 )
             )
@@ -1053,23 +838,6 @@ def status(ctx: click.Context) -> None:
             overview_table.add_row("By source", source_str)
 
         console.print(overview_table)
-
-        # Learning loop health
-        console.print("\n[bold]Learning Loop:[/bold]")
-        loop_table = Table(show_header=False, box=None)
-        loop_table.add_column("Metric", style="dim")
-        loop_table.add_column("Value", style="bold")
-
-        state_color = {"green": "green", "amber": "yellow", "red": "red"}.get(
-            health["state"], "white"
-        )
-        loop_table.add_row("State", f"[{state_color}]{health['state']}[/{state_color}]")
-        loop_table.add_row("Outputs (24h/7d)", f"{health['outputs_24h']}/{health['outputs_7d']}")
-        loop_table.add_row("Patterns mined (7d)", str(health["patterns_7d"]))
-        loop_table.add_row("Memories created (7d)", str(health["memories_7d"]))
-        loop_table.add_row("Last successful run", health["last_success_at"] or "never")
-
-        console.print(loop_table)
 
         # Hot cache stats
         console.print("\n[bold]Hot Cache Metrics:[/bold]")
@@ -1115,125 +883,6 @@ def status(ctx: click.Context) -> None:
 
     finally:
         storage.close()
-
-
-@cli.command("hook-check")
-@click.option(
-    "--no-probe",
-    is_flag=True,
-    help="Skip the learning-loop round-trip probe",
-)
-@click.pass_context
-def hook_check(ctx: click.Context, no_probe: bool) -> None:
-    """Check hook dependencies and database connectivity.
-
-    Validates that the memory-mcp hook can run successfully:
-    - uv command is available
-    - jq command is available
-    - Database is accessible and writable
-    - Hook script exists
-    - Learning-loop round trip works (log -> mine -> storage)
-
-    The round-trip probe only runs when the database check passed - a probe
-    against a broken database is noise, not signal.
-
-    Examples:
-
-        # Check hook dependencies
-        memory-mcp-cli hook-check
-
-        # JSON output for scripting
-        memory-mcp-cli --json hook-check
-
-        # Skip the round-trip probe
-        memory-mcp-cli hook-check --no-probe
-    """
-    import shutil
-
-    use_json = ctx.obj["json"]
-    checks: list[tuple[str, bool, str]] = []
-
-    # Check uv
-    uv_path = shutil.which("uv")
-    if uv_path:
-        checks.append(("uv", True, uv_path))
-    else:
-        checks.append(("uv", False, "Not found - install from https://astral.sh/uv"))
-
-    # Check jq
-    jq_path = shutil.which("jq")
-    if jq_path:
-        checks.append(("jq", True, jq_path))
-    else:
-        checks.append(("jq", False, "Not found - install with: brew install jq"))
-
-    # Check database
-    settings = get_settings()
-    database_ok = False
-    storage = None
-    try:
-        storage = Storage(settings)
-        stats = storage.get_stats()
-        database_ok = True
-        checks.append(("database", True, f"{stats['total_memories']} memories"))
-    except Exception as e:
-        checks.append(("database", False, str(e)))
-
-    # Round-trip probe - only meaningful once the database is known-good.
-    if database_ok and not no_probe:
-        result = run_probe(storage)
-        if result.ok:
-            checks.append(("loop_probe", True, "round trip ok"))
-        else:
-            checks.append(("loop_probe", False, f"stage={result.stage}: {result.error}"))
-
-    if storage is not None:
-        storage.close()
-
-    # Check hook script
-    hook_script = Path(__file__).parent.parent.parent / "hooks" / "memory-log-response.sh"
-    if hook_script.exists():
-        checks.append(("hook_script", True, str(hook_script)))
-    else:
-        checks.append(("hook_script", False, f"Not found at {hook_script}"))
-
-    # Check log directory
-    log_dir = Path.home() / ".memory-mcp"
-    if log_dir.exists():
-        log_file = log_dir / "hook.log"
-        if log_file.exists():
-            checks.append(("log_file", True, str(log_file)))
-        else:
-            checks.append(("log_file", True, f"{log_dir} (no logs yet)"))
-    else:
-        checks.append(("log_file", True, "Will be created on first run"))
-
-    all_ok = all(c[1] for c in checks)
-
-    if use_json:
-        click.echo(
-            json.dumps(
-                {
-                    "success": all_ok,
-                    "checks": [
-                        {"name": name, "ok": ok, "message": msg} for name, ok, msg in checks
-                    ],
-                }
-            )
-        )
-    else:
-        console.print("[bold]Hook Dependency Check[/bold]")
-        for name, ok, msg in checks:
-            status = "[green]✓[/green]" if ok else "[red]✗[/red]"
-            console.print(f"  {status} {name}: {msg}")
-
-        if all_ok:
-            console.print("\n[green]All checks passed![/green]")
-        else:
-            console.print("\n[red]Some checks failed. Fix the issues above.[/red]")
-
-    if not all_ok:
-        raise SystemExit(1)
 
 
 @cli.command("import-beads")

@@ -41,14 +41,12 @@ src/memory_mcp/
 │   └── tools/          # Tool implementations by domain
 │       ├── cold_storage.py   # remember, recall, forget
 │       ├── hot_cache.py      # promote, demote, pin, unpin
-│       ├── mining.py         # log_output, run_mining
-│       └── ...               # 12 tool modules total
+│       └── ...               # 11 tool modules total
 ├── storage/            # Storage package
 │   ├── core.py         # Storage class, transactions, schema
 │   ├── search.py       # Vector search, scoring
 │   ├── hot_cache.py    # Promotion, demotion, eviction
-│   └── ...             # 16 mixin modules total
-├── mining.py           # Pattern extraction from outputs
+│   └── ...             # 14 mixin modules total
 ├── config.py           # Settings and configuration
 ├── cli.py              # CLI commands for hooks and administration
 ├── embeddings.py       # Embedding providers (sentence-transformers, MLX)

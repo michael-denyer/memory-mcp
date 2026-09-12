@@ -32,21 +32,16 @@ This project differentiates from generic memory servers (like mcp-memory-service
    - `end_session()` promotes top memories to long-term storage
    - Consolidates session context automatically
 
-6. **Pattern Mining from Usage**
-   - Extracts imports, commands, project facts from Claude's outputs
-   - Frequency-based promotion candidates
-   - Human approval before promotion (auto-approve for high-confidence)
-
-7. **Knowledge Graph**
+6. **Knowledge Graph**
    - Link related memories with typed relationships
    - Relation types: `relates_to`, `depends_on`, `contradicts`, `supersedes`, `refines`, `elaborates`
 
-8. **Trust Management**
+7. **Trust Management**
    - Strengthen/weaken memory confidence with contextual reasons
    - Per-memory-type trust decay rates
    - Audit trail for trust changes
 
-9. **Memory Consolidation**
+8. **Memory Consolidation**
    - `consolidate` CLI merges semantically similar memories
    - Reduces redundancy while preserving information
 
@@ -79,10 +74,9 @@ flowchart LR
 | Path | Purpose |
 |------|---------|
 | `.claude-plugin/` | Plugin and marketplace manifests only |
-| `commands/`, `skills/`, `agents/`, `hooks/` | Plugin components, which Claude Code loads from the plugin root |
+| `commands/`, `skills/` | Plugin components, which Claude Code loads from the plugin root |
 | `src/memory_mcp/server/` | MCP server package (tools, resources) |
 | `src/memory_mcp/storage/` | Storage package (SQLite, vectors, hot cache) |
-| `src/memory_mcp/mining.py` | Pattern extraction |
 | `src/memory_mcp/cli.py` | CLI commands |
 | `src/memory_mcp/config.py` | Settings and bootstrap file detection |
 
@@ -92,10 +86,10 @@ The Claude Code plugin is the primary distribution. Its manifest lives in
 `.claude-plugin/plugin.json`, and every component sits at the repo root, because
 Claude Code does not look inside `.claude-plugin/` for components:
 
-- **Slash commands** (`/memory-mcp:*`) - 14 commands in `commands/`
+- **Slash commands** (`/memory-mcp:*`) - 13 commands in `commands/`
 - **Hooks** - SessionStart and UserPromptSubmit (print the hot cache for injection),
-  Stop (log response), PreCompact (memory analyst)
-- **Agents** - Memory Analyst for pre-compaction knowledge extraction
+  Stop (mark used memories, then run hot cache maintenance), PreCompact (`end_session`)
+- **Skills** - recall-nudge, which prompts a `recall` call on retrospective questions
 
 Users install via `claude plugins add michael-denyer/memory-mcp`.
 The CLI (`memory-mcp-cli`) and MCP tools power the plugin internally.
@@ -145,7 +139,7 @@ uv run ruff format .          # Format
 **The system must work out of the box with no configuration.** This is non-negotiable.
 
 - All defaults should be optimized for immediate value
-- `auto_promote=True`, `auto_demote=True`, `mining_auto_approve_enabled=True`
+- `auto_promote=True`, `auto_demote=True`
 - Auto-detect hardware (MLX on Apple Silicon)
 - Bootstrap from project docs with one `memory-mcp-cli bootstrap` run (`auto_bootstrap` is off
   by default, and no hook runs it)

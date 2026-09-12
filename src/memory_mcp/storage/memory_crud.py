@@ -384,7 +384,7 @@ class MemoryCrudMixin:
             source: How memory was created (manual, mined)
             tags: Optional tags for categorization
             is_hot: Whether to add to hot cache immediately
-            source_log_id: For mined memories, the originating output_log ID
+            source_log_id: Legacy provenance column, unused by current writers
             session_id: Conversation session ID for provenance tracking
             project_id: Project ID for project-aware filtering (e.g., "github/owner/repo")
             category: Subcategory within type (e.g., "decision", "architecture", "import")
@@ -737,16 +737,13 @@ class MemoryCrudMixin:
             return self.get_memory(row["id"])
 
     def get_memories_by_source_log(self, source_log_id: int) -> list[Memory]:
-        """Get all memories extracted from a specific output log.
-
-        Used for entity linking - find other memories from the same source
-        to create MENTIONS relationships.
+        """Get all memories that share a source_log_id.
 
         Args:
-            source_log_id: ID of the output_log to find memories for.
+            source_log_id: The provenance id to match.
 
         Returns:
-            List of Memory objects that were extracted from this log.
+            List of Memory objects carrying that source_log_id.
         """
         with self._connection() as conn:
             rows = conn.execute(

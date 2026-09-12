@@ -7,12 +7,9 @@ import os
 import sqlite3
 
 from memory_mcp.logging import get_logger
-from memory_mcp.models import AuditOperation, MemorySource, MemoryType, TrustReason
+from memory_mcp.models import AuditOperation, MemoryType, TrustReason
 
 log = get_logger("storage.maintenance")
-
-DECAY_DAYS = 30  # spec accepted default
-UTILITY_FLOOR = 0.0  # deviation 6
 
 
 class MaintenanceMixin:
@@ -151,26 +148,6 @@ class MaintenanceMixin:
             "deleted_by_type": deleted_counts,
             "total_deleted": total_deleted,
         }
-
-    def cleanup_old_logs(self) -> int:
-        """Delete output logs older than log_retention_days.
-
-        Returns count of deleted logs.
-        """
-        with self.transaction() as conn:
-            cursor = conn.execute(
-                "DELETE FROM output_log WHERE timestamp < datetime('now', ?)",
-                (f"-{self.settings.log_retention_days} days",),
-            )
-            deleted = cursor.rowcount
-
-        if deleted > 0:
-            log.info(
-                "Cleaned up {} old output logs (retention: {} days)",
-                deleted,
-                self.settings.log_retention_days,
-            )
-        return deleted
 
     def get_embedding_model_info(self) -> dict:
         """Get stored embedding model info for validation."""
@@ -395,82 +372,8 @@ class MaintenanceMixin:
 
         return penalized_ids
 
-    def decay_unused_mined_memories(self) -> dict:
-        """Demote and floor the utility of stale, unused mined memories.
-
-        Targets memories with source 'mined' that are not pinned, have never
-        been retrieved or used, and are older than DECAY_DAYS. Pinned, young,
-        retrieved, or used memories are exempt. Approval does not exempt a
-        pattern: every approval path stores source='mined' ('mined_approved'
-        exists only as a PromotionSource), so approved patterns that are
-        never pinned, retrieved, or used decay too.
-
-        For each qualifying memory: demotes it from hot cache (if hot), then
-        floors its utility_score to UTILITY_FLOOR. Nothing is deleted.
-
-        Returns:
-            Dict with "demoted" (count actually removed from hot cache) and
-            "floored" (count of memories whose utility_score was floored).
-        """
-        with self._connection() as conn:
-            rows = conn.execute(
-                """
-                SELECT id, is_hot FROM memories
-                WHERE source = ?
-                  AND is_pinned = 0
-                  AND COALESCE(retrieved_count, 0) = 0
-                  AND COALESCE(used_count, 0) = 0
-                  AND created_at < datetime('now', ?)
-                  AND (is_hot = 1 OR utility_score > ?)
-                """,
-                (MemorySource.MINED.value, f"-{DECAY_DAYS} days", UTILITY_FLOOR),
-            ).fetchall()
-
-        candidates = [(row["id"], row["is_hot"]) for row in rows]
-
-        demoted = 0
-        for memory_id, is_hot in candidates:
-            if is_hot:
-                if self.demote_from_hot(memory_id):
-                    demoted += 1
-
-        floored = 0
-        with self.transaction() as conn:
-            for memory_id, _ in candidates:
-                cursor = conn.execute(
-                    "UPDATE memories SET utility_score = ? WHERE id = ?",
-                    (UTILITY_FLOOR, memory_id),
-                )
-                floored += cursor.rowcount
-
-            if candidates:
-                self._record_audit(
-                    conn,
-                    AuditOperation.DEMOTE_STALE,
-                    target_type="memory",
-                    details=json.dumps(
-                        {
-                            "reason": "decay_unused_mined_memories",
-                            "decay_days": DECAY_DAYS,
-                            "demoted": demoted,
-                            "floored": floored,
-                        }
-                    ),
-                )
-
-        if candidates:
-            log.info(
-                "Decayed {} unused mined memories (demoted={}, floored={}, older than {} days)",
-                len(candidates),
-                demoted,
-                floored,
-                DECAY_DAYS,
-            )
-
-        return {"demoted": demoted, "floored": floored}
-
     def run_full_cleanup(self) -> dict:
-        """Run comprehensive cleanup: stale memories, old logs, patterns, injections.
+        """Run comprehensive cleanup: stale memories, sequences, injections.
 
         Orchestrates all maintenance tasks in one call.
 
@@ -479,41 +382,28 @@ class MaintenanceMixin:
         # 1. Demote stale hot memories
         demoted_ids = self.demote_stale_hot_memories()
 
-        # 2. Expire stale mining patterns
-        expired_patterns = self.expire_stale_patterns(days=30)
-
-        # 3. Clean up old output logs
-        deleted_logs = self.cleanup_old_logs()
-
-        # 4. Clean up stale memories by retention policy
+        # 2. Clean up stale memories by retention policy
         memory_cleanup = self.cleanup_stale_memories()
 
-        # 5. Decay access sequences (for predictive cache)
+        # 3. Decay access sequences (for predictive cache)
         if self.settings.predictive_cache_enabled:
             self.decay_old_sequences()
 
-        # 6. Clean up old injection records (7-day retention)
+        # 4. Clean up old injection records (7-day retention)
         deleted_injections = self.cleanup_old_injections(retention_days=7)
 
-        # 7. Penalize low-utility memories (retrieved but never used)
+        # 5. Penalize low-utility memories (retrieved but never used)
         penalized_ids = self.penalize_low_utility_memories()
 
-        # 8. Improve hot cache based on injection feedback (non-dry-run)
+        # 6. Improve hot cache based on injection feedback (non-dry-run)
         injection_feedback = self.improve_hot_cache_from_injections(days=7, dry_run=False)
-
-        # 9. Decay unused mined memories (stale, never-retrieved/used mined facts)
-        decay_result = self.decay_unused_mined_memories()
 
         return {
             "hot_cache_demoted": len(demoted_ids),
-            "patterns_expired": expired_patterns,
-            "logs_deleted": deleted_logs,
             "memories_deleted": memory_cleanup["total_deleted"],
             "memories_deleted_by_type": memory_cleanup["deleted_by_type"],
             "injections_deleted": deleted_injections,
             "low_utility_penalized": len(penalized_ids),
             "injection_feedback_promoted": len(injection_feedback.get("promoted", [])),
             "injection_feedback_warnings": len(injection_feedback.get("warnings", [])),
-            "mined_memories_demoted": decay_result["demoted"],
-            "mined_memories_floored": decay_result["floored"],
         }

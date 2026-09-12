@@ -1,4 +1,4 @@
-"""Engram-inspired memory MCP server with hot cache and pattern mining."""
+"""Engram-inspired memory MCP server with a hook-injected hot cache and semantic recall."""
 
 from importlib.metadata import PackageNotFoundError, version
 
