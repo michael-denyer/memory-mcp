@@ -30,12 +30,7 @@ dependencies = [
     "uvicorn[standard]>=0.20,<1",  # ASGI server for dashboard
     "jinja2>=3.0,<4",  # Template engine for dashboard
     "transformers>=4.0,<6",  # Required by sentence-transformers; >=5.0.0rc3 fixes GHSA advisory
-    # Apple Silicon gets MLX by default for 10x faster embeddings
-    "mlx-embeddings>=0.0.5; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
-
-[project.optional-dependencies]
-mlx = ["mlx-embeddings>=0.0.5"]  # Explicit MLX install (for non-arm64 macs experimenting)
 
 [project.scripts]
 memory-mcp = "memory_mcp.server:main"
