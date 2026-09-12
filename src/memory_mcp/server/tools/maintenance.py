@@ -41,9 +41,9 @@ def run_cleanup() -> dict:
 
     Performs all cleanup operations in one call:
     - Demotes stale hot memories (not accessed in demotion_days)
-    - Expires old pending mining patterns (30+ days without activity)
-    - Deletes old output logs (based on log_retention_days)
     - Deletes stale memories by type-specific retention policies
+    - Decays access sequences and old injection records
+    - Penalizes memories retrieved often but never used
 
     Use this periodically to keep the database lean. For just database
     compaction, use db_maintenance() instead.
@@ -51,12 +51,10 @@ def run_cleanup() -> dict:
     log.info("run_cleanup() called")
     result = storage.run_full_cleanup()
     log.info(
-        "Cleanup complete: {} hot demoted, {} patterns expired, "
-        "{} logs deleted, {} memories deleted",
+        "Cleanup complete: {} hot demoted, {} memories deleted, {} injections deleted",
         result["hot_cache_demoted"],
-        result["patterns_expired"],
-        result["logs_deleted"],
         result["memories_deleted"],
+        result["injections_deleted"],
     )
     return {"success": True, **result}
 

@@ -645,6 +645,24 @@ class TestEmptyContentValidation:
         assert "empty" in result.get("error", "").lower()
 
 
+# ========== Maintenance Tool Tests ==========
+
+
+def test_run_cleanup_returns_without_mining_keys(storage, monkeypatch):
+    """run_cleanup reads only the keys run_full_cleanup still returns."""
+    import memory_mcp.server.tools.maintenance as maintenance_module
+
+    monkeypatch.setattr(maintenance_module, "storage", storage)
+
+    result = maintenance_module.run_cleanup()
+
+    assert result["success"] is True
+    assert "patterns_expired" not in result
+    assert "logs_deleted" not in result
+    assert result["hot_cache_demoted"] == 0
+    assert result["memories_deleted"] == 0
+
+
 # ========== Context Shaping Tests ==========
 
 

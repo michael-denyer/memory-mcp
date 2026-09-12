@@ -480,9 +480,9 @@ Run database maintenance (vacuum, analyze, auto-demote).
 
 #### `run_cleanup`
 
-Comprehensive cleanup of stale data.
+Clean up stale data in one call.
 
-**Returns**: `{hot_cache_demoted, memories_deleted, memories_deleted_by_type, injections_deleted, low_utility_penalized, injection_feedback_promoted, injection_feedback_warnings}`
+**Returns**: `{success, hot_cache_demoted, memories_deleted, memories_deleted_by_type, injections_deleted, low_utility_penalized, injection_feedback_promoted, injection_feedback_warnings}`
 
 ---
 
