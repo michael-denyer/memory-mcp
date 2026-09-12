@@ -704,23 +704,6 @@ class TestTrustScoring:
         assert mem.trust_score == storage.settings.trust_score_mined
         assert mem.trust_score == 0.7
 
-    def test_provenance_tracked_for_mined(self, storage):
-        """Mined memories should track provenance (source_log_id, extracted_at)."""
-        # First log some output
-        log_id = storage.log_output("Some output to mine from")
-
-        # Store mined memory with source_log_id
-        mid, _ = storage.store_memory(
-            "Pattern from output",
-            MemoryType.PATTERN,
-            source=MemorySource.MINED,
-            source_log_id=log_id,
-        )
-
-        mem = storage.get_memory(mid)
-        assert mem.source_log_id == log_id
-        assert mem.extracted_at is not None
-
     def test_manual_memory_no_extraction_timestamp(self, storage):
         """Manual memories should not have extracted_at set."""
         mid, _ = storage.store_memory(
@@ -1129,11 +1112,9 @@ class TestLogResponseTranscriptParsing:
     def test_log_response_accepts_string_user_content(self, temp_db, tmp_path):
         """A string `content` on the user turn must not crash the Stop hook."""
         import json
-        import subprocess
         from unittest.mock import patch
 
         from memory_mcp.cli import main
-        from memory_mcp.config import get_settings
 
         transcript = tmp_path / "string-content.jsonl"
         transcript.write_text(
@@ -1156,30 +1137,13 @@ class TestLogResponseTranscriptParsing:
 
         hook_input = json.dumps({"session_id": "s", "transcript_path": str(transcript)})
 
-        real_popen = subprocess.Popen
-
-        def popen_without_mining_spawn(args, **kwargs):
-            if args and args[0] == "memory-mcp-cli":
-                raise FileNotFoundError("mining spawn suppressed in test")
-            return real_popen(args, **kwargs)
-
         with (
-            patch("subprocess.Popen", side_effect=popen_without_mining_spawn),
             patch("sys.stdin.read", return_value=hook_input),
             patch("sys.argv", ["memory-mcp-cli", "log-response"]),
         ):
             result = main()
 
         assert result == 0
-
-        storage = Storage(get_settings())
-        try:
-            outputs = storage.get_recent_outputs(hours=1)
-        finally:
-            storage.close()
-
-        assert len(outputs) == 1
-        assert "What is X?" in outputs[0][1]
 
 
 class TestResourceInjectionNames:

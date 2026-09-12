@@ -531,18 +531,6 @@ class TestMetrics:
         assert metrics.get_counter("store.merged") == 1
         assert metrics.get_counter("store.contradictions_found") == 1
 
-    def test_record_mining_counters(self):
-        """record_mining() updates mining counters."""
-        from memory_mcp.logging import metrics, record_mining
-
-        metrics.reset()
-        record_mining(patterns_found=10, patterns_new=7, patterns_updated=3)
-
-        assert metrics.get_counter("mining.runs") == 1
-        assert metrics.get_counter("mining.patterns_found") == 10
-        assert metrics.get_counter("mining.patterns_new") == 7
-        assert metrics.get_counter("mining.patterns_updated") == 3
-
     def test_record_hot_cache_change(self):
         """record_hot_cache_change() tracks cache mutations."""
         from memory_mcp.logging import metrics, record_hot_cache_change
@@ -653,30 +641,6 @@ class TestEmptyContentValidation:
 
         remember_fn = server_module.remember
         result = remember_fn(content="   \n\t  ")
-        assert result.get("success") is False
-        assert "empty" in result.get("error", "").lower()
-
-    def test_log_output_empty_content_returns_error(self, storage, monkeypatch):
-        """log_output with empty content returns error, not exception."""
-        import memory_mcp.server as server_module
-
-        monkeypatch.setattr(server_module, "storage", storage)
-        monkeypatch.setattr(server_module, "settings", storage.settings)
-
-        log_output_fn = server_module.log_output
-        result = log_output_fn(content="")
-        assert result.get("success") is False
-        assert "empty" in result.get("error", "").lower()
-
-    def test_log_output_whitespace_content_returns_error(self, storage, monkeypatch):
-        """log_output with whitespace-only content returns error."""
-        import memory_mcp.server as server_module
-
-        monkeypatch.setattr(server_module, "storage", storage)
-        monkeypatch.setattr(server_module, "settings", storage.settings)
-
-        log_output_fn = server_module.log_output
-        result = log_output_fn(content="  \t\n  ")
         assert result.get("success") is False
         assert "empty" in result.get("error", "").lower()
 

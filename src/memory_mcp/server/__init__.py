@@ -26,7 +26,6 @@ from memory_mcp.server.app import (
 
 # Re-export key tools for backwards compatibility with tests
 from memory_mcp.server.tools.cold_storage import recall, remember
-from memory_mcp.server.tools.mining import log_output
 
 log = get_logger("server")
 
@@ -50,5 +49,4 @@ __all__ = [
     "promoted_memories_resource",
     "recall",
     "remember",
-    "log_output",
 ]

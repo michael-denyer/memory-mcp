@@ -31,9 +31,6 @@ from memory_mcp.storage.hot_cache import HotCacheMixin
 from memory_mcp.storage.injection_tracking import InjectionTrackingMixin
 from memory_mcp.storage.maintenance import MaintenanceMixin
 from memory_mcp.storage.memory_crud import MemoryCrudMixin, ValidationError
-from memory_mcp.storage.mining_runs import MiningRunsMixin
-from memory_mcp.storage.mining_store import MiningStoreMixin
-from memory_mcp.storage.output_logging import OutputLoggingMixin
 from memory_mcp.storage.predictions import PredictionsMixin
 from memory_mcp.storage.relationships import RelationshipsMixin
 from memory_mcp.storage.retrieval import RetrievalMixin
@@ -47,8 +44,6 @@ log = get_logger("storage")
 class Storage(
     AuditMixin,
     TrustMixin,
-    MiningRunsMixin,
-    MiningStoreMixin,
     MaintenanceMixin,
     RetrievalMixin,
     RelationshipsMixin,
@@ -60,7 +55,6 @@ class Storage(
     SearchMixin,
     PredictionsMixin,
     BootstrapMixin,
-    OutputLoggingMixin,
     InjectionTrackingMixin,
 ):
     """SQLite storage manager with thread-safe connection handling.
@@ -68,8 +62,6 @@ class Storage(
     Combines functionality from all mixins:
     - AuditMixin: Audit logging for destructive operations
     - TrustMixin: Trust score management and history
-    - MiningRunsMixin: Mining run recording and loop health
-    - MiningStoreMixin: Mined pattern storage
     - MaintenanceMixin: Database maintenance operations
     - RetrievalMixin: RAG-inspired retrieval tracking
     - RelationshipsMixin: Knowledge graph relationships
@@ -81,7 +73,6 @@ class Storage(
     - SearchMixin: Vector search and recall
     - PredictionsMixin: Predictive cache warming
     - BootstrapMixin: Bootstrap from files
-    - OutputLoggingMixin: Output logging for mining
     - InjectionTrackingMixin: Track hot cache/working set injections
     """
 

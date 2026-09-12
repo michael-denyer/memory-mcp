@@ -35,7 +35,6 @@ mcp__memory__memory_stats()
 | 3 | [Knowledge Graph](resources/testing/GRAPH.md) | link, unlink, traverse |
 | 4-5 | [Trust & Contradictions](resources/testing/TRUST.md) | validate, invalidate, resolve |
 | 6 | [Sessions](resources/testing/SESSIONS.md) | episodic memory, summarize |
-| 7 | [Mining](resources/testing/MINING.md) | log_output, run_mining, approve |
 | 8 | [Seeding](resources/testing/SEEDING.md) | seed_from_text, bootstrap |
 | 9-10 | [Predictive & Quality](resources/testing/PREDICTIVE.md) | predict_next, mark_used |
 | 11 | [Maintenance](resources/testing/MAINTENANCE.md) | db_info, cleanup, consolidate |
@@ -54,7 +53,6 @@ Track results as you go:
 | 3. Graph | ⬜ | |
 | 4-5. Trust | ⬜ | |
 | 6. Sessions | ⬜ | |
-| 7. Mining | ⬜ | |
 | 8. Seeding | ⬜ | |
 | 9-10. Predictive | ⬜ | |
 | 11. Maintenance | ⬜ | |
