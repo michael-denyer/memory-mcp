@@ -18,141 +18,108 @@ Give your AI assistant a second brain that persists across sessions.
 
 | Tier | Latency | How it works |
 |------|---------|--------------|
-| **Hot Cache** | 0ms | Auto-injected into context before Claude thinks |
-| **Cold Storage** | ~50ms | Semantic search via `recall()` tool call |
+| **Hot Cache** | 0ms | Printed into context by the `SessionStart` and `UserPromptSubmit` hooks |
+| **Cold Storage** | ~50ms | Semantic search via a `recall()` tool call |
 
-The system learns what you use and automatically promotes frequently-accessed memories to the hot cache.
+The hooks run `memory-mcp-cli hot-cache`, whose stdout Claude Code adds to the conversation. No
+tool call is involved. The footer of that text asks you to call `mark_memory_used(id)` when one of
+the injected memories was useful, which is the signal that keeps it in the hot cache.
 
 ## Quick Start
 
-### Store a Memory
 ```
 remember("FastAPI with async endpoints for all APIs", memory_type="project", tags=["tech-stack"])
+recall("what framework for backend")
+mark_memory_used(id)
 ```
 
-### Recall by Meaning
-```
-recall("what framework for backend")  # Finds FastAPI memory
-```
-
-### Check What's Hot
-```
-hot_cache_status()  # See what's instantly available
-```
-
-## Core Tools
+## Tools
 
 ### Storage
 | Tool | Purpose |
 |------|---------|
 | `remember(content, memory_type, tags)` | Store new memory |
-| `recall(query, mode, limit)` | Semantic search |
-| `recall_by_tag(tag)` | Find by tag |
+| `recall(query, mode, limit, expand_relations)` | Semantic search |
 | `forget(memory_id)` | Delete memory |
 | `list_memories(limit, offset)` | Browse all |
+| `memory_stats()` | Overview stats |
 
-**Memory types**: `project`, `pattern`, `reference`, `episodic`, `conversation`
+**Memory types**: `project`, `pattern`, `reference`, `conversation`, `episodic`
 
 **Recall modes**: `precision` (few, high-confidence), `balanced` (default), `exploratory` (many results)
 
 ### Hot Cache
 | Tool | Purpose |
 |------|---------|
+| `hot_cache_status()` | View hot cache contents |
 | `promote(memory_id)` | Add to hot cache |
 | `demote(memory_id)` | Remove from hot cache |
 | `pin(memory_id)` | Prevent auto-eviction |
 | `unpin(memory_id)` | Allow auto-eviction |
-| `hot_cache_status()` | View hot cache contents |
+| `mark_memory_used(memory_id)` | Record that a memory was useful |
 
 ### Knowledge Graph
 | Tool | Purpose |
 |------|---------|
 | `link_memories(from_id, to_id, relation)` | Connect memories |
-| `unlink_memories(from_id, to_id)` | Remove connection |
 | `get_related_memories(memory_id)` | Find connected |
-| `relationship_stats()` | Graph overview |
 
 **Relation types**: `relates_to`, `depends_on`, `supersedes`, `refines`, `contradicts`, `elaborates`
 
-### Trust Management
+### Sessions and setup
 | Tool | Purpose |
 |------|---------|
-| `validate_memory(id, reason)` | Increase trust |
-| `invalidate_memory(id, reason)` | Decrease trust |
-| `get_trust_history(memory_id)` | View changes |
+| `end_session(session_id)` | Consolidate a session's episodic memories |
+| `bootstrap_project(root_path)` | Seed from project documentation |
+| `db_maintenance()` | Vacuum, analyze, demote stale entries |
 
-### Sessions
-| Tool | Purpose |
-|------|---------|
-| `get_sessions()` | List sessions |
-| `summarize_session(session_id)` | Structured summary |
-| `end_session(session_id)` | Promote top memories |
-
-### Maintenance
-| Tool | Purpose |
-|------|---------|
-| `memory_stats()` | Overview stats |
-| `db_info()` | Database details |
-| `run_cleanup()` | Clean stale data |
-| `preview_consolidation()` | Find duplicates |
+These sixteen tools are the whole surface.
 
 ## MCP Resources
 
-These are auto-injected into Claude's context:
-
 | Resource | Contents |
 |----------|----------|
-| `memory://hot-cache` | All promoted memories |
-| `memory://working-set` | Session-aware context (~10 items) |
+| `memory://hot-cache` | Session-aware active context |
+| `memory://promoted-memories` | The promoted backing store |
 | `memory://project-context` | Current project memories |
+
+Resources are not injected on their own. Reach one with an `@` mention or a resource tool. The
+hooks are what put the hot cache in front of Claude.
 
 ## Auto-Promotion Rules
 
-Memories are auto-promoted to hot cache when:
-- Salience score ≥ 0.5 AND access count ≥ 3
-- Salience = importance + trust + access_count + recency
-
-Memories are auto-demoted after 14 days without access.
+A memory is promoted when its salience score reaches 0.5 and it has been accessed three times.
+Salience combines importance, trust, access count and recency. A memory is demoted after 14 days
+without access.
 
 ## Common Workflows
 
-### Project Setup
+### Project setup
 ```
-# Bootstrap from project docs (CLAUDE.md, README.md, etc.)
-bootstrap_project(promote_to_hot=true)
+bootstrap_project(root_path=".")
 ```
 
-### Daily Work
+### Daily work
 ```
-# Store decisions and patterns as you work
 remember("Decided to use PostgreSQL for main DB", memory_type="project", tags=["decision", "database"])
-
-# Recall when needed
 recall("database decision")
 ```
 
-### Session End
+### Session end
 ```
-# Review what you learned
-summarize_session(session_id)
-
-# Promote valuable memories to long-term storage
 end_session(session_id, promote_top=true)
 ```
 
-### Knowledge Linking
+### Knowledge linking
 ```
-# Connect related concepts
 link_memories(postgres_id, pgvector_id, "depends_on")
-
-# Recall with graph expansion
 recall("PostgreSQL", expand_relations=true)
 ```
 
 ## Tips
 
-1. **Tag consistently** - Use tags like `decision`, `convention`, `tech-stack`, `gotcha`
-2. **Use episodic for session context** - Short-term memories that may get promoted
-3. **Link related memories** - Build a knowledge graph for better recall
-4. **Trust the auto-promotion** - Don't over-promote manually
-5. **Check hot cache periodically** - `hot_cache_status()` shows what's instantly available
+1. **Tag consistently** with tags like `decision`, `convention`, `tech-stack`, `gotcha`
+2. **Call `mark_memory_used`** when an injected memory helped, so promotion tracks real use
+3. **Use `episodic`** for session context that may earn promotion later
+4. **Link related memories** to build a graph that `expand_relations` can walk
+5. **Trust auto-promotion** rather than promoting by hand

@@ -132,7 +132,7 @@ Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's *
 | `/memory-mcp:bootstrap` | `bootstrap_project` | Seed from project docs |
 | — | `link_memories` | Knowledge graph connections |
 
-See [Reference](docs/REFERENCE.md) for all 11 slash commands and full tool API.
+See [Reference](docs/REFERENCE.md) for all 10 slash commands and full tool API.
 
 ### Dashboard
 

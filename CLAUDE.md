@@ -86,7 +86,7 @@ The Claude Code plugin is the primary distribution. Its manifest lives in
 `.claude-plugin/plugin.json`, and every component sits at the repo root, because
 Claude Code does not look inside `.claude-plugin/` for components:
 
-- **Slash commands** (`/memory-mcp:*`) - 11 commands in `commands/`
+- **Slash commands** (`/memory-mcp:*`) - 10 commands in `commands/`
 - **Hooks** - SessionStart and UserPromptSubmit (print the hot cache for injection),
   Stop (mark used memories, then run hot cache maintenance), PreCompact (`end_session`)
 - **Skills** - recall-nudge, which prompts a `recall` call on retrospective questions
