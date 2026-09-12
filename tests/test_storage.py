@@ -339,7 +339,7 @@ class TestHotCacheMetrics:
         """Evicting from hot cache should increment evictions."""
         settings = Settings(
             db_path=tmp_path / "test.db",
-            hot_cache_max_items=2,
+            promoted_max_items=2,
             semantic_dedup_enabled=False,
         )
         stor = Storage(settings)
@@ -4342,3 +4342,57 @@ class TestLazyEmbeddingEngine:
                     stor.store_memory("x", MemoryType.PROJECT)
             finally:
                 stor.close()
+
+
+class TestMarkUsedFeedsRecentRecalls:
+    """A memory Claude echoed back must reach the hot cache's recent-recalls slot."""
+
+    def test_mark_used_memories_populates_recent_recalls(self, storage):
+        memory_id, _ = storage.store_memory(
+            "The deploy password hint is zebra-42.", MemoryType.PROJECT
+        )
+        storage.log_injection(memory_id, resource="hook", session_id="s1")
+
+        assert storage.mark_used_memories("the hint is zebra-42") == 1
+
+        assert [m.id for m in storage.get_recent_recalls()] == [memory_id]
+
+
+class TestPromotedCapacity:
+    """The promoted set is capped by promoted_max_items, not by the hot cache size."""
+
+    def test_promote_to_hot_caps_at_promoted_max_items(self, tmp_path):
+        settings = Settings(
+            db_path=tmp_path / "cap.db",
+            semantic_dedup_enabled=False,
+            promoted_max_items=20,
+            hot_cache_max_items=10,
+        )
+        stor = Storage(settings)
+        try:
+            for n in range(15):
+                memory_id, _ = stor.store_memory(f"promoted fact number {n}", MemoryType.PROJECT)
+                assert stor.promote_to_hot(memory_id) is True
+
+            assert len(stor.get_promoted_memories()) == 15
+        finally:
+            stor.close()
+
+
+class TestHotCacheProjectFilter:
+    """The hook injects into one project, so the hot cache has to know which."""
+
+    def test_get_hot_cache_filters_by_project(self, storage):
+        in_project, _ = storage.store_memory(
+            "Project a deploys with helm", MemoryType.PROJECT, project_id="a"
+        )
+        other_project, _ = storage.store_memory(
+            "Project b deploys with ansible", MemoryType.PROJECT, project_id="b"
+        )
+        global_memory, _ = storage.store_memory("Always run the linter", MemoryType.PROJECT)
+        for memory_id in (in_project, other_project, global_memory):
+            storage.promote_to_hot(memory_id)
+
+        visible = {m.id for m in storage.get_hot_cache(project_id="a")}
+
+        assert visible == {in_project, global_memory}

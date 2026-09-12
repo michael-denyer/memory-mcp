@@ -221,7 +221,7 @@ class TestHotCachePromotion:
     def test_promote_respects_max_items(self, storage):
         """Hot cache should respect max_items limit."""
         # Create more memories than hot cache allows
-        max_hot = storage.settings.hot_cache_max_items
+        max_hot = storage.settings.promoted_max_items
         memory_ids = []
 
         for i in range(max_hot + 5):
@@ -324,7 +324,7 @@ class TestHotCacheLRU:
             # Small hot cache for testing
             settings = Settings(
                 db_path=Path(tmpdir) / "lru.db",
-                hot_cache_max_items=3,
+                promoted_max_items=3,
                 semantic_dedup_enabled=False,
             )
             storage = Storage(settings)
@@ -363,7 +363,7 @@ class TestHotCacheLRU:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(
                 db_path=Path(tmpdir) / "pin.db",
-                hot_cache_max_items=2,
+                promoted_max_items=2,
                 semantic_dedup_enabled=False,
             )
             storage = Storage(settings)
@@ -405,7 +405,7 @@ class TestHotCacheLRU:
         with tempfile.TemporaryDirectory() as tmpdir:
             settings = Settings(
                 db_path=Path(tmpdir) / "allpin.db",
-                hot_cache_max_items=2,
+                promoted_max_items=2,
                 semantic_dedup_enabled=False,
             )
             storage = Storage(settings)
@@ -429,7 +429,7 @@ class TestHotCacheLRU:
     def test_unpin_allows_eviction(self):
         """Unpinning a memory makes it eligible for eviction."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            settings = Settings(db_path=Path(tmpdir) / "unpin.db", hot_cache_max_items=2)
+            settings = Settings(db_path=Path(tmpdir) / "unpin.db", promoted_max_items=2)
             storage = Storage(settings)
 
             # Fill cache with pinned memories
@@ -1121,3 +1121,90 @@ class TestRecallTypeFiltering:
         # Results should only be PATTERN or REFERENCE
         for mem in result.memories:
             assert mem.memory_type in [MemoryType.PATTERN, MemoryType.REFERENCE]
+
+
+class TestLogResponseTranscriptParsing:
+    """Real transcripts store a turn's content as a bare string, not a block list."""
+
+    def test_log_response_accepts_string_user_content(self, temp_db, tmp_path):
+        """A string `content` on the user turn must not crash the Stop hook."""
+        import json
+        import subprocess
+        from unittest.mock import patch
+
+        from memory_mcp.cli import main
+        from memory_mcp.config import get_settings
+
+        transcript = tmp_path / "string-content.jsonl"
+        transcript.write_text(
+            "\n".join(
+                [
+                    json.dumps({"message": {"role": "user", "content": "What is X?"}}),
+                    json.dumps(
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": [
+                                    {"type": "text", "text": "X is the deploy hint zebra-42."}
+                                ],
+                            }
+                        }
+                    ),
+                ]
+            )
+        )
+
+        hook_input = json.dumps({"session_id": "s", "transcript_path": str(transcript)})
+
+        real_popen = subprocess.Popen
+
+        def popen_without_mining_spawn(args, **kwargs):
+            if args and args[0] == "memory-mcp-cli":
+                raise FileNotFoundError("mining spawn suppressed in test")
+            return real_popen(args, **kwargs)
+
+        with (
+            patch("subprocess.Popen", side_effect=popen_without_mining_spawn),
+            patch("sys.stdin.read", return_value=hook_input),
+            patch("sys.argv", ["memory-mcp-cli", "log-response"]),
+        ):
+            result = main()
+
+        assert result == 0
+
+        storage = Storage(get_settings())
+        try:
+            outputs = storage.get_recent_outputs(hours=1)
+        finally:
+            storage.close()
+
+        assert len(outputs) == 1
+        assert "What is X?" in outputs[0][1]
+
+
+class TestResourceInjectionNames:
+    """The two resources must be distinguishable in injection_log."""
+
+    def test_promoted_resource_logs_distinct_resource_name(self, tmp_path, monkeypatch):
+        """The v0.7 rename left promoted-memories logging itself as hot-cache."""
+        from memory_mcp import server
+
+        settings = Settings(db_path=tmp_path / "test.db", promoted_resource_enabled=True)
+        test_storage = Storage(settings)
+        monkeypatch.setattr(server.app, "storage", test_storage)
+        monkeypatch.setattr(server.app, "settings", settings)
+
+        memory_id, _ = test_storage.store_memory("Deploys go through helm", MemoryType.PROJECT)
+        test_storage.promote_to_hot(memory_id)
+
+        server.promoted_memories_resource()
+
+        try:
+            with test_storage._connection() as conn:
+                resources = [
+                    row[0] for row in conn.execute("SELECT resource FROM injection_log").fetchall()
+                ]
+        finally:
+            test_storage.close()
+
+        assert resources == ["promoted-memories"]

@@ -280,7 +280,7 @@ def promoted_memories_resource() -> str:
     memory_ids = [m.id for m in hot_memories]
     storage.log_injections_batch(
         memory_ids=memory_ids,
-        resource="hot-cache",
+        resource="promoted-memories",
         session_id=session_id,
         project_id=project_id,
     )
@@ -310,13 +310,16 @@ def hot_cache_resource() -> str:
     if not settings.hot_cache_enabled:
         return "[MEMORY: Hot cache disabled]"
 
-    hot_memories = storage.get_hot_cache()
+    project_id = get_auto_project_id()
+    hot_memories = storage.get_hot_cache(project_id=project_id)
 
     if not hot_memories:
+        storage.record_hot_cache_miss()
         return "[MEMORY: Hot cache empty - no recent activity]"
 
+    storage.record_hot_cache_hit()
+
     # Log injections for feedback loop tracking
-    project_id = get_auto_project_id()
     session_id = get_current_session_id()
     memory_ids = [m.id for m in hot_memories]
     storage.log_injections_batch(

@@ -633,7 +633,7 @@ class MemoryCrudMixin:
             access_weight=self.settings.salience_access_weight,
             recency_weight=self.settings.salience_recency_weight,
             recency_halflife_days=self.settings.salience_recency_halflife_days,
-            max_access_count=self.settings.hot_cache_max_items,  # Normalize against cache size
+            max_access_count=self.settings.promoted_max_items,
         )
 
     def _get_row_value(self, row: sqlite3.Row, column: str, default=None):
