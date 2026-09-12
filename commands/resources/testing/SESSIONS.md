@@ -41,4 +41,4 @@ Report results:
 | 6.5 Session Details | ⬜ | |
 | 6.6 End Session | ⬜ | |
 
-Proceed to Phase 7: Mining.
+Proceed to Phase 8: Seeding.

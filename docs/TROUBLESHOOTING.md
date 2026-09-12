@@ -71,11 +71,11 @@ This is expected - the embedding model (~90MB) downloads on first use. Subsequen
    memory-mcp-cli bootstrap
    ```
 
-## Memory Analyst Shows Issues
+## Memory Health Issues
 
-**Symptom**: Health report shows "Needs Attention"
+**Symptom**: `memory-mcp-cli status` or the dashboard shows a degraded picture
 
-Run the recommended actions from the report. Common fixes:
+Common fixes:
 
 - **Unresolved contradictions**: Use `resolve_contradiction()` to pick the correct memory
 - **Consolidation opportunities**: Run `memory-mcp-cli consolidate`

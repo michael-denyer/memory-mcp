@@ -91,6 +91,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `cleanup_old_logs` and `decay_unused_mined_memories` are gone. `run_full_cleanup` no longer
   returns `patterns_expired`, `logs_deleted`, `mined_memories_demoted` or
   `mined_memories_floored`
+- **Memory Analyst agent** - `agents/memory-analyst.md` is gone. Its report leaned on the mining
+  and learning-loop views, and the same health picture is in `memory-mcp-cli status` and the
+  dashboard. The `MinedPattern` and `PatternStatus` model types and the `record_mining` metrics
+  helper go too, all three unreachable once the pipeline left
 
 ### Fixed
 

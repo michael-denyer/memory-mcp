@@ -88,14 +88,6 @@ hot_cache_status()  # See what's instantly available
 | `summarize_session(session_id)` | Structured summary |
 | `end_session(session_id)` | Promote top memories |
 
-### Pattern Mining
-| Tool | Purpose |
-|------|---------|
-| `mining_status()` | View mining stats |
-| `review_candidates()` | See patterns found |
-| `approve_candidate(id)` | Promote to memory |
-| `reject_candidate(id)` | Discard pattern |
-
 ### Maintenance
 | Tool | Purpose |
 |------|---------|

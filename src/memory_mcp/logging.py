@@ -201,20 +201,6 @@ def record_store(memory_type: str, merged: bool, contradictions: int) -> None:
         metrics.increment("store.contradictions_found", contradictions)
 
 
-def record_mining(patterns_found: int, patterns_new: int, patterns_updated: int) -> None:
-    """Record metrics for a mining operation.
-
-    Args:
-        patterns_found: Total patterns extracted from logs.
-        patterns_new: New patterns added to the database.
-        patterns_updated: Existing patterns with incremented counts.
-    """
-    metrics.increment("mining.runs")
-    metrics.increment("mining.patterns_found", patterns_found)
-    metrics.increment("mining.patterns_new", patterns_new)
-    metrics.increment("mining.patterns_updated", patterns_updated)
-
-
 def record_hot_cache_change(
     promoted: bool = False, demoted: bool = False, evicted: bool = False
 ) -> None:

@@ -56,7 +56,7 @@ uv tool install hot-memory-mcp   # or: pip install hot-memory-mcp
 claude plugins add michael-denyer/memory-mcp
 ```
 
-The plugin gives you auto-configured hooks, slash commands, and the Memory Analyst agent. MLX is auto-detected on Apple Silicon.
+The plugin gives you auto-configured hooks and slash commands. MLX is auto-detected on Apple Silicon.
 
 <details>
 <summary>Manual config (no plugin)</summary>
@@ -150,7 +150,7 @@ Memory MCP is designed to run as three complementary components:
 
 | Component | Purpose |
 |-----------|---------|
-| **Claude Code Plugin** | Hooks, slash commands, and Memory Analyst agent for seamless integration |
+| **Claude Code Plugin** | Hooks that inject the hot cache, plus the `/memory-mcp:*` slash commands |
 | **MCP Server** | Core memory tools available to Claude via Model Context Protocol |
 | **Dashboard** | Web UI to browse, manage, and debug your memory database |
 

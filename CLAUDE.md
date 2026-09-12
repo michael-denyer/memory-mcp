@@ -74,7 +74,7 @@ flowchart LR
 | Path | Purpose |
 |------|---------|
 | `.claude-plugin/` | Plugin and marketplace manifests only |
-| `commands/`, `skills/`, `agents/` | Plugin components, which Claude Code loads from the plugin root |
+| `commands/`, `skills/` | Plugin components, which Claude Code loads from the plugin root |
 | `src/memory_mcp/server/` | MCP server package (tools, resources) |
 | `src/memory_mcp/storage/` | Storage package (SQLite, vectors, hot cache) |
 | `src/memory_mcp/cli.py` | CLI commands |
@@ -89,7 +89,7 @@ Claude Code does not look inside `.claude-plugin/` for components:
 - **Slash commands** (`/memory-mcp:*`) - 13 commands in `commands/`
 - **Hooks** - SessionStart and UserPromptSubmit (print the hot cache for injection),
   Stop (mark used memories, then run hot cache maintenance), PreCompact (`end_session`)
-- **Agents** - Memory Analyst, an on-demand memory health report
+- **Skills** - recall-nudge, which prompts a `recall` call on retrospective questions
 
 Users install via `claude plugins add michael-denyer/memory-mcp`.
 The CLI (`memory-mcp-cli`) and MCP tools power the plugin internally.
