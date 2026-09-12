@@ -245,7 +245,6 @@ class TestSentenceTransformerProvider:
     def test_provider_passes_device_from_settings(self):
         """A configured embedding_device should reach SentenceTransformer."""
         settings = Settings(
-            embedding_backend="sentence-transformers",
             embedding_device="cpu",
         )
         provider = create_provider(settings)
@@ -260,7 +259,6 @@ class TestSentenceTransformerProvider:
     def test_provider_omits_device_when_setting_is_none(self):
         """With no configured device the library default should stand."""
         settings = Settings(
-            embedding_backend="sentence-transformers",
             embedding_device=None,
         )
         provider = create_provider(settings)
