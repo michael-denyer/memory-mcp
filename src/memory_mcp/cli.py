@@ -441,8 +441,8 @@ def seed(ctx: click.Context, file: str, memory_type: str, promote: bool) -> None
 )
 @click.option(
     "--promote/--no-promote",
-    default=True,
-    help="Promote to hot cache (default: yes)",
+    default=False,
+    help="Promote seeded memories to the hot cache (default: no)",
 )
 @click.option(
     "--tag",
@@ -466,10 +466,11 @@ def bootstrap(
     tags: tuple[str, ...],
     quiet: bool,
 ) -> None:
-    """Bootstrap hot cache from project documentation files.
+    """Store memories from project documentation files.
 
-    Scans for common documentation files (README.md, CLAUDE.md, etc.),
-    parses them into memories, and promotes to hot cache.
+    Scans for common documentation files (README.md, CONTRIBUTING.md, etc.)
+    and parses them into memories. CLAUDE.md is skipped because Claude Code
+    already injects it.
 
     Examples:
 
@@ -482,8 +483,8 @@ def bootstrap(
         # Bootstrap specific files only
         memory-mcp-cli bootstrap -f README.md -f ARCHITECTURE.md
 
-        # Bootstrap without promoting to hot cache
-        memory-mcp-cli bootstrap --no-promote
+        # Bootstrap and promote everything to the hot cache
+        memory-mcp-cli bootstrap --promote
 
         # JSON output for scripting
         memory-mcp-cli --json bootstrap

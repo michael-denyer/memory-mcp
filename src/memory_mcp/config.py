@@ -383,10 +383,10 @@ class Settings(BaseSettings):
     model_config = {"env_prefix": "MEMORY_MCP_"}
 
 
-# Default files to auto-detect for bootstrap (priority order)
+# Default files to auto-detect for bootstrap (priority order).
+# CLAUDE.md and .claude/CLAUDE.md are absent on purpose. Claude Code already
+# injects them, so seeding them duplicates context.
 BOOTSTRAP_DEFAULT_FILES = (
-    "CLAUDE.md",
-    ".claude/CLAUDE.md",
     "README.md",
     "README",
     "CONTRIBUTING.md",

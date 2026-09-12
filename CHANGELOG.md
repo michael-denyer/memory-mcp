@@ -32,6 +32,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `EmbeddingEngine`, so a hook that only reads SQL never touches the model stack
 - **Schema version 19** - `migrate_v18_to_v19` drops `mining_runs`, `mined_patterns` and
   `output_log`. Existing databases lose the three tables the first time they are opened
+- **`bootstrap` promotes only when asked** - `--promote` is opt-in and `--no-promote` is the
+  default. Bootstrapping a repo used to push every parsed chunk into the hot cache, which buried
+  the memories that earned their place through use
+- **`bootstrap` skips `CLAUDE.md` and `.claude/CLAUDE.md`** - Claude Code already injects both,
+  so seeding them duplicated context. The default file list is now `README.md`, `README`,
+  `CONTRIBUTING.md`, `docs/README.md` and `ARCHITECTURE.md`
 
 ### Fixed
 

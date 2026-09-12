@@ -165,6 +165,30 @@ class TestLogResponseCommand:
         assert memory_id in recalled
 
 
+class TestBootstrapCommand:
+    """Tests for the bootstrap CLI command."""
+
+    def test_bootstrap_skips_claude_md_and_does_not_promote(self, temp_db, tmp_path, capsys):
+        """Claude Code already injects CLAUDE.md, and bootstrap no longer promotes."""
+        (tmp_path / "CLAUDE.md").write_text("- the claude instruction is aardvark-7\n")
+        (tmp_path / "README.md").write_text("- the readme fact is buffalo-9\n")
+
+        with patch("sys.argv", ["memory-mcp-cli", "bootstrap", "-r", str(tmp_path)]):
+            assert main() == 0
+
+        storage = Storage(Settings(db_path=temp_db))
+        try:
+            with storage._connection() as conn:
+                rows = conn.execute("SELECT content, is_hot FROM memories").fetchall()
+        finally:
+            storage.close()
+
+        contents = [row["content"] for row in rows]
+        assert any("buffalo-9" in c for c in contents)
+        assert not any("aardvark-7" in c for c in contents)
+        assert [row["is_hot"] for row in rows] == [0] * len(rows)
+
+
 class TestSeedCommand:
     """Tests for the seed CLI command."""
 
