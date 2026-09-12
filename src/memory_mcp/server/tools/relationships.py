@@ -1,4 +1,4 @@
-"""Relationship tools: link_memories, unlink_memories, get_related_memories, relationship_stats."""
+"""Relationship tools: link_memories, get_related_memories."""
 
 from typing import Annotated
 
@@ -7,11 +7,9 @@ from pydantic import Field
 from memory_mcp.responses import (
     RelatedMemoryResponse,
     RelationshipResponse,
-    RelationshipStatsResponse,
     error_response,
     memory_to_response,
     relation_to_response,
-    success_response,
 )
 from memory_mcp.server.app import mcp, storage
 from memory_mcp.storage import RelationType
@@ -71,38 +69,6 @@ def link_memories(
 
 
 @mcp.tool
-def unlink_memories(
-    from_memory_id: Annotated[int, Field(description="Source memory ID")],
-    to_memory_id: Annotated[int, Field(description="Target memory ID")],
-    relation_type: Annotated[
-        str | None,
-        Field(description="Specific relation type to remove, or None to remove all"),
-    ] = None,
-) -> dict:
-    """Remove relationship(s) between two memories.
-
-    If relation_type is specified, only removes that specific relationship.
-    If not specified, removes all relationships between the two memories.
-    """
-    rel_type = None
-    if relation_type:
-        rel_type = parse_relation_type(relation_type)
-        if rel_type is None:
-            return invalid_relation_type_error()
-
-    count = storage.unlink_memories(from_memory_id, to_memory_id, rel_type)
-    if count == 0:
-        return error_response(
-            f"No relationships found between #{from_memory_id} and #{to_memory_id}"
-        )
-
-    return success_response(
-        f"Removed {count} relationship(s) between #{from_memory_id} and #{to_memory_id}",
-        removed_count=count,
-    )
-
-
-@mcp.tool
 def get_related_memories(
     memory_id: Annotated[int, Field(description="Memory ID to find relationships for")],
     relation_type: Annotated[
@@ -142,10 +108,3 @@ def get_related_memories(
         )
         for memory, relation in related
     ]
-
-
-@mcp.tool
-def relationship_stats() -> RelationshipStatsResponse:
-    """Get statistics about memory relationships in the knowledge graph."""
-    stats = storage.get_relationship_stats()
-    return RelationshipStatsResponse(**stats)

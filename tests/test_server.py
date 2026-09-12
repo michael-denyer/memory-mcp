@@ -181,97 +181,6 @@ class TestHotCacheEffectiveness:
 # ========== Trust Management Tools Tests ==========
 
 
-class TestTrustManagementTools:
-    """Tests for trust strengthening/weakening via storage layer.
-
-    Note: MCP tools are decorated with @mcp.tool and can't be called directly.
-    These tests verify the underlying storage methods that the tools use.
-    """
-
-    def test_strengthen_trust_increases_score(self, storage):
-        """strengthen_trust() should increase the trust score."""
-        from memory_mcp.storage import MemorySource
-
-        # Use mined memory which starts at 0.7
-        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT, source=MemorySource.MINED)
-        original = storage.get_memory(mid)
-
-        new_trust = storage.strengthen_trust(mid, boost=0.15)
-
-        assert abs(new_trust - (original.trust_score + 0.15)) < 0.001
-        updated = storage.get_memory(mid)
-        assert abs(updated.trust_score - new_trust) < 0.001
-
-    def test_strengthen_trust_caps_at_one(self, storage):
-        """strengthen_trust() should cap trust at 1.0."""
-        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
-
-        # Boost multiple times (manual starts at 1.0)
-        for _ in range(15):
-            result = storage.strengthen_trust(mid, boost=0.1)
-
-        assert result == 1.0
-
-    def test_strengthen_trust_not_found(self, storage):
-        """strengthen_trust() should return None for nonexistent memory."""
-        result = storage.strengthen_trust(99999, boost=0.1)
-        assert result is None
-
-    def test_weaken_trust_decreases_score(self, storage):
-        """weaken_trust() should decrease the trust score."""
-        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
-        original = storage.get_memory(mid)
-
-        new_trust = storage.weaken_trust(mid, penalty=0.2)
-
-        assert abs(new_trust - (original.trust_score - 0.2)) < 0.001
-        updated = storage.get_memory(mid)
-        assert abs(updated.trust_score - new_trust) < 0.001
-
-    def test_weaken_trust_floors_at_zero(self, storage):
-        """weaken_trust() should floor trust at 0.0."""
-        from memory_mcp.storage import MemorySource
-
-        # Use mined memory which starts at 0.7
-        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT, source=MemorySource.MINED)
-
-        # Weaken with a large penalty to definitely hit zero
-        result = storage.weaken_trust(mid, penalty=1.0)
-
-        assert result == 0.0
-
-    def test_weaken_trust_not_found(self, storage):
-        """weaken_trust() should return None for nonexistent memory."""
-        result = storage.weaken_trust(99999, penalty=0.1)
-        assert result is None
-
-    def test_trust_affects_recall_ranking(self, storage):
-        """Low trust memories should have lower decayed trust in recall results."""
-        from memory_mcp.storage import MemorySource
-
-        # Create two similar memories
-        mid1, _ = storage.store_memory("Database configuration settings", MemoryType.PROJECT)
-        mid2, _ = storage.store_memory(
-            "Database configuration options", MemoryType.PROJECT, source=MemorySource.MINED
-        )
-
-        # Weaken trust on second memory significantly
-        storage.weaken_trust(mid2, penalty=0.5)
-
-        # Recall should return both memories
-        result = storage.recall("database configuration", threshold=0.3)
-        assert len(result.memories) == 2
-
-        # Find each memory in results
-        mem1 = next(m for m in result.memories if m.id == mid1)
-        mem2 = next(m for m in result.memories if m.id == mid2)
-
-        # The manual one (mid1) should have higher trust than weakened one (mid2)
-        assert mem1.trust_score > mem2.trust_score
-        assert mem1.trust_score == 1.0  # Manual memory, never weakened
-        assert mem2.trust_score < 0.3  # Started at 0.7, weakened by 0.5
-
-
 # ========== Auto-Bootstrap Tests ==========
 
 
@@ -645,24 +554,6 @@ class TestEmptyContentValidation:
         assert "empty" in result.get("error", "").lower()
 
 
-# ========== Maintenance Tool Tests ==========
-
-
-def test_run_cleanup_returns_without_mining_keys(storage, monkeypatch):
-    """run_cleanup reads only the keys run_full_cleanup still returns."""
-    import memory_mcp.server.tools.maintenance as maintenance_module
-
-    monkeypatch.setattr(maintenance_module, "storage", storage)
-
-    result = maintenance_module.run_cleanup()
-
-    assert result["success"] is True
-    assert "patterns_expired" not in result
-    assert "logs_deleted" not in result
-    assert result["hot_cache_demoted"] == 0
-    assert result["memories_deleted"] == 0
-
-
 # ========== Context Shaping Tests ==========
 
 
@@ -968,3 +859,34 @@ class TestInputValidation:
         # Should return list, not error
         assert isinstance(result, list)
         assert len(result) >= 1
+
+
+class TestRegisteredTools:
+    """Tests for the MCP tool surface."""
+
+    def test_registered_tool_names_are_exactly_the_kept_set(self):
+        """The server registers only the sixteen supported tools."""
+        import asyncio
+
+        from memory_mcp.server.app import mcp
+
+        expected = {
+            "remember",
+            "recall",
+            "forget",
+            "list_memories",
+            "memory_stats",
+            "hot_cache_status",
+            "promote",
+            "demote",
+            "pin",
+            "unpin",
+            "mark_memory_used",
+            "link_memories",
+            "get_related_memories",
+            "end_session",
+            "bootstrap_project",
+            "db_maintenance",
+        }
+        registered = {tool.name for tool in asyncio.run(mcp.list_tools())}
+        assert registered == expected

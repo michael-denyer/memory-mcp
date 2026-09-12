@@ -1,4 +1,4 @@
-"""Session tools: get_sessions, get_session, get_session_memories, etc."""
+"""Session tools: end_session."""
 
 from typing import Annotated
 
@@ -6,122 +6,10 @@ from pydantic import Field
 
 from memory_mcp.helpers import parse_memory_type
 from memory_mcp.responses import (
-    CrossSessionPatternResponse,
-    MemoryResponse,
-    SessionResponse,
     error_response,
-    memory_to_response,
-    session_to_response,
-    success_response,
 )
 from memory_mcp.server.app import mcp, storage
 from memory_mcp.storage import MemoryType
-
-
-@mcp.tool
-def get_sessions(
-    limit: Annotated[int, Field(description="Maximum sessions to return")] = 20,
-    project_path: Annotated[
-        str | None, Field(description="Filter to sessions from this project path")
-    ] = None,
-) -> list[SessionResponse]:
-    """Get recent conversation sessions.
-
-    Sessions track which conversations memories originated from.
-    Use this to see conversation history and navigate to specific sessions.
-    """
-    sessions = storage.get_sessions(limit=limit, project_path=project_path)
-    return [session_to_response(s) for s in sessions]
-
-
-@mcp.tool
-def get_session(
-    session_id: Annotated[str, Field(description="Session ID to retrieve")],
-) -> SessionResponse | dict:
-    """Get details for a specific session."""
-    session = storage.get_session(session_id)
-    if session is None:
-        return error_response(f"Session not found: {session_id}")
-    return session_to_response(session)
-
-
-@mcp.tool
-def get_session_memories(
-    session_id: Annotated[str, Field(description="Session ID to get memories from")],
-    limit: Annotated[int, Field(description="Maximum memories to return")] = 100,
-) -> list[MemoryResponse] | dict:
-    """Get all memories from a specific conversation session.
-
-    Use this to explore what was learned during a particular conversation.
-    """
-    session = storage.get_session(session_id)
-    if session is None:
-        return error_response(f"Session not found: {session_id}")
-
-    memories = storage.get_session_memories(session_id, limit=limit)
-    return [memory_to_response(m) for m in memories]
-
-
-@mcp.tool
-def cross_session_patterns(
-    min_sessions: Annotated[
-        int, Field(description="Minimum sessions a pattern must appear in")
-    ] = 2,
-) -> list[CrossSessionPatternResponse]:
-    """Find content patterns appearing across multiple conversation sessions.
-
-    Useful for identifying frequently-discussed topics that might warrant
-    promotion to hot cache. Patterns appearing in many sessions are likely
-    important project knowledge.
-
-    Returns patterns sorted by session count and total accesses.
-    """
-    patterns = storage.get_cross_session_patterns(min_sessions=min_sessions)
-    # Construct from explicit fields: the storage dict also carries id/is_hot
-    # for the dashboard, which are not part of this response model.
-    return [
-        CrossSessionPatternResponse(
-            content=p["content"],
-            memory_type=p["memory_type"],
-            session_count=p["session_count"],
-            total_accesses=p["total_accesses"],
-            sessions=p["sessions"],
-        )
-        for p in patterns
-    ]
-
-
-@mcp.tool
-def set_session_topic(
-    session_id: Annotated[str, Field(description="Session ID to update")],
-    topic: Annotated[str, Field(description="Topic description for the session")],
-) -> dict:
-    """Set or update the topic for a conversation session.
-
-    Topics help identify what conversations were about when reviewing
-    session history. Can be auto-detected or manually set.
-    """
-    if storage.update_session_topic(session_id, topic):
-        return success_response(f"Updated topic for session {session_id}", topic=topic)
-    return error_response(f"Session not found: {session_id}")
-
-
-@mcp.tool
-def summarize_session(
-    session_id: Annotated[str, Field(description="Session ID to summarize")],
-) -> dict:
-    """Summarize a session's key decisions, insights, and action items.
-
-    Groups session memories by semantic category to extract structured knowledge:
-    - Decisions: Choices made and their rationale
-    - Insights: Lessons learned, antipatterns, landmines, constraints
-    - Action Items: TODOs, bugs, tasks to complete
-    - Context: Background info, conventions, preferences, architecture
-
-    Use this before end_session() to review what was captured, or anytime
-    to get a structured view of a conversation's key takeaways.
-    """
-    return storage.summarize_session(session_id)
 
 
 @mcp.tool

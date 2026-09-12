@@ -1,26 +1,19 @@
 """Tests for embedding provider interface."""
 
-import builtins
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 
 from memory_mcp.config import Settings
 from memory_mcp.embeddings import (
-    MLX_MODEL_MAPPINGS,
     BaseEmbeddingProvider,
     CachedEmbeddingProvider,
     EmbeddingEngine,
     EmbeddingProvider,
-    MLXEmbeddingProvider,
     SentenceTransformerProvider,
-    _get_mlx_model_name,
-    _should_use_mlx,
     content_hash,
     create_provider,
-    is_apple_silicon,
-    is_mlx_available,
 )
 
 
@@ -252,7 +245,6 @@ class TestSentenceTransformerProvider:
     def test_provider_passes_device_from_settings(self):
         """A configured embedding_device should reach SentenceTransformer."""
         settings = Settings(
-            embedding_backend="sentence-transformers",
             embedding_device="cpu",
         )
         provider = create_provider(settings)
@@ -267,7 +259,6 @@ class TestSentenceTransformerProvider:
     def test_provider_omits_device_when_setting_is_none(self):
         """With no configured device the library default should stand."""
         settings = Settings(
-            embedding_backend="sentence-transformers",
             embedding_device=None,
         )
         provider = create_provider(settings)
@@ -278,28 +269,6 @@ class TestSentenceTransformerProvider:
             provider.embed("test")
 
         assert "device" not in mock_st.call_args.kwargs
-
-
-class TestCreateProvider:
-    """Tests for the provider factory."""
-
-    def test_force_sentence_transformers_backend(self):
-        """Setting backend to sentence-transformers should force SentenceTransformerProvider."""
-        settings = Settings(
-            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-            embedding_backend="sentence-transformers",
-        )
-        provider = create_provider(settings)
-        assert isinstance(provider, SentenceTransformerProvider)
-
-    def test_force_st_backend_shorthand(self):
-        """Setting backend to 'st' should force SentenceTransformerProvider."""
-        settings = Settings(
-            embedding_model="custom/model",
-            embedding_backend="st",
-        )
-        provider = create_provider(settings)
-        assert isinstance(provider, SentenceTransformerProvider)
 
 
 class TestEmbeddingEngine:
@@ -349,205 +318,23 @@ class TestContentHash:
         assert all(c in "0123456789abcdef" for c in h)
 
 
-# ========== MLX Provider Tests ==========
+class TestCreateProviderIsPlatformIndependent:
+    """The factory returns one provider everywhere."""
 
-
-class TestPlatformDetection:
-    """Tests for Apple Silicon and MLX detection functions."""
-
-    def test_is_apple_silicon_darwin_arm64(self):
-        """Should return True on Darwin arm64."""
-        with patch("memory_mcp.embeddings.platform") as mock_platform:
-            mock_platform.system.return_value = "Darwin"
-            mock_platform.machine.return_value = "arm64"
-            assert is_apple_silicon() is True
-
-    def test_is_apple_silicon_darwin_x86(self):
-        """Should return False on Darwin x86_64."""
-        with patch("memory_mcp.embeddings.platform") as mock_platform:
-            mock_platform.system.return_value = "Darwin"
-            mock_platform.machine.return_value = "x86_64"
-            assert is_apple_silicon() is False
-
-    def test_is_apple_silicon_linux(self):
-        """Should return False on Linux."""
-        with patch("memory_mcp.embeddings.platform") as mock_platform:
-            mock_platform.system.return_value = "Linux"
-            mock_platform.machine.return_value = "arm64"
-            assert is_apple_silicon() is False
-
-    def test_is_mlx_available_when_installed(self):
-        """Should return True when mlx.core can be imported."""
-        with patch.dict("sys.modules", {"mlx.core": MagicMock()}):
-            # Need to reload to pick up the mock
-            with patch("builtins.__import__", side_effect=lambda name, *args: MagicMock()):
-                # Direct test: mlx.core import succeeds
-                assert is_mlx_available() is True
-
-    def test_is_mlx_available_when_not_installed(self):
-        """Should return False when mlx.core import fails."""
-        with patch.dict("sys.modules", {"mlx": None, "mlx.core": None}):
-            with patch("builtins.__import__", side_effect=ImportError("No module named 'mlx'")):
-                assert is_mlx_available() is False
-
-    def test_is_mlx_available_false_when_import_raises_non_import_error(self):
-        """Should return False when the mlx import raises something other than ImportError.
-
-        transformers 5.13 makes the mlx_embeddings import chain raise AttributeError from
-        mlx_lm's module body, which propagates out of __import__ past an ImportError guard.
-        """
-        real_import = builtins.__import__
-
-        def crash_on_mlx(name, *args, **kwargs):
-            if name.startswith("mlx_embeddings"):
-                raise AttributeError("'str' object has no attribute '__module__'")
-            return real_import(name, *args, **kwargs)
-
-        with patch("builtins.__import__", crash_on_mlx):
-            assert is_mlx_available() is False
-
-
-class TestMLXModelMappings:
-    """Tests for MLX model name mappings."""
-
-    def test_direct_mapping_exists(self):
-        """Known models should have direct mappings."""
-        assert "sentence-transformers/all-MiniLM-L6-v2" in MLX_MODEL_MAPPINGS
-        assert "all-MiniLM-L6-v2" in MLX_MODEL_MAPPINGS
-
-    def test_get_mlx_model_name_direct_mapping(self):
-        """Should return mapped model for known models."""
-        result = _get_mlx_model_name("sentence-transformers/all-MiniLM-L6-v2")
-        assert result == "mlx-community/all-MiniLM-L6-v2-4bit"
-
-    def test_get_mlx_model_name_short_name(self):
-        """Should handle short model names."""
-        result = _get_mlx_model_name("all-MiniLM-L6-v2")
-        assert result == "mlx-community/all-MiniLM-L6-v2-4bit"
-
-    def test_get_mlx_model_name_already_mlx(self):
-        """Should pass through mlx-community models unchanged."""
-        result = _get_mlx_model_name("mlx-community/custom-model")
-        assert result == "mlx-community/custom-model"
-
-    def test_get_mlx_model_name_unmapped_st_model(self):
-        """Should construct mlx-community name for unmapped ST models."""
-        result = _get_mlx_model_name("sentence-transformers/unknown-model")
-        assert result == "mlx-community/unknown-model-4bit"
-
-    def test_get_mlx_model_name_passthrough(self):
-        """Should pass through unknown models unchanged."""
-        result = _get_mlx_model_name("custom-model")
-        assert result == "custom-model"
-
-
-class TestShouldUseMLX:
-    """Tests for _should_use_mlx backend selection logic."""
-
-    def test_force_mlx_backend(self):
-        """Should use MLX when backend is 'mlx'."""
-        settings = Settings(embedding_backend="mlx")
-        assert _should_use_mlx(settings) is True
-
-    def test_force_sentence_transformers_backend(self):
-        """Should not use MLX when backend is 'sentence-transformers'."""
-        settings = Settings(embedding_backend="sentence-transformers")
-        assert _should_use_mlx(settings) is False
-
-    def test_force_st_shorthand(self):
-        """Should not use MLX when backend is 'st'."""
-        settings = Settings(embedding_backend="st")
-        assert _should_use_mlx(settings) is False
-
-    def test_auto_on_apple_silicon_with_mlx(self):
-        """Should use MLX on Apple Silicon when available."""
-        settings = Settings(embedding_backend="auto")
-        with patch("memory_mcp.embeddings.is_apple_silicon", return_value=True):
-            with patch("memory_mcp.embeddings.is_mlx_available", return_value=True):
-                assert _should_use_mlx(settings) is True
-
-    def test_auto_on_apple_silicon_without_mlx(self):
-        """Should not use MLX on Apple Silicon when not installed."""
-        settings = Settings(embedding_backend="auto")
-        with patch("memory_mcp.embeddings.is_apple_silicon", return_value=True):
-            with patch("memory_mcp.embeddings.is_mlx_available", return_value=False):
-                assert _should_use_mlx(settings) is False
-
-    def test_auto_on_non_apple(self):
-        """Should not use MLX on non-Apple platforms."""
-        settings = Settings(embedding_backend="auto")
-        with patch("memory_mcp.embeddings.is_apple_silicon", return_value=False):
-            with patch("memory_mcp.embeddings.is_mlx_available", return_value=True):
-                assert _should_use_mlx(settings) is False
-
-    def test_unknown_backend_falls_back_to_auto(self):
-        """Unknown backend should fall back to auto-detection."""
-        settings = Settings(embedding_backend="unknown")
-        with patch("memory_mcp.embeddings.is_apple_silicon", return_value=True):
-            with patch("memory_mcp.embeddings.is_mlx_available", return_value=True):
-                assert _should_use_mlx(settings) is True
-
-
-class TestMLXEmbeddingProvider:
-    """Tests for MLXEmbeddingProvider class."""
-
-    def test_provider_properties(self):
-        """Provider should expose dimension and name."""
-        provider = MLXEmbeddingProvider("mlx-community/test-model", 384)
-        assert provider.dimension == 384
-        assert provider.name == "mlx:mlx-community/test-model"
-
-    def test_lazy_loading(self):
-        """Model should not load until first use."""
-        provider = MLXEmbeddingProvider("mlx-community/test-model", 384)
-        assert provider._model is None
-        assert provider._tokenizer is None
-
-    def test_import_error_message(self):
-        """Should provide helpful error when MLX not installed."""
-        provider = MLXEmbeddingProvider("mlx-community/test-model", 384)
-
-        with patch.dict("sys.modules", {"mlx_embeddings": None, "mlx_embeddings.utils": None}):
-            with pytest.raises(ImportError, match="MLX dependencies not installed"):
-                provider._get_model()
-
-
-class TestCreateProviderWithMLX:
-    """Tests for create_provider with MLX backend selection."""
-
-    def test_creates_mlx_provider_when_forced(self):
-        """Should create MLXEmbeddingProvider when backend is 'mlx'."""
-        settings = Settings(embedding_backend="mlx")
-        provider = create_provider(settings)
-        assert isinstance(provider, MLXEmbeddingProvider)
-
-    def test_creates_st_provider_when_forced(self):
-        """Should create SentenceTransformerProvider when backend is 'st'."""
-        settings = Settings(embedding_backend="st")
-        provider = create_provider(settings)
-        assert isinstance(provider, SentenceTransformerProvider)
-
-    def test_creates_mlx_provider_on_apple_silicon(self):
-        """Should create MLXEmbeddingProvider on Apple Silicon with auto."""
-        settings = Settings(embedding_backend="auto")
-        with patch("memory_mcp.embeddings.is_apple_silicon", return_value=True):
-            with patch("memory_mcp.embeddings.is_mlx_available", return_value=True):
-                provider = create_provider(settings)
-                assert isinstance(provider, MLXEmbeddingProvider)
-
-    def test_creates_st_provider_on_non_apple(self):
-        """Should create SentenceTransformerProvider on non-Apple with auto."""
-        settings = Settings(embedding_backend="auto")
-        with patch("memory_mcp.embeddings.is_apple_silicon", return_value=False):
-            provider = create_provider(settings)
-            assert isinstance(provider, SentenceTransformerProvider)
-
-    def test_mlx_model_mapping_applied(self):
-        """Should map ST model names to MLX equivalents."""
+    @pytest.mark.parametrize(
+        ("system", "machine"),
+        [("Darwin", "arm64"), ("Darwin", "x86_64"), ("Linux", "x86_64")],
+    )
+    def test_create_provider_returns_sentence_transformers_on_every_platform(self, system, machine):
+        """create_provider ignores the host platform."""
         settings = Settings(
-            embedding_backend="mlx",
             embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+            embedding_dim=384,
         )
-        provider = create_provider(settings)
-        assert isinstance(provider, MLXEmbeddingProvider)
-        assert "mlx-community" in provider._model_name
+        with (
+            patch("platform.system", return_value=system),
+            patch("platform.machine", return_value=machine),
+        ):
+            provider = create_provider(settings)
+        assert isinstance(provider, SentenceTransformerProvider)
+        assert provider.name == "sentence-transformers:sentence-transformers/all-MiniLM-L6-v2"

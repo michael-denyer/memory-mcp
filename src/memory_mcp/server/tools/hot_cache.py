@@ -1,13 +1,11 @@
-"""Hot cache tools: hot_cache_status, metrics_status, promote, demote, pin, unpin."""
+"""Hot cache tools: hot_cache_status, promote, demote, pin, unpin."""
 
 from typing import Annotated
 
 from pydantic import Field
 
 from memory_mcp.logging import (
-    metrics,
     record_hot_cache_change,
-    update_hot_cache_stats,
 )
 from memory_mcp.responses import (
     HotCacheEffectivenessResponse,
@@ -67,28 +65,6 @@ def hot_cache_status() -> HotCacheResponse:
             least_accessed_id=least_accessed.id if least_accessed else None,
         ),
     )
-
-
-@mcp.tool
-def metrics_status() -> dict:
-    """Get observability metrics for monitoring and debugging.
-
-    Returns counters and gauges for key operations:
-    - recall: queries, results returned/gated, hot hits, empty results
-    - store: total stores, by type, merges, contradictions
-    - hot_cache: promotions, demotions, evictions, utilization
-
-    Useful for debugging performance issues, monitoring usage patterns,
-    and understanding system behavior.
-    """
-    # Update hot cache gauges before returning
-    stats = storage.get_hot_cache_stats()
-    update_hot_cache_stats(
-        size=stats["current_count"],
-        max_size=stats["max_items"],
-        pinned=stats["pinned_count"],
-    )
-    return {"success": True, **metrics.snapshot()}
 
 
 @mcp.tool

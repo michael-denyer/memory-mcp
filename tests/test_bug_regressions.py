@@ -12,6 +12,7 @@ from memory_mcp.storage import (
     MemoryType,
     RecallMode,
     Storage,
+    TrustReason,
 )
 
 
@@ -800,58 +801,6 @@ class TestTrustScoring:
 class TestTrustStrengthening:
     """Tests for trust strengthening/weakening system (Engram-inspired)."""
 
-    def test_strengthen_trust_increases_score(self, storage):
-        """strengthen_trust() should increase the trust score."""
-        # Use mined memory which starts with lower trust (0.7)
-        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT, source=MemorySource.MINED)
-        original = storage.get_memory(mid)
-        original_trust = original.trust_score  # 0.7
-
-        new_trust = storage.strengthen_trust(mid, boost=0.1)
-        assert abs(new_trust - (original_trust + 0.1)) < 0.001
-
-        # Verify persisted
-        updated = storage.get_memory(mid)
-        assert abs(updated.trust_score - new_trust) < 0.001
-
-    def test_strengthen_trust_caps_at_one(self, storage):
-        """strengthen_trust() should cap trust at 1.0."""
-        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
-
-        # Boost multiple times (starts at 1.0 for manual)
-        for _ in range(15):
-            storage.strengthen_trust(mid, boost=0.1)
-
-        updated = storage.get_memory(mid)
-        assert updated.trust_score == 1.0
-
-    def test_strengthen_trust_refreshes_last_accessed(self, storage):
-        """strengthen_trust() should update last_accessed_at."""
-        mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
-
-        # First recall to set initial last_accessed_at
-        storage.recall("Test memory", threshold=0.0)
-
-        original = storage.get_memory(mid)
-        # last_accessed_at should now be set
-        assert original.last_accessed_at is not None
-
-        import time
-
-        time.sleep(0.05)  # Small delay to ensure timestamp difference
-
-        storage.strengthen_trust(mid, boost=0.05)
-
-        updated = storage.get_memory(mid)
-        # After strengthen_trust, last_accessed_at should be updated
-        assert updated.last_accessed_at is not None
-        assert updated.last_accessed_at >= original.last_accessed_at
-
-    def test_strengthen_trust_nonexistent_returns_none(self, storage):
-        """strengthen_trust() should return None for nonexistent memory."""
-        result = storage.strengthen_trust(99999, boost=0.1)
-        assert result is None
-
     def test_weaken_trust_decreases_score(self, storage):
         """weaken_trust() should decrease the trust score."""
         mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
@@ -885,8 +834,8 @@ class TestTrustStrengthening:
         """Trust decay should use last_accessed_at when available."""
         mid, _ = storage.store_memory("Test memory", MemoryType.PROJECT)
 
-        # Strengthen to refresh last_accessed_at
-        storage.strengthen_trust(mid, boost=0.0)  # Just refresh timestamp
+        # Adjust with a zero delta to refresh last_accessed_at
+        storage.adjust_trust(mid, reason=TrustReason.USED_CORRECTLY, delta=0.0)
 
         # The memory should have minimal decay since it was just accessed
         result = storage.recall("Test memory", threshold=0.0)
@@ -1020,50 +969,6 @@ class TestRecallGuidance:
         if result.confidence == "medium":
             assert "MEDIUM" in result.guidance
             assert "verify" in result.guidance.lower()
-
-
-class TestRecallWithFallback:
-    """Tests for multi-query fallback recall."""
-
-    def test_fallback_tries_patterns_first(self, storage):
-        """Fallback should search patterns before project facts."""
-        # Store in different types
-        storage.store_memory("import pandas as pd", MemoryType.PATTERN)
-        storage.store_memory("This project uses pandas", MemoryType.PROJECT)
-
-        # Use exploratory mode for lower threshold with mock embeddings
-        result = storage.recall_with_fallback("pandas", min_results=1, mode=RecallMode.EXPLORATORY)
-        assert len(result.memories) >= 1
-
-    def test_fallback_continues_on_no_results(self, storage):
-        """Fallback should continue to next type if no results."""
-        # Only store in PROJECT type
-        storage.store_memory("FastAPI web framework setup", MemoryType.PROJECT)
-
-        # Fallback tries PATTERN first (no results), then PROJECT
-        # Use exploratory mode to have lower threshold
-        result = storage.recall_with_fallback("FastAPI", mode=RecallMode.EXPLORATORY, min_results=1)
-        assert len(result.memories) >= 1
-
-    def test_fallback_respects_mode(self, storage):
-        """Fallback should use specified recall mode."""
-        storage.store_memory("Test content for fallback mode", MemoryType.PROJECT)
-
-        result = storage.recall_with_fallback(
-            "test fallback", mode=RecallMode.EXPLORATORY, min_results=1
-        )
-        assert result.mode == RecallMode.EXPLORATORY
-
-    def test_fallback_returns_best_result(self, storage):
-        """Fallback should return best result if min not met."""
-        storage.store_memory("Unique content abc123", MemoryType.PROJECT)
-
-        result = storage.recall_with_fallback(
-            "abc123",
-            min_results=10,  # More than we can match
-        )
-        # Should still return what was found
-        assert result is not None
 
 
 class TestRecallTypeFiltering:

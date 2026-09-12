@@ -26,7 +26,6 @@ from memory_mcp.models import HotCacheMetrics
 from memory_mcp.storage.audit import AuditMixin
 from memory_mcp.storage.bootstrap import BootstrapMixin
 from memory_mcp.storage.consolidation import ConsolidationMixin
-from memory_mcp.storage.contradictions import ContradictionsMixin
 from memory_mcp.storage.hot_cache import HotCacheMixin
 from memory_mcp.storage.injection_tracking import InjectionTrackingMixin
 from memory_mcp.storage.maintenance import MaintenanceMixin
@@ -47,7 +46,6 @@ class Storage(
     MaintenanceMixin,
     RetrievalMixin,
     RelationshipsMixin,
-    ContradictionsMixin,
     SessionsMixin,
     HotCacheMixin,
     ConsolidationMixin,
@@ -65,7 +63,6 @@ class Storage(
     - MaintenanceMixin: Database maintenance operations
     - RetrievalMixin: RAG-inspired retrieval tracking
     - RelationshipsMixin: Knowledge graph relationships
-    - ContradictionsMixin: Contradiction detection
     - SessionsMixin: Session management and episodic memory
     - HotCacheMixin: Hot cache operations
     - ConsolidationMixin: Memory consolidation

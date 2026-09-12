@@ -21,6 +21,4 @@ Arguments:
 
 Use `mcp__memory__link_memories` tool.
 
-After linking, offer to:
-- View the knowledge graph with `mcp__memory__get_related_memories`
-- Find contradictions with `mcp__memory__find_contradictions`
+After linking, offer to view the knowledge graph with `mcp__memory__get_related_memories`.

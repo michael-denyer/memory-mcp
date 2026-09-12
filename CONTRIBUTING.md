@@ -18,18 +18,10 @@ git clone https://github.com/michael-denyer/memory-mcp.git
 cd memory-mcp
 
 # Install dependencies (including dev tools)
-uv sync
+uv sync --group dev
 
 # Run tests to verify setup
 uv run pytest -v
-```
-
-### Optional: Apple Silicon Acceleration
-
-If you're on an M-series Mac, install with MLX extras for faster embeddings:
-
-```bash
-uv sync --extra mlx
 ```
 
 ## Project Structure
@@ -49,7 +41,7 @@ src/memory_mcp/
 │   └── ...             # 14 mixin modules total
 ├── config.py           # Settings and configuration
 ├── cli.py              # CLI commands for hooks and administration
-├── embeddings.py       # Embedding providers (sentence-transformers, MLX)
+├── embeddings.py       # Embedding provider (sentence-transformers)
 ├── responses.py        # Pydantic response models for MCP tools
 ├── models.py           # Enums and dataclasses (domain models)
 ├── migrations.py       # Database schema and version migrations

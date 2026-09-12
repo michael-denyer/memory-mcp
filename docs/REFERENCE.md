@@ -20,7 +20,6 @@ With the Claude Code plugin (`claude plugins add michael-denyer/memory-mcp`), th
 | `/memory-mcp:consolidate` | Merge duplicate memories |
 | `/memory-mcp:maintenance` | Run database maintenance |
 | `/memory-mcp:session` | Manage session context |
-| `/memory-mcp:test-all` | Run internal tests |
 
 ## Tools
 

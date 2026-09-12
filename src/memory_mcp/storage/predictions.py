@@ -163,50 +163,6 @@ class PredictionsMixin:
 
         return promoted_ids
 
-    def get_all_access_patterns(
-        self,
-        min_count: int = 2,
-        limit: int = 50,
-    ) -> list[AccessPattern]:
-        """Get all learned access patterns across all memories.
-
-        Args:
-            min_count: Minimum access count to include
-            limit: Maximum patterns to return
-
-        Returns:
-            Patterns sorted by count descending.
-        """
-        with self._connection() as conn:
-            # First get totals per source memory for probability calculation
-            rows = conn.execute(
-                """
-                SELECT
-                    s.from_memory_id,
-                    s.to_memory_id,
-                    s.count,
-                    s.last_seen,
-                    (SELECT SUM(count) FROM access_sequences
-                     WHERE from_memory_id = s.from_memory_id) as total
-                FROM access_sequences s
-                WHERE s.count >= ?
-                ORDER BY s.count DESC
-                LIMIT ?
-                """,
-                (min_count, limit),
-            ).fetchall()
-
-            return [
-                AccessPattern(
-                    from_memory_id=row["from_memory_id"],
-                    to_memory_id=row["to_memory_id"],
-                    count=row["count"],
-                    probability=row["count"] / row["total"] if row["total"] else 0,
-                    last_seen=datetime.fromisoformat(row["last_seen"]),
-                )
-                for row in rows
-            ]
-
     def decay_old_sequences(self) -> int:
         """Decay access sequences older than sequence_decay_days.
 

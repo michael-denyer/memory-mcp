@@ -38,6 +38,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`bootstrap` skips `CLAUDE.md` and `.claude/CLAUDE.md`** - Claude Code already injects both,
   so seeding them duplicated context. The default file list is now `README.md`, `README`,
   `CONTRIBUTING.md`, `docs/README.md` and `ARCHITECTURE.md`
+- **`sentence-transformers` is the only embedding provider** - It runs on every platform, Apple
+  Silicon included. There is no backend to select and no hardware detection at startup. The
+  `MEMORY_MCP_EMBEDDING_BACKEND` setting is gone rather than left to be silently ignored
+- **Three slash commands are gone** - `/memory-mcp:trust` and `/memory-mcp:consolidate` drove only
+  removed tools. `memory-mcp-cli consolidate` still merges similar memories from the command
+  line, so consolidation itself is unchanged. `/memory-mcp:test-all` and the
+  `commands/resources/testing/` scripts it drove are gone as well, because they walked Claude
+  through tools that no longer register
+- **Six slash commands now name kept tools only** - `/memory-mcp:session` calls `end_session`
+  and no longer lists, shows or summarizes sessions. `/memory-mcp:maintenance` runs
+  `db_maintenance` and lost its `cleanup` and `validate` subcommands. `/memory-mcp:stats`
+  dropped `metrics_status`, `/memory-mcp:link` dropped `find_contradictions`, and
+  `/memory-mcp:forget` no longer points readers at `/memory-mcp:trust`. `/memory-mcp:test-all`
+  dropped its trust and contradiction phase and renamed the phases whose tools shrank
+- **`docs/API.md` covers the sixteen kept tools** - Every section for a removed tool is gone.
+  The `EMBEDDING_BACKEND` row left the configuration table because there is nothing to select
 
 ### Fixed
 
@@ -95,6 +111,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and learning-loop views, and the same health picture is in `memory-mcp-cli status` and the
   dashboard. The `MinedPattern` and `PatternStatus` model types and the `record_mining` metrics
   helper go too, all three unreachable once the pipeline left
+- **Thirty-three MCP tools** - `find_contradictions`, `get_contradictions`,
+  `mark_contradiction`, `resolve_contradiction`, `preview_consolidation`, `run_consolidation`,
+  `recall_with_fallback`, `recall_by_tag`, `metrics_status`, `unlink_memories`,
+  `relationship_stats`, `run_cleanup`, `validate_embeddings`, `db_info`, `embedding_info`,
+  `audit_history`, `db_rebuild_vectors`, `access_patterns`, `predict_next`, `warm_cache`,
+  `predictive_cache_status`, `retrieval_quality_stats`, `validate_memory`, `invalidate_memory`,
+  `get_trust_history`, `seed_from_text`, `seed_from_file`, `get_sessions`, `get_session`,
+  `get_session_memories`, `cross_session_patterns`, `set_session_topic` and `summarize_session`
+  no longer register. Sixteen tools remain: `remember`, `recall`, `forget`, `list_memories`,
+  `memory_stats`, `hot_cache_status`, `promote`, `demote`, `pin`, `unpin`, `mark_memory_used`,
+  `link_memories`, `get_related_memories`, `end_session`, `bootstrap_project` and
+  `db_maintenance`. Fifteen `Storage` methods that lost their last caller go too, along with
+  `ContradictionsMixin`. `get_trust_history` stays, because `adjust_trust` still writes
+  `trust_history` on every trust change and nothing else reads that table
+- **MLX embedding support** - The `mlx-embeddings` dependency, the `mlx` optional extra in
+  `pyproject.toml` and the `MLXEmbeddingProvider` class are gone, along with the `auto` and
+  `mlx` values of the embedding backend selection
 
 ### Fixed
 
