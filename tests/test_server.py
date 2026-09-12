@@ -645,24 +645,6 @@ class TestEmptyContentValidation:
         assert "empty" in result.get("error", "").lower()
 
 
-# ========== Maintenance Tool Tests ==========
-
-
-def test_run_cleanup_returns_without_mining_keys(storage, monkeypatch):
-    """run_cleanup reads only the keys run_full_cleanup still returns."""
-    import memory_mcp.server.tools.maintenance as maintenance_module
-
-    monkeypatch.setattr(maintenance_module, "storage", storage)
-
-    result = maintenance_module.run_cleanup()
-
-    assert result["success"] is True
-    assert "patterns_expired" not in result
-    assert "logs_deleted" not in result
-    assert result["hot_cache_demoted"] == 0
-    assert result["memories_deleted"] == 0
-
-
 # ========== Context Shaping Tests ==========
 
 
@@ -968,3 +950,34 @@ class TestInputValidation:
         # Should return list, not error
         assert isinstance(result, list)
         assert len(result) >= 1
+
+
+class TestRegisteredTools:
+    """Tests for the MCP tool surface."""
+
+    def test_registered_tool_names_are_exactly_the_kept_set(self):
+        """The server registers only the sixteen supported tools."""
+        import asyncio
+
+        from memory_mcp.server.app import mcp
+
+        expected = {
+            "remember",
+            "recall",
+            "forget",
+            "list_memories",
+            "memory_stats",
+            "hot_cache_status",
+            "promote",
+            "demote",
+            "pin",
+            "unpin",
+            "mark_memory_used",
+            "link_memories",
+            "get_related_memories",
+            "end_session",
+            "bootstrap_project",
+            "db_maintenance",
+        }
+        registered = {tool.name for tool in asyncio.run(mcp.list_tools())}
+        assert registered == expected

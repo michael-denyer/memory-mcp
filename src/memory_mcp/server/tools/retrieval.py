@@ -1,4 +1,4 @@
-"""Retrieval quality tracking tools: mark_memory_used, retrieval_quality_stats."""
+"""Retrieval quality tracking tools: mark_memory_used."""
 
 from memory_mcp.responses import success_response
 from memory_mcp.server.app import mcp, storage
@@ -31,24 +31,3 @@ def mark_memory_used(
         "No retrieval event found to update (tracking may be disabled)",
         updated_count=0,
     )
-
-
-@mcp.tool
-def retrieval_quality_stats(
-    memory_id: int | None = None,
-    days: int = 30,
-) -> dict:
-    """Get retrieval quality statistics.
-
-    Shows which memories are frequently retrieved and actually used.
-    Helps identify high-value and low-utility memories.
-
-    Args:
-        memory_id: Get stats for specific memory (None for global)
-        days: How many days back to analyze (default 30)
-
-    Returns:
-        Statistics on retrieval and usage patterns
-    """
-    stats = storage.get_retrieval_stats(memory_id=memory_id, days=days)
-    return success_response("Retrieval quality stats", **stats)

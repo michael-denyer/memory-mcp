@@ -326,52 +326,6 @@ def recall(
 
 
 @mcp.tool
-def recall_with_fallback(
-    query: Annotated[str, Field(description="Search query for semantic similarity")],
-    mode: Annotated[
-        str | None,
-        Field(description="Recall mode: 'precision', 'balanced', 'exploratory'"),
-    ] = None,
-    min_results: Annotated[
-        int, Field(description="Minimum results before trying next fallback")
-    ] = 1,
-) -> RecallResponse:
-    """Recall with automatic fallback through memory types.
-
-    Tries searching in order: patterns -> project facts -> all types.
-    Stops when min_results are found with medium+ confidence.
-
-    Use this when you're unsure which memory type contains the answer.
-    """
-    recall_mode = parse_recall_mode(mode)
-
-    log.debug(
-        "recall_with_fallback() called: query='{}' mode={} min={}",
-        query[:50],
-        mode,
-        min_results,
-    )
-
-    result = storage.recall_with_fallback(
-        query=query,
-        mode=recall_mode,
-        min_results=min_results,
-    )
-
-    return build_recall_response(result, ranking_prefix="Fallback search")
-
-
-@mcp.tool
-def recall_by_tag(
-    tag: Annotated[str, Field(description="Tag to filter by")],
-    limit: Annotated[int, Field(description="Maximum results")] = 10,
-) -> list[MemoryResponse]:
-    """Get memories with a specific tag."""
-    memories = storage.recall_by_tag(tag=tag, limit=limit)
-    return [memory_to_response(m) for m in memories]
-
-
-@mcp.tool
 def forget(
     memory_id: Annotated[int, Field(description="ID of memory to delete")],
 ) -> dict:
