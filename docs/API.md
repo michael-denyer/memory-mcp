@@ -1,18 +1,14 @@
 # Memory MCP API Reference
 
-This document provides complete reference for all MCP tools, resources, and CLI commands.
+This document is the reference for MCP tools, resources, and CLI commands.
 
 ## Table of Contents
 
 - [MCP Tools](#mcp-tools)
   - [Memory Operations](#memory-operations)
   - [Hot Cache Management](#hot-cache-management)
-  - [Seeding & Bootstrap](#seeding--bootstrap)
+  - [Bootstrap](#bootstrap)
   - [Knowledge Graph](#knowledge-graph)
-  - [Trust Management](#trust-management)
-  - [Contradiction Detection](#contradiction-detection)
-  - [Session Tracking](#session-tracking)
-  - [Predictive Cache](#predictive-cache)
   - [Maintenance](#maintenance)
 - [MCP Resources](#mcp-resources)
 - [CLI Commands](#cli-commands)
@@ -66,31 +62,6 @@ Semantic search with confidence gating and composite ranking.
 | `exploratory` | 0.5 | 10 | Broad discovery |
 
 **Returns**: `RecallResponse` with memories, confidence level, gated count, and LLM-friendly formatted context.
-
----
-
-#### `recall_with_fallback`
-
-Automatic fallback through memory types until results found.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `query` | string | Yes | - | Search query |
-| `mode` | string | No | `null` | Recall mode |
-| `min_results` | int | No | `1` | Minimum results before trying next fallback |
-
-Tries: patterns → project facts → all types.
-
----
-
-#### `recall_by_tag`
-
-Filter memories by tag.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `tag` | string | Yes | - | Tag to filter by |
-| `limit` | int | No | `10` | Maximum results |
 
 ---
 
@@ -178,7 +149,7 @@ Unpin a memory, allowing auto-eviction.
 
 ---
 
-### Seeding & Bootstrap
+### Bootstrap
 
 #### `bootstrap_project`
 
@@ -199,32 +170,6 @@ Bootstrap hot cache from project documentation files.
 4. ARCHITECTURE.md
 
 **Returns**: `BootstrapResponse` with files_found, files_processed, memories_created, etc.
-
----
-
-#### `seed_from_text`
-
-Parse text content and create memories.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `content` | string | Yes | - | Text to parse |
-| `memory_type` | string | No | `"project"` | Memory type |
-| `promote_to_hot` | bool | No | `false` | Promote all to hot cache |
-
-Splits on paragraphs, list items, and numbered lists.
-
----
-
-#### `seed_from_file`
-
-Import memories from a file.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `file_path` | string | Yes | - | Path to file |
-| `memory_type` | string | No | `"project"` | Memory type |
-| `promote_to_hot` | bool | No | `false` | Promote to hot cache |
 
 ---
 
@@ -252,18 +197,6 @@ Create a typed relationship between memories.
 
 ---
 
-#### `unlink_memories`
-
-Remove relationship(s) between memories.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `from_memory_id` | int | Yes | - | Source memory |
-| `to_memory_id` | int | Yes | - | Target memory |
-| `relation_type` | string | No | `null` | Specific type, or all if null |
-
----
-
 #### `get_related_memories`
 
 Get memories related to a given memory.
@@ -276,198 +209,6 @@ Get memories related to a given memory.
 
 ---
 
-#### `relationship_stats`
-
-Get knowledge graph statistics.
-
-**Returns**: `{total_relationships, by_type, linked_memories}`
-
----
-
-### Trust Management
-
-#### `validate_memory`
-
-Mark a memory as validated/confirmed useful. Increases trust score.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `memory_id` | int | Yes | - | Memory to validate |
-| `reason` | string | No | `null` | `used_correctly` (+0.05), `explicitly_confirmed` (+0.15), `cross_validated` (+0.20) |
-| `boost` | float | No | `null` | Custom boost (overrides reason default) |
-| `note` | string | No | `null` | Context note |
-
----
-
-#### `invalidate_memory`
-
-Mark a memory as incorrect or outdated. Decreases trust score.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `memory_id` | int | Yes | - | Memory to invalidate |
-| `reason` | string | No | `null` | `outdated` (-0.10), `partially_incorrect` (-0.15), `factually_wrong` (-0.30), `superseded` (-0.05), `low_utility` (-0.05) |
-| `penalty` | float | No | `null` | Custom penalty |
-| `note` | string | No | `null` | Context note |
-
----
-
-#### `get_trust_history`
-
-Get trust adjustment history for a memory.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `memory_id` | int | Yes | - | Memory ID |
-| `limit` | int | No | `20` | Max entries |
-
-**Returns**: `TrustHistoryResponse` with entries and current_trust.
-
----
-
-### Contradiction Detection
-
-#### `find_contradictions`
-
-Find memories that may contradict a given memory.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `memory_id` | int | Yes | - | Memory to check |
-| `similarity_threshold` | float | No | `0.75` | Min similarity (same topic) |
-| `limit` | int | No | `5` | Max contradictions |
-
----
-
-#### `get_contradictions`
-
-Get all memory pairs marked as contradictions.
-
----
-
-#### `mark_contradiction`
-
-Mark two memories as contradicting each other.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `memory_id_a` | int | Yes | - | First memory |
-| `memory_id_b` | int | Yes | - | Second memory |
-
----
-
-#### `resolve_contradiction`
-
-Resolve a contradiction by keeping one memory.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `memory_id_a` | int | Yes | - | First memory |
-| `memory_id_b` | int | Yes | - | Second memory |
-| `keep_id` | int | Yes | - | Memory to keep (must be one of the two) |
-| `resolution` | string | No | `"supersedes"` | `supersedes`, `delete`, or `weaken` |
-
----
-
-### Session Tracking
-
-#### `get_sessions`
-
-Get recent conversation sessions.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `limit` | int | No | `20` | Max sessions |
-| `project_path` | string | No | `null` | Filter by project |
-
----
-
-#### `get_session`
-
-Get details for a specific session.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `session_id` | string | Yes | - | Session ID |
-
----
-
-#### `get_session_memories`
-
-Get all memories from a session.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `session_id` | string | Yes | - | Session ID |
-| `limit` | int | No | `100` | Max memories |
-
----
-
-#### `cross_session_patterns`
-
-Find content appearing across multiple sessions.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `min_sessions` | int | No | `2` | Minimum sessions |
-
----
-
-#### `set_session_topic`
-
-Set or update session topic.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `session_id` | string | Yes | - | Session ID |
-| `topic` | string | Yes | - | Topic description |
-
----
-
-### Predictive Cache
-
-#### `access_patterns`
-
-Get learned access patterns.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `memory_id` | int | No | `null` | Specific memory, or all if null |
-| `min_count` | int | No | `2` | Minimum access count |
-| `limit` | int | No | `20` | Max patterns |
-
----
-
-#### `predict_next`
-
-Predict which memories might be needed next.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `memory_id` | int | Yes | - | Memory to predict from |
-| `threshold` | float | No | `null` | Min probability |
-| `limit` | int | No | `null` | Max predictions |
-
----
-
-#### `warm_cache`
-
-Pre-warm hot cache with predicted memories.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `memory_id` | int | Yes | - | Memory to predict from |
-
----
-
-#### `predictive_cache_status`
-
-Get predictive cache system status.
-
-**Returns**: `{enabled, config, stats}`
-
----
-
 ### Maintenance
 
 #### `db_maintenance`
@@ -475,61 +216,6 @@ Get predictive cache system status.
 Run database maintenance (vacuum, analyze, auto-demote).
 
 **Returns**: `MaintenanceResponse` with bytes_reclaimed, memory_count, auto_demoted_count.
-
----
-
-#### `run_cleanup`
-
-Clean up stale data in one call.
-
-**Returns**: `{success, hot_cache_demoted, memories_deleted, memories_deleted_by_type, injections_deleted, low_utility_penalized, injection_feedback_promoted, injection_feedback_warnings}`
-
----
-
-#### `validate_embeddings`
-
-Check if embedding model changed since database creation.
-
----
-
-#### `db_info`
-
-Get database path, size, schema version, and stats.
-
----
-
-#### `embedding_info`
-
-Get embedding provider and cache information.
-
----
-
-#### `audit_history`
-
-Get audit log for destructive operations.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `limit` | int | No | `50` | Max entries |
-| `operation` | string | No | `null` | Filter by operation type |
-
----
-
-#### `db_rebuild_vectors`
-
-Rebuild all memory vectors with current embedding model.
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `batch_size` | int | No | `100` | Memories per batch |
-
-Use when switching models or fixing dimension mismatches.
-
----
-
-#### `metrics_status`
-
-Get observability metrics for recall, store, and hot cache.
 
 ---
 
@@ -673,7 +359,6 @@ All settings via environment variables with `MEMORY_MCP_` prefix.
 | `DB_PATH` | `~/.memory-mcp/memory.db` | SQLite database location |
 | `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Sentence transformer model |
 | `EMBEDDING_DIM` | `384` | Embedding dimension |
-| `EMBEDDING_BACKEND` | `auto` | `auto`, `mlx`, or `sentence-transformers` |
 
 ### Hot Cache
 

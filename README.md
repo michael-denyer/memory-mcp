@@ -56,7 +56,7 @@ uv tool install hot-memory-mcp   # or: pip install hot-memory-mcp
 claude plugins add michael-denyer/memory-mcp
 ```
 
-The plugin gives you auto-configured hooks and slash commands. MLX is auto-detected on Apple Silicon.
+The plugin gives you auto-configured hooks and slash commands. Embeddings run on `sentence-transformers` on every platform, including Apple Silicon.
 
 <details>
 <summary>Manual config (no plugin)</summary>
@@ -132,7 +132,7 @@ Most memory systems make you pay a tool-call tax on every lookup. Memory MCP's *
 | `/memory-mcp:bootstrap` | `bootstrap_project` | Seed from project docs |
 | — | `link_memories` | Knowledge graph connections |
 
-See [Reference](docs/REFERENCE.md) for all 14 slash commands and full tool API.
+See [Reference](docs/REFERENCE.md) for all 11 slash commands and full tool API.
 
 ### Dashboard
 

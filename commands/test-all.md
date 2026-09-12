@@ -9,8 +9,8 @@ Run `/memory-mcp:test-all` to start a guided testing session. Walk through each 
 ## Execution Modes
 
 Ask user which approach:
-1. **Full suite** - Run all 12 phases sequentially with pauses between
-2. **Specific phase** - Run just one phase (1-12)
+1. **Full suite** - Run all phases sequentially with pauses between
+2. **Specific phase** - Run just one phase
 3. **Smoke test** - Quick 2-minute sanity check
 
 ## Quick Smoke Test
@@ -32,12 +32,11 @@ mcp__memory__memory_stats()
 |-------|------|-------|
 | 1 | [Core Operations](resources/testing/CORE.md) | remember, recall, forget |
 | 2 | [Hot Cache](resources/testing/HOT_CACHE.md) | promote, demote, pin, unpin |
-| 3 | [Knowledge Graph](resources/testing/GRAPH.md) | link, unlink, traverse |
-| 4-5 | [Trust & Contradictions](resources/testing/TRUST.md) | validate, invalidate, resolve |
-| 6 | [Sessions](resources/testing/SESSIONS.md) | episodic memory, summarize |
-| 8 | [Seeding](resources/testing/SEEDING.md) | seed_from_text, bootstrap |
-| 9-10 | [Predictive & Quality](resources/testing/PREDICTIVE.md) | predict_next, mark_used |
-| 11 | [Maintenance](resources/testing/MAINTENANCE.md) | db_info, cleanup, consolidate |
+| 3 | [Knowledge Graph](resources/testing/GRAPH.md) | link_memories, get_related_memories |
+| 6 | [Sessions](resources/testing/SESSIONS.md) | episodic memory, end_session |
+| 8 | [Bootstrap](resources/testing/SEEDING.md) | bootstrap_project |
+| 10 | [Retrieval Quality](resources/testing/PREDICTIVE.md) | mark_memory_used |
+| 11 | [Maintenance](resources/testing/MAINTENANCE.md) | db_maintenance |
 | 12 | [Resources](resources/testing/RESOURCES.md) | hot-cache, working-set |
 | 14 | [Edge Cases](resources/testing/EDGE_CASES.md) | error handling |
 | 15 | [Cleanup](resources/testing/CLEANUP.md) | remove test data |
@@ -51,10 +50,9 @@ Track results as you go:
 | 1. Core | ⬜ | |
 | 2. Hot Cache | ⬜ | |
 | 3. Graph | ⬜ | |
-| 4-5. Trust | ⬜ | |
 | 6. Sessions | ⬜ | |
-| 8. Seeding | ⬜ | |
-| 9-10. Predictive | ⬜ | |
+| 8. Bootstrap | ⬜ | |
+| 10. Retrieval Quality | ⬜ | |
 | 11. Maintenance | ⬜ | |
 | 12. Resources | ⬜ | |
 | 14. Edge Cases | ⬜ | |

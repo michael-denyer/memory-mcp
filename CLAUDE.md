@@ -86,7 +86,7 @@ The Claude Code plugin is the primary distribution. Its manifest lives in
 `.claude-plugin/plugin.json`, and every component sits at the repo root, because
 Claude Code does not look inside `.claude-plugin/` for components:
 
-- **Slash commands** (`/memory-mcp:*`) - 13 commands in `commands/`
+- **Slash commands** (`/memory-mcp:*`) - 11 commands in `commands/`
 - **Hooks** - SessionStart and UserPromptSubmit (print the hot cache for injection),
   Stop (mark used memories, then run hot cache maintenance), PreCompact (`end_session`)
 - **Skills** - recall-nudge, which prompts a `recall` call on retrospective questions
@@ -140,7 +140,7 @@ uv run ruff format .          # Format
 
 - All defaults should be optimized for immediate value
 - `auto_promote=True`, `auto_demote=True`
-- Auto-detect hardware (MLX on Apple Silicon)
+- One embedding provider, `sentence-transformers`, with no backend to pick
 - Bootstrap from project docs with one `memory-mcp-cli bootstrap` run (`auto_bootstrap` is off
   by default, and no hook runs it)
 - Configuration exists for power users, not as a requirement

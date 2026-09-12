@@ -1,20 +1,15 @@
 ---
-description: Manage conversation sessions
-argument-hint: [list|show|summarize|end] [session-id]
+description: End a conversation session and consolidate its memories
+argument-hint: <session-id>
 ---
 
-Manage conversation sessions and episodic memory consolidation.
+End a conversation session and consolidate its episodic memories.
 
-**Subcommands:**
-- `list`: Show recent sessions (`mcp__memory__get_sessions`)
-- `show <id>`: Get session details (`mcp__memory__get_session`)
-- `summarize <id>`: Get structured summary (`mcp__memory__summarize_session`)
-- `end <id>`: End session and consolidate memories (`mcp__memory__end_session`)
+Use `mcp__memory__end_session` with the session ID as $1.
 
-Session summarization groups memories into:
-- **Decisions**: Choices made and rationale
-- **Insights**: Lessons learned, antipatterns, constraints
-- **Action Items**: TODOs and tasks to complete
-- **Context**: Background info, conventions, preferences
+Options:
+- `promote_top`: Promote top episodic memories to long-term storage (default: true)
+- `promote_type`: Memory type for promoted memories, `project` or `pattern` (default: project)
 
-Ending a session promotes top episodic memories to long-term storage based on salience score.
+Top episodic memories are selected by salience score, which combines importance, trust,
+access count, and recency. Only memories above the threshold are promoted.

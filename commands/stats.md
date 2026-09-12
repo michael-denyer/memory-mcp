@@ -9,9 +9,7 @@ Use `mcp__memory__memory_stats` to retrieve and present:
 - Hot cache size and utilization
 - Storage size on disk
 
-Optionally also show:
-- `mcp__memory__hot_cache_status` for hot cache details
-- `mcp__memory__metrics_status` for operational metrics
+Optionally also show `mcp__memory__hot_cache_status` for hot cache details.
 
 Suggest actions based on stats:
 - Many memories but empty hot cache? Run `/memory-mcp:bootstrap`

@@ -1,23 +1,12 @@
 ---
 description: Run database maintenance
-argument-hint: [cleanup|vacuum|validate]
 ---
 
-Perform database maintenance operations.
+Run database maintenance with `mcp__memory__db_maintenance`.
 
-**Subcommands:**
-- No args or `vacuum`: Run basic maintenance (`mcp__memory__db_maintenance`)
-- `cleanup`: Run comprehensive cleanup (`mcp__memory__run_cleanup`)
-- `validate`: Check embedding model compatibility (`mcp__memory__validate_embeddings`)
-
-**db_maintenance** performs:
+It performs:
 - VACUUM to reclaim unused space
 - ANALYZE to update query planner stats
 - Auto-demote stale hot memories
 
-**run_cleanup** additionally:
-- Applies type-specific retention policies
-- Decays access sequences and old injection records
-- Penalizes memories retrieved often but never used
-
-**validate_embeddings** checks if embedding model changed since database was created.
+Report bytes reclaimed, total memory count, and how many memories were auto-demoted.
