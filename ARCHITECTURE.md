@@ -24,9 +24,6 @@ This principle drives every architectural decision. We optimize for the common c
 │  - Instant recall │  promotion   │  - Semantic search     │
 │  - Pinnable       │  / demotion  │  - ~50ms lookup        │
 └───────────────────┘              └────────────────────────┘
-        ▲                                    ▲
-        │                                    │
-        └──────────── Mining Pipeline ───────┘
 ```
 
 ### Why Two Tiers?
@@ -70,17 +67,12 @@ graph TB
     subgraph Input["Input Layer"]
         direction LR
         R[remember tool]
-        L[log_output tool]
     end
 
     subgraph Process["Processing"]
         direction TB
         subgraph Store["Store Path"]
             S[Store Memory] --> E[Embed]
-        end
-        subgraph Mine["Mining Path"]
-            O[Output Log] --> MP[Extract Patterns]
-            MP --> P{Confidence?}
         end
     end
 
@@ -103,11 +95,7 @@ graph TB
     end
 
     R --> S
-    L --> O
     E --> V & M
-    P -->|≥0.8| S
-    P -->|<0.8| A[approve_candidate]
-    A --> S
     RK --> V & M
     RK -->|access 3+| PR
     DE -->|14 days stale| V
@@ -123,7 +111,6 @@ src/memory_mcp/
 │   └── tools/          # Tool implementations by domain
 │       ├── cold_storage.py   # remember, recall, forget, list
 │       ├── hot_cache.py      # promote, demote, pin, unpin
-│       ├── mining.py         # log_output, run_mining, review
 │       ├── seeding.py        # seed_from_text, bootstrap_project
 │       ├── trust.py          # validate_memory, invalidate_memory
 │       ├── relationships.py  # link/unlink_memories, get_related
@@ -143,15 +130,12 @@ src/memory_mcp/
 │   ├── relationships.py # link_memories, knowledge graph
 │   ├── contradictions.py # find/resolve contradictions
 │   ├── sessions.py     # session lifecycle, episodic memory
-│   ├── mining_store.py # pattern storage operations
 │   ├── consolidation.py # memory merging logic
 │   ├── retrieval.py    # RAG quality tracking
 │   ├── maintenance.py  # cleanup, rebuild, vacuum
 │   ├── audit.py        # audit history logging
 │   ├── seeding.py      # bootstrap, seed operations
-│   ├── output_logging.py # output log for mining
 │   └── salience.py     # salience score computation
-├── mining.py           # Pattern extraction algorithms
 ├── config.py           # Settings with environment variable loading
 ├── cli.py              # CLI commands for hooks and administration
 ├── embeddings.py       # Embedding providers (sentence-transformers, MLX)
@@ -177,7 +161,6 @@ graph TB
     subgraph Core["Core Layer"]
         direction LR
         storage[storage/]
-        mining[mining.py]
     end
 
     subgraph Support["Support Layer"]
@@ -199,7 +182,6 @@ graph TB
     server --> storage & helpers & responses & logging
     cli --> storage & config
     storage --> models & migrations & embeddings & config
-    mining --> storage
     helpers --> models & responses
     responses --> models
     metrics --> logging
@@ -214,7 +196,6 @@ graph TB
 | `responses.py` | Pydantic models for tool return types |
 | `models.py` | Domain enums (MemoryType, TrustReason) and dataclasses (Memory, Session) |
 | `migrations.py` | Database schema definition and version migrations |
-| `mining.py` | Pattern extraction algorithms |
 | `embeddings.py` | Embedding abstraction (MLX on Apple Silicon, else ST) |
 | `logging.py` | Loguru configuration, stderr output for MCP compatibility |
 | `metrics.py` | Counters, gauges, and metric recording helpers |
@@ -267,33 +248,18 @@ graph TB
 
 **Rationale**: Reduces manual intervention while ensuring hot cache reflects actual usage
 
-### 4. Pattern Mining Pipeline
-
-**Chose**: Regex-based extraction with occurrence counting
-
-**Extracted patterns**:
-- Python imports
-- Shell commands (npm, git, docker, etc.)
-- Project facts ("This project uses X")
-- Code blocks from markdown
-
-**Auto-approval**: Patterns with confidence ≥ 0.8 and occurrences ≥ 3 are automatically promoted
-
-**Rationale**: Low overhead, high precision for common patterns
-
-### 5. Trust Score System
+### 4. Trust Score System
 
 **Chose**: Decay-based trust with explicit validation/invalidation
 
 **Design**:
 - Manual memories start at 1.0 trust
-- Mined memories start at 0.7 trust
 - Trust decays over time (type-specific half-lives)
 - Explicit validation/invalidation adjusts trust
 
 **Rationale**: Older information naturally becomes less reliable; explicit feedback accelerates correction
 
-### 6. Knowledge Graph
+### 5. Knowledge Graph
 
 **Chose**: Simple typed relationships stored in SQLite
 
@@ -307,7 +273,7 @@ graph TB
 
 **Rationale**: Enables context expansion during recall without complex graph database
 
-### 7. Predictive Hot Cache
+### 6. Predictive Hot Cache
 
 **Chose**: Markov chain of access sequences
 
@@ -324,7 +290,6 @@ graph TB
 
 Default settings are optimized for immediate value:
 - Predictive cache: Enabled by default
-- Auto-approve mining: Enabled with conservative thresholds
 - Auto-promote/demote: Enabled
 
 Power users can tune via environment variables, but sensible defaults mean most users never need to.
@@ -343,7 +308,6 @@ Power users can tune via environment variables, but sensible defaults mean most 
 | Hot cache read | 0ms | Auto-injected by MCP |
 | remember() | 50-100ms | Embedding dominates |
 | recall() | 50-150ms | Vector search + ranking |
-| Mining (24h) | 1-5s | Depends on log volume |
 | Bootstrap | 2-10s | Depends on file count |
 
 ## Future Considerations

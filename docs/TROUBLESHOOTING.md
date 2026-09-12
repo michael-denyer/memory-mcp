@@ -50,41 +50,6 @@ memory-mcp-cli db-rebuild-vectors
    [In Claude] promote(memory_id)
    ```
 
-## Pattern Mining Not Working
-
-**Symptom**: `run_mining` finds no patterns
-
-1. **Check mining is enabled**:
-   ```bash
-   echo $MEMORY_MCP_MINING_ENABLED  # Should not be "false"
-   ```
-
-2. **Verify logs exist**:
-   ```bash
-   memory-mcp-cli run-mining --hours 24
-   ```
-
-3. **Check hook is installed** (see [Reference - Automatic Output Logging](REFERENCE.md#automatic-output-logging))
-
-## Hook Script Fails
-
-**Symptom**: Hook runs but nothing is logged
-
-1. **Check jq is installed**:
-   ```bash
-   which jq  # Should return a path
-   ```
-
-2. **Make script executable**:
-   ```bash
-   chmod +x hooks/memory-log-response.sh
-   ```
-
-3. **Test manually**:
-   ```bash
-   echo "test content" | memory-mcp-cli log-output
-   ```
-
 ## Slow First Startup
 
 **Symptom**: First run takes 30-60 seconds
