@@ -9,6 +9,7 @@ This document is the reference for MCP tools, resources, and CLI commands.
   - [Hot Cache Management](#hot-cache-management)
   - [Bootstrap](#bootstrap)
   - [Knowledge Graph](#knowledge-graph)
+  - [Sessions](#sessions)
   - [Maintenance](#maintenance)
 - [MCP Resources](#mcp-resources)
 - [CLI Commands](#cli-commands)
@@ -92,6 +93,19 @@ Delete a memory permanently.
 Get overall memory statistics.
 
 **Returns**: `{total_memories, hot_cache_count, by_type, by_source}`
+
+---
+
+#### `mark_memory_used`
+
+Record that a recalled memory was useful. The hot cache injection footer asks Claude to call this.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `memory_id` | int | Yes | - | Memory that was useful |
+| `feedback` | string | No | `null` | Optional note, such as `"helpful"` |
+
+**Returns**: `{success, message, updated_count}`
 
 ---
 
@@ -206,6 +220,25 @@ Get memories related to a given memory.
 | `memory_id` | int | Yes | - | Memory to find relations for |
 | `relation_type` | string | No | `null` | Filter by type |
 | `direction` | string | No | `"both"` | `outgoing`, `incoming`, or `both` |
+
+---
+
+### Sessions
+
+#### `end_session`
+
+End a session and consolidate its episodic memories into long-term storage.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `session_id` | string | Yes | - | Session to end |
+| `promote_top` | bool | No | `true` | Promote top episodic memories |
+| `promote_type` | string | No | `"project"` | Type for promoted memories |
+
+Top memories are selected by salience score, which combines importance, trust, access count and
+recency. Only memories above the threshold are promoted.
+
+**Returns**: `{success, promoted_count, session_id}`
 
 ---
 

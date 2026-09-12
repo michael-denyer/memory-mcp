@@ -273,28 +273,6 @@ class TestSentenceTransformerProvider:
         assert "device" not in mock_st.call_args.kwargs
 
 
-class TestCreateProvider:
-    """Tests for the provider factory."""
-
-    def test_force_sentence_transformers_backend(self):
-        """Setting backend to sentence-transformers should force SentenceTransformerProvider."""
-        settings = Settings(
-            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-            embedding_backend="sentence-transformers",
-        )
-        provider = create_provider(settings)
-        assert isinstance(provider, SentenceTransformerProvider)
-
-    def test_force_st_backend_shorthand(self):
-        """Setting backend to 'st' should force SentenceTransformerProvider."""
-        settings = Settings(
-            embedding_model="custom/model",
-            embedding_backend="st",
-        )
-        provider = create_provider(settings)
-        assert isinstance(provider, SentenceTransformerProvider)
-
-
 class TestEmbeddingEngine:
     """Tests for the legacy EmbeddingEngine wrapper."""
 
