@@ -39,10 +39,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   so seeding them duplicated context. The default file list is now `README.md`, `README`,
   `CONTRIBUTING.md`, `docs/README.md` and `ARCHITECTURE.md`
 - **`sentence-transformers` is the only embedding provider** - It runs on every platform, Apple
-  Silicon included. There is no backend to select and no hardware detection at startup
-- **Two slash commands are gone** - `/memory-mcp:trust` and `/memory-mcp:consolidate` drove only
+  Silicon included. There is no backend to select and no hardware detection at startup. The
+  `MEMORY_MCP_EMBEDDING_BACKEND` setting is gone rather than left to be silently ignored
+- **Three slash commands are gone** - `/memory-mcp:trust` and `/memory-mcp:consolidate` drove only
   removed tools. `memory-mcp-cli consolidate` still merges similar memories from the command
-  line, so consolidation itself is unchanged
+  line, so consolidation itself is unchanged. `/memory-mcp:test-all` and the
+  `commands/resources/testing/` scripts it drove are gone as well, because they walked Claude
+  through tools that no longer register
 - **Six slash commands now name kept tools only** - `/memory-mcp:session` calls `end_session`
   and no longer lists, shows or summarizes sessions. `/memory-mcp:maintenance` runs
   `db_maintenance` and lost its `cleanup` and `validate` subcommands. `/memory-mcp:stats`
@@ -119,8 +122,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no longer register. Sixteen tools remain: `remember`, `recall`, `forget`, `list_memories`,
   `memory_stats`, `hot_cache_status`, `promote`, `demote`, `pin`, `unpin`, `mark_memory_used`,
   `link_memories`, `get_related_memories`, `end_session`, `bootstrap_project` and
-  `db_maintenance`. Only the tool wrappers under `src/memory_mcp/server/tools/` were deleted,
-  so every storage method behind them is still there
+  `db_maintenance`. Fifteen `Storage` methods that lost their last caller go too, along with
+  `ContradictionsMixin`. `get_trust_history` stays, because `adjust_trust` still writes
+  `trust_history` on every trust change and nothing else reads that table
 - **MLX embedding support** - The `mlx-embeddings` dependency, the `mlx` optional extra in
   `pyproject.toml` and the `MLXEmbeddingProvider` class are gone, along with the `auto` and
   `mlx` values of the embedding backend selection
