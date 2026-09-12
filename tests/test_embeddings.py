@@ -1,5 +1,6 @@
 """Tests for embedding provider interface."""
 
+import builtins
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -221,8 +222,12 @@ class TestSentenceTransformerProvider:
 
     @pytest.fixture
     def provider(self):
-        """Create a real SentenceTransformer provider."""
-        return SentenceTransformerProvider("sentence-transformers/all-MiniLM-L6-v2", 384)
+        """Create a real SentenceTransformer provider the way production builds one."""
+        return SentenceTransformerProvider(
+            "sentence-transformers/all-MiniLM-L6-v2",
+            384,
+            device=Settings().embedding_device,
+        )
 
     def test_lazy_loading(self, provider):
         """Model should not load until first use."""
@@ -243,6 +248,36 @@ class TestSentenceTransformerProvider:
     def test_provider_name(self, provider):
         """Provider name should include model name."""
         assert "all-MiniLM-L6-v2" in provider.name
+
+    def test_provider_passes_device_from_settings(self):
+        """A configured embedding_device should reach SentenceTransformer."""
+        settings = Settings(
+            embedding_backend="sentence-transformers",
+            embedding_device="cpu",
+        )
+        provider = create_provider(settings)
+
+        with patch("sentence_transformers.SentenceTransformer") as mock_st:
+            mock_st.return_value.get_sentence_embedding_dimension.return_value = 384
+            mock_st.return_value.encode.return_value = np.zeros(384, dtype=np.float32)
+            provider.embed("test")
+
+        assert mock_st.call_args.kwargs["device"] == "cpu"
+
+    def test_provider_omits_device_when_setting_is_none(self):
+        """With no configured device the library default should stand."""
+        settings = Settings(
+            embedding_backend="sentence-transformers",
+            embedding_device=None,
+        )
+        provider = create_provider(settings)
+
+        with patch("sentence_transformers.SentenceTransformer") as mock_st:
+            mock_st.return_value.get_sentence_embedding_dimension.return_value = 384
+            mock_st.return_value.encode.return_value = np.zeros(384, dtype=np.float32)
+            provider.embed("test")
+
+        assert "device" not in mock_st.call_args.kwargs
 
 
 class TestCreateProvider:
@@ -354,6 +389,22 @@ class TestPlatformDetection:
         with patch.dict("sys.modules", {"mlx": None, "mlx.core": None}):
             with patch("builtins.__import__", side_effect=ImportError("No module named 'mlx'")):
                 assert is_mlx_available() is False
+
+    def test_is_mlx_available_false_when_import_raises_non_import_error(self):
+        """Should return False when the mlx import raises something other than ImportError.
+
+        transformers 5.13 makes the mlx_embeddings import chain raise AttributeError from
+        mlx_lm's module body, which propagates out of __import__ past an ImportError guard.
+        """
+        real_import = builtins.__import__
+
+        def crash_on_mlx(name, *args, **kwargs):
+            if name.startswith("mlx_embeddings"):
+                raise AttributeError("'str' object has no attribute '__module__'")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", crash_on_mlx):
+            assert is_mlx_available() is False
 
 
 class TestMLXModelMappings:

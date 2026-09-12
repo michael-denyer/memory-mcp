@@ -27,12 +27,23 @@ def is_apple_silicon() -> bool:
 
 
 def is_mlx_available() -> bool:
-    """Check if mlx-embeddings is installed and available."""
+    """Check if mlx-embeddings is installed and available.
+
+    Any failure inside the third-party import chain means MLX is unavailable, so every
+    exception is caught rather than ImportError alone. transformers 5.13 makes mlx_lm
+    raise AttributeError while its module body runs, which killed the server, the CLI
+    and every hook at import time on Apple Silicon.
+    """
     try:
         from mlx_embeddings.utils import load  # noqa: F401
 
         return True
-    except ImportError:
+    except Exception as e:
+        log.warning(
+            "MLX unavailable ({}: {}); using the sentence-transformers backend instead.",
+            type(e).__name__,
+            e,
+        )
         return False
 
 
@@ -179,9 +190,10 @@ class SentenceTransformerProvider(BaseEmbeddingProvider):
     Default model: all-MiniLM-L6-v2 (384 dimensions, ~90MB).
     """
 
-    def __init__(self, model_name: str, expected_dim: int):
+    def __init__(self, model_name: str, expected_dim: int, device: str | None = None):
         self._model_name = model_name
         self._expected_dim = expected_dim
+        self._device = device
         self._model = None
 
     @property
@@ -198,7 +210,8 @@ class SentenceTransformerProvider(BaseEmbeddingProvider):
             from sentence_transformers import SentenceTransformer
 
             log.info("Loading embedding model: {}", self._model_name)
-            self._model = SentenceTransformer(self._model_name)
+            device_kwargs = {} if self._device is None else {"device": self._device}
+            self._model = SentenceTransformer(self._model_name, **device_kwargs)
 
             # Verify dimension matches
             actual_dim = self._model.get_sentence_embedding_dimension()
@@ -485,7 +498,7 @@ def create_provider(settings: Settings | None = None) -> EmbeddingProvider:
         )
 
     log.info("Using sentence-transformers backend (model: {})", model_name)
-    return SentenceTransformerProvider(model_name, dimension)
+    return SentenceTransformerProvider(model_name, dimension, device=settings.embedding_device)
 
 
 # ========== Legacy Compatibility ==========
