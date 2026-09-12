@@ -1,5 +1,6 @@
 """Tests for storage module."""
 
+import sqlite3
 from unittest.mock import Mock, patch
 
 import pytest
@@ -1019,6 +1020,61 @@ class TestFullCleanup:
         deleted = stor.cleanup_old_logs()
         # Note: log_output already deletes old logs, so this may be 0
         assert isinstance(deleted, int)
+        stor.close()
+
+
+# ========== Schema Migration Tests ==========
+
+
+def test_migration_v19_drops_mining_tables(tmp_path):
+    """Opening a v18 database on v19 removes the three mining tables."""
+    db_path = tmp_path / "v18.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript(
+        """
+        CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO schema_version (version) VALUES (18);
+        CREATE TABLE output_log (
+            id INTEGER PRIMARY KEY,
+            content TEXT NOT NULL,
+            timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+            session_id TEXT,
+            project_id TEXT
+        );
+        CREATE TABLE mined_patterns (
+            id INTEGER PRIMARY KEY,
+            pattern TEXT NOT NULL,
+            pattern_hash TEXT UNIQUE,
+            pattern_type TEXT NOT NULL,
+            occurrence_count INTEGER DEFAULT 1
+        );
+        CREATE TABLE mining_runs (
+            id INTEGER PRIMARY KEY,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            error TEXT
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    stor = Storage(Settings(db_path=db_path))
+    try:
+        with stor._connection() as opened:
+            leftovers = {
+                row[0]
+                for row in opened.execute(
+                    "SELECT name FROM sqlite_master"
+                    " WHERE name IN ('mining_runs', 'mined_patterns', 'output_log')"
+                )
+            }
+        assert leftovers == set()
+        assert stor.get_schema_version() == 19
+    finally:
         stor.close()
 
 
