@@ -190,39 +190,6 @@ class MaintenanceMixin:
         with self.transaction() as conn:
             self._set_embedding_model_info(conn, model, dimension)
 
-    def validate_embedding_model(self, current_model: str, current_dim: int) -> dict:
-        """Check if embedding model has changed since last use.
-
-        Returns validation result with mismatch details if any.
-        """
-        stored = self.get_embedding_model_info()
-
-        if stored["model"] is None:
-            # First time - store current model info
-            self.set_embedding_model_info(current_model, current_dim)
-            return {
-                "valid": True,
-                "first_run": True,
-                "model": current_model,
-                "dimension": current_dim,
-            }
-
-        model_match = stored["model"] == current_model
-        dim_match = stored["dimension"] == current_dim
-
-        if model_match and dim_match:
-            return {"valid": True, "model": current_model, "dimension": current_dim}
-
-        return {
-            "valid": False,
-            "stored_model": stored["model"],
-            "stored_dimension": stored["dimension"],
-            "current_model": current_model,
-            "current_dimension": current_dim,
-            "model_changed": not model_match,
-            "dimension_changed": not dim_match,
-        }
-
     def clear_vectors(self) -> dict:
         """Clear all vectors from the database.
 
@@ -371,39 +338,3 @@ class MaintenanceMixin:
             )
 
         return penalized_ids
-
-    def run_full_cleanup(self) -> dict:
-        """Run comprehensive cleanup: stale memories, sequences, injections.
-
-        Orchestrates all maintenance tasks in one call.
-
-        Returns combined stats from all cleanup operations.
-        """
-        # 1. Demote stale hot memories
-        demoted_ids = self.demote_stale_hot_memories()
-
-        # 2. Clean up stale memories by retention policy
-        memory_cleanup = self.cleanup_stale_memories()
-
-        # 3. Decay access sequences (for predictive cache)
-        if self.settings.predictive_cache_enabled:
-            self.decay_old_sequences()
-
-        # 4. Clean up old injection records (7-day retention)
-        deleted_injections = self.cleanup_old_injections(retention_days=7)
-
-        # 5. Penalize low-utility memories (retrieved but never used)
-        penalized_ids = self.penalize_low_utility_memories()
-
-        # 6. Improve hot cache based on injection feedback (non-dry-run)
-        injection_feedback = self.improve_hot_cache_from_injections(days=7, dry_run=False)
-
-        return {
-            "hot_cache_demoted": len(demoted_ids),
-            "memories_deleted": memory_cleanup["total_deleted"],
-            "memories_deleted_by_type": memory_cleanup["deleted_by_type"],
-            "injections_deleted": deleted_injections,
-            "low_utility_penalized": len(penalized_ids),
-            "injection_feedback_promoted": len(injection_feedback.get("promoted", [])),
-            "injection_feedback_warnings": len(injection_feedback.get("warnings", [])),
-        }

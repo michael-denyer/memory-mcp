@@ -107,54 +107,11 @@ class SessionsMixin:
             log.info("Created session id={} topic={}", session_id, topic)
             return self._row_to_session(row)
 
-    def update_session_topic(self, session_id: str, topic: str) -> bool:
-        """Update the topic for a session."""
-        with self.transaction() as conn:
-            cursor = conn.execute("UPDATE sessions SET topic = ? WHERE id = ?", (topic, session_id))
-            return cursor.rowcount > 0
-
     def get_session(self, session_id: str) -> Session | None:
         """Get a session by ID."""
         with self._connection() as conn:
             row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
             return self._row_to_session(row) if row else None
-
-    def get_sessions(
-        self,
-        limit: int = 20,
-        project_path: str | None = None,
-    ) -> list[Session]:
-        """Get recent sessions, optionally filtered by project.
-
-        Args:
-            limit: Maximum sessions to return
-            project_path: Filter to sessions from this project
-
-        Returns:
-            List of sessions ordered by last activity (most recent first)
-        """
-        with self._connection() as conn:
-            if project_path:
-                rows = conn.execute(
-                    """
-                    SELECT * FROM sessions
-                    WHERE project_path = ?
-                    ORDER BY last_activity_at DESC
-                    LIMIT ?
-                    """,
-                    (project_path, limit),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT * FROM sessions
-                    ORDER BY last_activity_at DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                ).fetchall()
-
-            return [self._row_to_session(row) for row in rows]
 
     def get_session_memories(
         self,
@@ -276,83 +233,6 @@ class SessionsMixin:
         )
         memory.salience_score = salience
         return salience
-
-    def summarize_session(self, session_id: str) -> dict:
-        """Summarize a session's key decisions, insights, and action items.
-
-        Groups session memories by semantic category to extract:
-        - Decisions: Choices made and their rationale
-        - Insights: Lessons learned, antipatterns, landmines, constraints
-        - Action Items: TODOs, bugs, tasks to complete
-        - Context: Background info, conventions, preferences, architecture
-
-        This can be called before end_session() to review what will be promoted,
-        or anytime to get a structured view of the conversation.
-
-        Args:
-            session_id: Session to summarize
-
-        Returns:
-            Dict with categorized memories and counts
-        """
-        session = self.get_session(session_id)
-        if session is None:
-            return {"success": False, "error": f"Session not found: {session_id}"}
-
-        memories = self.get_session_memories(session_id, limit=500)
-
-        # Category groupings
-        decision_categories = {"decision"}
-        insight_categories = {"lesson", "antipattern", "landmine", "constraint"}
-        action_categories = {"todo", "bug"}
-
-        decisions: list[dict] = []
-        insights: list[dict] = []
-        action_items: list[dict] = []
-        context: list[dict] = []
-
-        for memory in memories:
-            entry = {
-                "id": memory.id,
-                "content": memory.content[:300],  # Truncate for display
-                "category": memory.category,
-                "memory_type": memory.memory_type.value if memory.memory_type else None,
-                "importance": round(memory.importance_score or 0.5, 2),
-                "created_at": memory.created_at.isoformat() if memory.created_at else None,
-            }
-
-            category = memory.category or ""
-            if category in decision_categories:
-                decisions.append(entry)
-            elif category in insight_categories:
-                insights.append(entry)
-            elif category in action_categories:
-                action_items.append(entry)
-            else:
-                context.append(entry)
-
-        # Sort each group by importance (descending)
-        decisions.sort(key=lambda x: x["importance"], reverse=True)
-        insights.sort(key=lambda x: x["importance"], reverse=True)
-        action_items.sort(key=lambda x: x["importance"], reverse=True)
-        context.sort(key=lambda x: x["importance"], reverse=True)
-
-        return {
-            "success": True,
-            "session_id": session_id,
-            "topic": session.topic,
-            "total_memories": len(memories),
-            "decisions": decisions[:20],  # Top 20 of each
-            "insights": insights[:20],
-            "action_items": action_items[:20],
-            "context": context[:20],
-            "summary": {
-                "decisions_count": len(decisions),
-                "insights_count": len(insights),
-                "action_items_count": len(action_items),
-                "context_count": len(context),
-            },
-        }
 
     def end_session(
         self,

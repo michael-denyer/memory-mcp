@@ -98,37 +98,6 @@ class TrustMixin:
                 )
             return new_trust
 
-    def strengthen_trust(
-        self,
-        memory_id: int,
-        boost: float = 0.1,
-        reason: TrustReason = TrustReason.USED_CORRECTLY,
-        similarity: float | None = None,
-        note: str | None = None,
-    ) -> float | None:
-        """Strengthen trust score when memory is validated/confirmed useful.
-
-        Increases trust_score by boost amount, capped at 1.0.
-        Also updates last_accessed_at to refresh the decay timer.
-
-        Args:
-            memory_id: ID of memory to strengthen
-            boost: Amount to increase trust (default 0.1, so 10 validations = full trust)
-            reason: Why trust is being strengthened (for audit)
-            similarity: Optional similarity score for confidence weighting
-            note: Optional note for audit trail
-
-        Returns:
-            New trust score, or None if memory not found.
-        """
-        return self.adjust_trust(
-            memory_id,
-            reason=reason,
-            delta=boost,
-            similarity=similarity,
-            note=note,
-        )
-
     def weaken_trust(
         self,
         memory_id: int,
