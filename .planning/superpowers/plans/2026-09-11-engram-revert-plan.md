@@ -500,6 +500,8 @@ PR-1, realised on 2026-09-11. The hosted `macos-14` runner advertises an MPS dev
 
 All stacked PRs, realised on 2026-09-12. `.github/workflows/ci.yml` triggered `pull_request` only for PRs targeting `main`, so PR-3, PR-4, and PR-5 get no checks until https://github.com/michael-denyer/memory-mcp/pull/32 merges. Owners run the three CI jobs locally and paste the results into their trail. After PR-32 merges, each stacked PR needs one empty push to trigger checks.
 
+PR-4, realised on 2026-09-12. The Files list omitted `src/memory_mcp/server/tools/maintenance.py`, whose `run_cleanup` tool read two keys the cleanup no longer returns, so the owner shipped a known crash to honour the boundary. The root widened PR-4 to that file plus every file holding mining residue, `agents/memory-analyst.md`, and its doc mentions. A file boundary never outranks a shipped crash; owners should report and wait for the widening, which is what happened.
+
 PR-2. `claude --plugin-dir` may not exist in this Claude Code version. The owner reads `claude --help` and records the substitute. If no flag loads a plugin from a directory, the owner installs from the worktree path with `claude plugin add` and uninstalls afterwards.
 
 PR-2. The `UserPromptSubmit` hook spawns a Python process on every prompt. The perf rule of 1.5 seconds median holds only if the embedding engine stays lazy. Any later change that touches `Storage.__init__` must keep the unit test `test_storage_does_not_build_embedding_engine_until_needed` green.
