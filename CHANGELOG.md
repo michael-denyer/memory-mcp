@@ -68,7 +68,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   learning-loop staleness warning that `bootstrap --quiet` echoed no longer reaches the session
 - **Pattern mining** - `src/memory_mcp/mining.py`, `storage/mining_store.py`,
   `storage/output_logging.py` and `server/tools/mining.py` are gone, along with the
-  `log_output`, `run_mining`, `mining_status` and pattern-review MCP tools, the
+  `log_output`, `mining_status`, `review_candidates`, `approve_candidate`, `reject_candidate`,
+  `bulk_reject_candidates` and `run_mining` MCP tools, the
   `memory-mcp-cli log-output` and `memory-mcp-cli run-mining` commands, and the
   `hooks/memory-log-response.sh` script. Mining produced zero patterns in every recorded run,
   it promoted straight into the hot cache without the promotion gates, and it inflated its own
