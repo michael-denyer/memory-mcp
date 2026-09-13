@@ -423,7 +423,7 @@ def migrate_v13_to_v14(conn: sqlite3.Connection) -> None:
 def migrate_v14_to_v15(conn: sqlite3.Connection) -> None:
     """Add injection_log table for tracking hot cache injections.
 
-    Tracks which memories were injected via hot-cache/working-set resources
+    Tracks which memories were injected via the hot-cache resource
     to enable feedback loop analysis (injection → used correlation).
     Retention: 7 days, cleaned during maintenance.
     """
@@ -471,18 +471,6 @@ def migrate_v15_to_v16(conn: sqlite3.Connection) -> None:
     log.info("Added helpfulness tracking columns (v16)")
 
 
-def migrate_v18_to_v19(conn: sqlite3.Connection) -> None:
-    """Drop the pattern-mining tables (v19).
-
-    Promotion is driven by whether an injected memory was used, so nothing
-    reads output logs, mined patterns, or mining run history any more.
-    """
-    conn.execute("DROP TABLE IF EXISTS mining_runs")
-    conn.execute("DROP TABLE IF EXISTS mined_patterns")
-    conn.execute("DROP TABLE IF EXISTS output_log")
-    log.info("Dropped mining_runs, mined_patterns, and output_log tables (v19)")
-
-
 # ========== Migration Runner ==========
 
 
@@ -514,8 +502,6 @@ def run_migrations(conn: sqlite3.Connection, from_version: int, settings: Settin
         migrate_v14_to_v15(conn)
     if from_version < 16:
         migrate_v15_to_v16(conn)
-    if from_version < 19:
-        migrate_v18_to_v19(conn)
 
 
 def check_schema_version(conn: sqlite3.Connection) -> None:

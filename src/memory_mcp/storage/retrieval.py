@@ -263,11 +263,6 @@ class RetrievalMixin:
         )
         return hot_cache
 
-    # Alias for backwards compatibility
-    def get_working_set(self) -> list[Memory]:
-        """Alias for get_hot_cache (backwards compatibility)."""
-        return self.get_hot_cache()
-
     def _get_promoted_by_salience(self, project_id: str | None = None) -> list[Memory]:
         """Get promoted memories sorted by salience score (highest first)."""
         promoted = self.get_promoted_memories(project_id=project_id)

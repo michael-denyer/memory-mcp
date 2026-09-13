@@ -70,7 +70,7 @@ class Storage(
     - SearchMixin: Vector search and recall
     - PredictionsMixin: Predictive cache warming
     - BootstrapMixin: Bootstrap from files
-    - InjectionTrackingMixin: Track hot cache/working set injections
+    - InjectionTrackingMixin: Track hot cache injections
     """
 
     def __init__(self, settings: Settings | None = None):
