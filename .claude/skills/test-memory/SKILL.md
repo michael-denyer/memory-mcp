@@ -261,14 +261,14 @@ Verify 3 memories created.
 
 **12.1 Hot Cache Resource**:
 Read `memory://hot-cache` directly (auto-injected to Claude):
-- Contains all promoted memories for instant recall
-- Verify contents match `hot_cache_status()` items
-
-**12.2 Working Set Resource**:
-Read `memory://working-set` directly:
 - Session-aware active context (~10 items max)
 - Combines: recently recalled, predicted next, top salience
-- Verify smaller/more focused than hot-cache
+- Verify contents match `hot_cache_status()` items
+
+**12.2 Promoted Memories Resource**:
+Read `memory://promoted-memories` directly:
+- Backing store of promoted memories (~20 items, disabled by default)
+- Verify larger/broader than hot-cache
 
 **12.3 Project Context Resource**:
 Read `memory://project-context` directly:
@@ -401,7 +401,7 @@ Track results as you go:
 | 11.5 | Audit | ⬜ | |
 | 11.6 | Vector Rebuild | ⬜ | |
 | 12.1 | Hot Cache Resource | ⬜ | |
-| 12.2 | Working Set Resource | ⬜ | |
+| 12.2 | Promoted Memories Resource | ⬜ | |
 | 12.3 | Project Context Resource | ⬜ | |
 | 13.1 | List Memories | ⬜ | |
 | 13.2 | Recall Fallback | ⬜ | |

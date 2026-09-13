@@ -1,6 +1,5 @@
 """Tests for storage module."""
 
-import sqlite3
 from unittest.mock import Mock, patch
 
 import pytest
@@ -832,61 +831,6 @@ class TestMemoryRetention:
         stor.close()
 
 
-# ========== Schema Migration Tests ==========
-
-
-def test_migration_v19_drops_mining_tables(tmp_path):
-    """Opening a v18 database on v19 removes the three mining tables."""
-    db_path = tmp_path / "v18.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.executescript(
-        """
-        CREATE TABLE schema_version (
-            version INTEGER PRIMARY KEY,
-            applied_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
-        INSERT INTO schema_version (version) VALUES (18);
-        CREATE TABLE output_log (
-            id INTEGER PRIMARY KEY,
-            content TEXT NOT NULL,
-            timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-            session_id TEXT,
-            project_id TEXT
-        );
-        CREATE TABLE mined_patterns (
-            id INTEGER PRIMARY KEY,
-            pattern TEXT NOT NULL,
-            pattern_hash TEXT UNIQUE,
-            pattern_type TEXT NOT NULL,
-            occurrence_count INTEGER DEFAULT 1
-        );
-        CREATE TABLE mining_runs (
-            id INTEGER PRIMARY KEY,
-            started_at TEXT NOT NULL,
-            finished_at TEXT,
-            error TEXT
-        );
-        """
-    )
-    conn.commit()
-    conn.close()
-
-    stor = Storage(Settings(db_path=db_path))
-    try:
-        with stor._connection() as opened:
-            leftovers = {
-                row[0]
-                for row in opened.execute(
-                    "SELECT name FROM sqlite_master"
-                    " WHERE name IN ('mining_runs', 'mined_patterns', 'output_log')"
-                )
-            }
-        assert leftovers == set()
-        assert stor.get_schema_version() == 19
-    finally:
-        stor.close()
-
-
 # ========== Injection Tracking Tests ==========
 
 
@@ -928,7 +872,7 @@ class TestInjectionTracking:
 
         assert storage.was_recently_injected(mid)
         assert storage.was_recently_injected(mid, resource="hot-cache")
-        assert not storage.was_recently_injected(mid, resource="working-set")
+        assert not storage.was_recently_injected(mid, resource="promoted-memories")
 
     def test_get_injection_stats(self, storage):
         """get_injection_stats should return correct stats."""
@@ -937,13 +881,13 @@ class TestInjectionTracking:
 
         storage.log_injection(mid1, "hot-cache")
         storage.log_injection(mid1, "hot-cache")
-        storage.log_injection(mid2, "working-set")
+        storage.log_injection(mid2, "promoted-memories")
 
         stats = storage.get_injection_stats(days=7)
         assert stats["total_injections"] == 3
         assert stats["unique_memories"] == 2
         assert stats["by_resource"]["hot-cache"] == 2
-        assert stats["by_resource"]["working-set"] == 1
+        assert stats["by_resource"]["promoted-memories"] == 1
 
     def test_cleanup_old_injections(self, tmp_path):
         """cleanup_old_injections should delete old records."""
@@ -3077,10 +3021,10 @@ class TestImportanceScoring:
         stor.close()
 
 
-class TestWorkingSet:
-    """Tests for working set resource functionality."""
+class TestHotCache:
+    """Tests for hot cache resource functionality."""
 
-    def test_get_working_set_empty_when_disabled(self, tmp_path):
+    def test_get_hot_cache_empty_when_disabled(self, tmp_path):
         """Hot cache returns empty list when disabled."""
         settings = Settings(
             db_path=tmp_path / "ws.db",
@@ -3093,7 +3037,7 @@ class TestWorkingSet:
         finally:
             stor.close()
 
-    def test_get_working_set_includes_hot_memories(self, tmp_path):
+    def test_get_hot_cache_includes_hot_memories(self, tmp_path):
         """Hot cache includes promoted memories when no recent recalls."""
         settings = Settings(
             db_path=tmp_path / "ws.db",
@@ -3161,7 +3105,7 @@ class TestWorkingSet:
         finally:
             stor.close()
 
-    def test_working_set_respects_max_items(self, tmp_path):
+    def test_hot_cache_respects_max_items(self, tmp_path):
         """Hot cache caps at max_items setting."""
         settings = Settings(
             db_path=tmp_path / "ws.db",

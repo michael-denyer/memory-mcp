@@ -13,7 +13,7 @@ flowchart TB
     subgraph Hot["Hot Tier · 0ms"]
         direction LR
         HC["memory://hot-cache [1a]"]
-        WS["memory://working-set [1b]"]
+        PM["memory://promoted-memories [1b]"]
         PC["memory://project-context [1c]"]
     end
 
@@ -50,9 +50,9 @@ Resources are automatically injected into every Claude context - no tool call ne
 
 | ID | Resource | Description | File:Line |
 |----|----------|-------------|-----------|
-| 1a | `memory://hot-cache` | Top salience memories (~20 items) | [server/app.py:244](src/memory_mcp/server/app.py#L244) |
-| 1b | `memory://working-set` | Session-aware active context (~10 items) | [server/app.py:293](src/memory_mcp/server/app.py#L293) |
-| 1c | `memory://project-context` | Project-specific context | [server/app.py:347](src/memory_mcp/server/app.py#L347) |
+| 1a | `memory://hot-cache` | Session-aware active context (~10 items) | [server/app.py:285](src/memory_mcp/server/app.py#L285) |
+| 1b | `memory://promoted-memories` | Top-salience backing store (~20 items, disabled by default) | [server/app.py:236](src/memory_mcp/server/app.py#L236) |
+| 1c | `memory://project-context` | Project-specific context | [server/app.py:343](src/memory_mcp/server/app.py#L343) |
 
 ### [2] MCP Server
 

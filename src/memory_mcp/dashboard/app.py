@@ -490,8 +490,8 @@ async def api_hot_cache_items(request: Request) -> HTMLResponse:
 def _get_injection_stats(s: Storage) -> dict:
     """Get injection statistics counted from the actual logged resource values.
 
-    ``by_resource`` is an all-time GROUP BY resource so both current resources
-    ('hot-cache', 'recall') and legacy rows ('working-set') are represented.
+    ``by_resource`` is an all-time GROUP BY resource, so every resource that has
+    logged an injection ('hot-cache', 'recall') is represented.
     """
     with s._connection() as conn:
         today = conn.execute(

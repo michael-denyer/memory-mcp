@@ -33,7 +33,6 @@ class PromotionSource(str, Enum):
 
     MANUAL = "manual"  # Explicitly promoted by user
     AUTO_THRESHOLD = "auto_threshold"  # Auto-promoted based on access count
-    MINED_APPROVED = "mined_approved"  # Legacy value, kept so old rows still parse
     PREDICTED = "predicted"  # Pre-warmed based on access pattern prediction
     SESSION_END = "session_end"  # Promoted during session consolidation
 

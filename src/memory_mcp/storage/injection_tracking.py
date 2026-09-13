@@ -1,4 +1,4 @@
-"""Injection tracking for hot cache and working set resources.
+"""Injection tracking for hot cache resources.
 
 Tracks which memories were injected via MCP resources to enable:
 - Feedback loop analysis (injection → used correlation)
@@ -82,7 +82,7 @@ class InjectionRecord:
 
     id: int
     memory_id: int
-    resource: str  # 'hot-cache' or 'working-set'
+    resource: str  # e.g. 'hot-cache' or 'recall'
     injected_at: datetime
     session_id: str | None
     project_id: str | None
@@ -102,7 +102,7 @@ class InjectionTrackingMixin:
 
         Args:
             memory_id: ID of the injected memory
-            resource: Resource name ('hot-cache' or 'working-set')
+            resource: Resource name (e.g. 'hot-cache' or 'recall')
             session_id: Current session ID
             project_id: Current project ID
 
@@ -130,7 +130,7 @@ class InjectionTrackingMixin:
 
         Args:
             memory_ids: IDs of injected memories
-            resource: Resource name ('hot-cache' or 'working-set')
+            resource: Resource name (e.g. 'hot-cache' or 'recall')
             session_id: Current session ID
             project_id: Current project ID
 

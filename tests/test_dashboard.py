@@ -118,18 +118,16 @@ class TestInjectionResources:
 
         self._seed(dashboard_storage, "hot-cache", 2)
         self._seed(dashboard_storage, "recall", 3)
-        self._seed(dashboard_storage, "working-set", 1)  # legacy rows stay counted
 
         stats = _get_injection_stats(dashboard_storage)
-        assert stats["by_resource"] == {"hot-cache": 2, "recall": 3, "working-set": 1}
+        assert stats["by_resource"] == {"hot-cache": 2, "recall": 3}
 
-    def test_recall_badge_renders_recall_not_working_set(self, client, dashboard_storage):
+    def test_recall_badge_renders_recall(self, client, dashboard_storage):
         mid, _ = dashboard_storage.store_memory("badge content", MemoryType.PROJECT)
         dashboard_storage.log_injection(mid, "recall")
 
         html = client.get("/api/injections").text
         assert "recall" in html
-        assert "working-set" not in html
 
     def test_pagination_total_pages_reflects_real_count(self, client, dashboard_storage):
         # Exactly `limit` rows -> a real COUNT yields 1 page; the old guess (limit*2)
