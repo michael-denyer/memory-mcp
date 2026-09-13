@@ -250,7 +250,7 @@ class TestSentenceTransformerProvider:
         provider = create_provider(settings)
 
         with patch("sentence_transformers.SentenceTransformer") as mock_st:
-            mock_st.return_value.get_sentence_embedding_dimension.return_value = 384
+            mock_st.return_value.get_embedding_dimension.return_value = 384
             mock_st.return_value.encode.return_value = np.zeros(384, dtype=np.float32)
             provider.embed("test")
 
@@ -264,7 +264,7 @@ class TestSentenceTransformerProvider:
         provider = create_provider(settings)
 
         with patch("sentence_transformers.SentenceTransformer") as mock_st:
-            mock_st.return_value.get_sentence_embedding_dimension.return_value = 384
+            mock_st.return_value.get_embedding_dimension.return_value = 384
             mock_st.return_value.encode.return_value = np.zeros(384, dtype=np.float32)
             provider.embed("test")
 
