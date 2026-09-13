@@ -659,7 +659,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0,<3" },
     { name = "pydantic-settings", specifier = ">=2.0,<3" },
     { name = "rich", specifier = ">=13.0,<16" },
-    { name = "sentence-transformers", specifier = ">=3.0,<6" },
+    { name = "sentence-transformers", specifier = ">=5.7,<6" },
     { name = "sqlite-vec", specifier = ">=0.1,<1" },
     { name = "transformers", specifier = ">=4.0,<6" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.20,<1" },

@@ -185,7 +185,7 @@ class SentenceTransformerProvider(BaseEmbeddingProvider):
             self._model = SentenceTransformer(self._model_name, **device_kwargs)
 
             # Verify dimension matches
-            actual_dim = self._model.get_sentence_embedding_dimension()
+            actual_dim = self._model.get_embedding_dimension()
             if actual_dim != self._expected_dim:
                 log.warning(
                     "Model dimension {} != expected {}. Update MEMORY_MCP_EMBEDDING_DIM.",
