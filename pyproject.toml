@@ -20,7 +20,7 @@ classifiers = [
 dependencies = [
     "fastmcp>=3.2,<4",  # >=3.2 required by GHSA advisory; v2 line is EOL
     "sqlite-vec>=0.1,<1",  # Pre-1.0 package - pin to avoid breaking changes
-    "sentence-transformers>=3.0,<6",  # Allow 5.x so transformers 5.x (security fix) resolves
+    "sentence-transformers>=5.7,<6",  # requires get_embedding_dimension; 5.x pulls transformers 5.x (security fix)
     "pydantic>=2.0,<3",
     "pydantic-settings>=2.0,<3",
     "loguru>=0.7,<1",
