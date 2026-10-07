@@ -72,7 +72,7 @@ disable_error_code = ["attr-defined", "misc"]
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
-    "pre-commit>=3.0",
+    "pre-commit>=4.6.2",
     "ruff>=0.14,<0.17",
     "pytest-randomly>=5.0.0",
 ]
