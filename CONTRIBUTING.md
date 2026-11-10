@@ -6,7 +6,7 @@ Thank you for your interest in contributing to Memory MCP! This guide will help 
 
 ### Prerequisites
 
-- Python 3.10+ (3.11+ recommended)
+- Python 3.11+
 - [uv](https://docs.astral.sh/uv/) package manager
 - Git
 
