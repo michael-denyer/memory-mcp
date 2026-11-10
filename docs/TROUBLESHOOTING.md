@@ -16,7 +16,7 @@ Common issues and solutions for Memory MCP.
    which memory-mcp  # Should return a path
    ```
 
-3. **Check Python version**: Requires 3.10+
+3. **Check Python version**: Requires 3.11+
    ```bash
    python --version
    ```
