@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-10
+
 ### Added
 
 - **`MEMORY_MCP_EMBEDDING_DEVICE`** - Pins the torch device for the sentence-transformers
@@ -25,6 +27,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Python 3.11 or newer is required** - `requires-python` is `>=3.11`, the 3.10 classifier and
+  CI job are gone. `filelock` 4.2.x and `dnspython` 2.9.x, the releases that fix their open
+  security advisories, do not install on 3.10
+- **Dependencies upgraded to patched releases** - `filelock` 4.2.10, `dnspython` 2.9.2,
+  `fsspec` 2026.9.0 and `setuptools` 84.2.1 close the open Dependabot alerts, and the pending
+  Dependabot updates are merged, including `fastmcp` 4.1.2, `authlib` 1.9.1 and
+  `transformers` 5.20.2
 - **Plugin components moved to the plugin root** - `commands/`, `skills/recall-nudge/` and the
   testing resources now sit at the repo root instead of inside `.claude-plugin/`, which Claude
   Code does not scan for components. No slash command or skill loaded before this
