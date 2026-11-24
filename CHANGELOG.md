@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Docker images pinned by digest** - The `Dockerfile` pins `python:3.11-slim` and `ghcr.io/astral-sh/uv:0.13.9`
+  (previously `uv:latest`) by digest, and Dependabot now updates both weekly.
+
 ## [0.9.0] - 2026-11-10
 
 ### Added
