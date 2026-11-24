@@ -1,9 +1,9 @@
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:61e01f72680f86a5279ad510818ab7b2ee9f049822589d4e34e33e044360356c
 
 WORKDIR /app
 
 # Install uv for fast package management
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.9@sha256:d3b601f0c7b118bc1753febf7c41cc80981df678445e0254284eecf84db79a7d /uv /usr/local/bin/uv
 
 # Copy project files
 COPY pyproject.toml uv.lock README.md ./
