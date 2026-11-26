@@ -1,0 +1,9 @@
+# Fixture strings in the redaction tests, not real credentials.
+ca0bf899f26f740ec74e3d7c39eed6ca1040794a:tests/test_storage.py:generic-api-key:3867
+308b74bcd42350ba133d1adcc14a35b38c3e0d23:tests/test_storage.py:generic-api-key:3867
+0c17deb85818a075938dfa9cb4a955f814c21dca:tests/test_mining.py:generic-api-key:1291
+0c17deb85818a075938dfa9cb4a955f814c21dca:tests/test_mining.py:generic-api-key:1292
+a5e03cd5807fcc112a4ceb5b274924336d34b190:tests/test_mining.py:generic-api-key:1291
+a5e03cd5807fcc112a4ceb5b274924336d34b190:tests/test_mining.py:generic-api-key:1292
+cf3d05becf74e6b1e4a3e1e8553d11cf394f2775:tests/test_mining.py:generic-api-key:687
+2596f8a780f877f554d85ce5d2acb46ba7f19aeb:tests/test_mining.py:generic-api-key:687
