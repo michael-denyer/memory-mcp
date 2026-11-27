@@ -1,5 +1,7 @@
 """Web dashboard for Memory MCP."""
 
+from ipaddress import ip_address
+
 
 def run_dashboard(
     host: str = "127.0.0.1",
@@ -13,10 +15,15 @@ def run_dashboard(
         port: Port to bind to.
         reload: Enable auto-reload for development.
     """
+    if host.lower() == "localhost":
+        host = "127.0.0.1"
+    if not ip_address(host).is_loopback:
+        raise ValueError("The unauthenticated dashboard requires a loopback address")
+
     import uvicorn
 
     uvicorn.run(
-        "memory_mcp.dashboard.app:app" if reload else "memory_mcp.dashboard.app:app",
+        "memory_mcp.dashboard.app:app",
         host=host,
         port=port,
         reload=reload,
