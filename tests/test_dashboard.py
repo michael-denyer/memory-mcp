@@ -6,8 +6,23 @@ import pytest
 from fastapi.testclient import TestClient
 
 from memory_mcp.config import Settings
+from memory_mcp.dashboard import run_dashboard
 from memory_mcp.dashboard.app import app, get_projects
 from memory_mcp.storage import MemoryType, Storage
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.0.2.1", "example.invalid"])
+def test_dashboard_rejects_network_binds(host):
+    with pytest.raises(ValueError):
+        run_dashboard(host=host)
+
+
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "::1"])
+def test_dashboard_accepts_loopback(monkeypatch, host):
+    calls = []
+    monkeypatch.setattr("uvicorn.run", lambda app, **opts: calls.append(opts["host"]))
+    run_dashboard(host=host)
+    assert calls == ["127.0.0.1" if host == "localhost" else host]
 
 
 @pytest.fixture

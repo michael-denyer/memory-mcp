@@ -753,7 +753,7 @@ def consolidate(
 
 
 @cli.command("dashboard")
-@click.option("--host", default="127.0.0.1", help="Host to bind to")
+@click.option("--host", default="127.0.0.1", help="Loopback IP address or localhost")
 @click.option("--port", default=8765, type=int, help="Port to bind to")
 @click.option("--reload", is_flag=True, help="Enable auto-reload for development")
 def dashboard(host: str, port: int, reload: bool) -> None:
@@ -778,7 +778,10 @@ def dashboard(host: str, port: int, reload: bool) -> None:
     console.print(f"  URL: [cyan]http://{host}:{port}[/cyan]")
     console.print("  Press Ctrl+C to stop\n")
 
-    run_dashboard(host=host, port=port, reload=reload)
+    try:
+        run_dashboard(host=host, port=port, reload=reload)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @cli.command("status")
